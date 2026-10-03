@@ -1,0 +1,53 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Daily Mini-Games — a new game every day</title>
+<style>
+  :root{--neon:#22d3ee;--pink:#f472b6;--bg:#070714}
+  *{margin:0;padding:0;box-sizing:border-box}
+  body{background:var(--bg);color:#e2e8f0;font-family:ui-rounded,system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;min-height:100vh}
+  .wrap{max-width:960px;margin:0 auto;padding:34px 16px 50px}
+  h1{font-size:clamp(34px,7vw,58px);line-height:1.02;background:linear-gradient(90deg,var(--neon),var(--pink));-webkit-background-clip:text;background-clip:text;color:transparent}
+  .sub{margin-top:12px;color:#94a3b8;font-size:17px;line-height:1.55;max-width:640px}
+  .sub b{color:#e2e8f0}
+  #count{margin-top:14px;display:inline-block;font-size:13px;border:1px solid rgba(34,211,238,.5);color:var(--neon);padding:5px 12px;border-radius:999px}
+  .grid{margin-top:30px;display:grid;grid-template-columns:repeat(auto-fill,minmax(260px,1fr));gap:16px}
+  .card{display:block;text-decoration:none;color:inherit;background:linear-gradient(160deg,rgba(34,211,238,.09),rgba(244,114,182,.06));border:1px solid rgba(255,255,255,.09);border-radius:18px;padding:22px;transition:transform .12s ease,border-color .12s ease}
+  .card:hover{transform:translateY(-3px);border-color:rgba(34,211,238,.55)}
+  .card .emoji{font-size:38px}
+  .card h2{margin:10px 0 6px;font-size:22px;color:#fff}
+  .card p{color:#94a3b8;font-size:14px;line-height:1.55}
+  .meta{margin-top:14px;display:flex;gap:8px;flex-wrap:wrap}
+  .tag{font-size:11px;letter-spacing:.06em;text-transform:uppercase;border:1px solid rgba(255,255,255,.14);padding:4px 9px;border-radius:999px;color:#cbd5e1}
+  .day{color:var(--neon);border-color:rgba(34,211,238,.5)}
+  .empty{margin-top:30px;color:#64748b}
+  footer{margin-top:44px;font-size:13px;color:#64748b;line-height:1.6}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>Daily Mini-Games 🎮</h1>
+  <p class="sub">One tiny browser game, built and published <b>every single day</b>. No downloads, no sign-ups — click and play. Same shell, new trending mechanic each day.</p>
+  <div id="count">Loading games…</div>
+  <div class="grid" id="grid"></div>
+  <p class="empty" id="empty" style="display:none">No games yet — check back tomorrow!</p>
+  <footer>Built automatically by Muse for Xuan · Vanilla HTML5 Canvas, zero dependencies · Scores live in your browser only.</footer>
+</div>
+<script>
+  fetch('games.json').then(r => r.json()).then(games => {
+    const grid = document.getElementById('grid');
+    document.getElementById('count').textContent = games.length + (games.length === 1 ? ' game' : ' games') + ' published · newest first';
+    [...games].reverse().forEach(g => {
+      const a = document.createElement('a');
+      a.className = 'card'; a.href = g.file;
+      a.innerHTML = '<div class="emoji">' + g.emoji + '</div><h2>' + g.title + '</h2><p>' + g.tagline + '</p>' +
+        '<div class="meta"><span class="tag day">Day ' + g.day + '</span><span class="tag">' + g.date + '</span><span class="tag">' + g.mechanic + '</span></div>';
+      grid.appendChild(a);
+    });
+    if (!games.length) document.getElementById('empty').style.display = 'block';
+  }).catch(() => { document.getElementById('count').textContent = 'Could not load the catalog — try refreshing.'; });
+</script>
+</body>
+</html>
