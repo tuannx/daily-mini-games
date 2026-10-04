@@ -1,0 +1,382 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<title>The Button Runs Away — Daily Mini-Game #3</title>
+<style>
+  :root{--neon:#22d3ee;--pink:#f472b6;--bg:#070714}
+  *{margin:0;padding:0;box-sizing:border-box}
+  html,body{background:var(--bg);color:#e2e8f0;font-family:ui-rounded,system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;min-height:100%}
+  .wrap{max-width:960px;margin:0 auto;padding:16px 14px 28px}
+  header{display:flex;align-items:baseline;justify-content:space-between;gap:12px;flex-wrap:wrap;margin-bottom:10px}
+  h1{font-size:clamp(26px,5vw,40px);letter-spacing:.5px;background:linear-gradient(90deg,var(--neon),var(--pink));-webkit-background-clip:text;background-clip:text;color:transparent}
+  .badge{font-size:12px;border:1px solid rgba(34,211,238,.5);color:var(--neon);padding:4px 10px;border-radius:999px;white-space:nowrap}
+  .hud{display:flex;gap:10px;flex-wrap:wrap;margin:10px 0}
+  .chip{flex:1;min-width:100px;background:rgba(255,255,255,.04);border:1px solid rgba(255,255,255,.08);border-radius:12px;padding:8px 12px}
+  .chip b{display:block;font-size:20px;color:#fff}
+  .chip span{font-size:11px;text-transform:uppercase;letter-spacing:.12em;color:#94a3b8}
+  .stage{position:relative;border-radius:16px;overflow:hidden;border:1px solid rgba(34,211,238,.25);box-shadow:0 0 40px rgba(34,211,238,.12), inset 0 0 60px rgba(0,0,0,.5);background:#050510}
+  canvas{display:block;width:100%;height:auto;touch-action:none;cursor:crosshair}
+  .overlay{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;text-align:center;background:rgba(5,5,16,.78);backdrop-filter:blur(2px);padding:20px;z-index:5}
+  .overlay.hidden{display:none}
+  .overlay h2{font-size:clamp(24px,5vw,38px);margin-bottom:8px;color:#fff}
+  .overlay p{color:#cbd5e1;max-width:480px;line-height:1.5;margin-bottom:16px}
+  .btn{cursor:pointer;border:0;border-radius:999px;padding:13px 28px;font-size:17px;font-weight:700;color:#04121a;background:linear-gradient(90deg,var(--neon),#67e8f9);box-shadow:0 0 22px rgba(34,211,238,.45);transition:transform .08s ease}
+  .btn:active{transform:scale(.96)}
+  .btn.ghost{background:transparent;color:var(--neon);border:1px solid rgba(34,211,238,.6);box-shadow:none;margin-left:8px}
+  .keys{margin-top:14px;font-size:13px;color:#94a3b8}
+  kbd{background:#1e293b;border:1px solid #334155;border-bottom-width:2px;border-radius:6px;padding:1px 7px;color:#e2e8f0;font-family:inherit}
+  footer{margin-top:14px;font-size:13px;color:#64748b;display:flex;justify-content:space-between;gap:10px;flex-wrap:wrap}
+  footer a{color:var(--neon);text-decoration:none}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <h1>THE BUTTON RUNS AWAY</h1>
+    <div class="badge">🏃 Daily Mini-Game #3 · Rage-bait chase</div>
+  </header>
+
+  <div class="hud">
+    <div class="chip"><span>Catches</span><b id="catches">0</b></div>
+    <div class="chip"><span>Best</span><b id="best">0</b></div>
+    <div class="chip"><span>Combo</span><b id="combo">×1</b></div>
+    <div class="chip"><span>Time</span><b id="timer">45</b></div>
+  </div>
+
+  <div class="stage">
+    <canvas id="game" width="960" height="540"></canvas>
+    <div class="overlay" id="startOverlay">
+      <h2>CLICK THE BUTTON. THAT'S THE WHOLE GAME. 😌</h2>
+      <p>One button. It has cardio. It has trauma. It has <b>opinions about you</b>. Catch it as many times as you can in <b>45 seconds</b>. It will fake-surrender. Do not trust it.</p>
+      <div><button class="btn" id="startBtn">▶ Try me</button></div>
+      <div class="keys">Mouse / tap = catch · <kbd>←↑↓→</kbd> move reticle + <kbd>Space</kbd> grab · <kbd>P</kbd> pause · <kbd>R</kbd> restart</div>
+    </div>
+    <div class="overlay hidden" id="overOverlay">
+      <h2 id="overTitle">TIME UP. THE BUTTON WINS.</h2>
+      <p id="finalScore">Catches: 0</p>
+      <div>
+        <button class="btn" id="againBtn">↻ Run it back</button>
+        <button class="btn ghost" id="shareBtn">Copy my shame</button>
+      </div>
+      <div class="keys" id="overJoke">The button is currently doing a victory lap.</div>
+    </div>
+  </div>
+
+  <footer>
+    <span>Built &amp; published automatically — a new mini-game every day.</span>
+    <a href="../index.html">← All daily games</a>
+  </footer>
+</div>
+
+<script>
+(() => {
+  const cvs = document.getElementById('game'), ctx = cvs.getContext('2d');
+  const W = cvs.width, H = cvs.height;
+  const catchesEl = document.getElementById('catches'), bestEl = document.getElementById('best'), comboEl = document.getElementById('combo'), timerEl = document.getElementById('timer');
+  const startOverlay = document.getElementById('startOverlay'), overOverlay = document.getElementById('overOverlay');
+  const KEY = 'button-runs-best';
+  let best = +(localStorage.getItem(KEY) || 0); bestEl.textContent = best;
+
+  // WebAudio bleeps (self-generated, no assets)
+  let AC = null;
+  function beep(freq, dur, type, vol) {
+    try {
+      AC = AC || new (window.AudioContext || window.webkitAudioContext)();
+      const o = AC.createOscillator(), g = AC.createGain();
+      o.type = type || 'square'; o.frequency.value = freq;
+      g.gain.setValueAtTime(vol || 0.08, AC.currentTime);
+      g.gain.exponentialRampToValueAtTime(0.001, AC.currentTime + dur);
+      o.connect(g); g.connect(AC.destination);
+      o.start(); o.stop(AC.currentTime + dur);
+    } catch (e) {}
+  }
+  const sCatch = () => { beep(660, .09, 'square', .09); setTimeout(() => beep(880, .12, 'square', .09), 60); };
+  const sGolden = () => { [523,659,784,1047].forEach((f,i) => setTimeout(() => beep(f, .14, 'triangle', .1), i*70)); };
+  const sMiss = () => beep(180, .08, 'sawtooth', .04);
+  const sFakeOut = () => { beep(320, .1, 'square', .07); setTimeout(() => beep(240, .16, 'square', .07), 90); };
+
+  const TAUNTS = [
+    "CLICK ME. I DARE YOU.", "TOO SLOW. EMBARRASSING.", "WAS THAT AN ATTEMPT?",
+    "MY GRANDMA CLICKS FASTER.", "YOU MOVE LIKE A TERMS & CONDITIONS PAGE.",
+    "I'VE SEEN SNACKS WITH BETTER AIM.", "THIS IS A BUTTON. ONE BUTTON.",
+    "OK NOW I'M JUST SHOWING OFF.", "ARE YOU A BOT? BE HONEST.",
+    "I DO CARDIO. YOU DO EXCUSES.", "AT THIS POINT I'M JUST CONTENT.",
+    "NEARLY. LIKE, SPIRITUALLY NEARLY.", "YOUR CURSOR HAS ANXIETY.",
+    "I PAY NO RENT AND FEEL NO FEAR.", "L + RATIO + COULDN'T CLICK A BUTTON."
+  ];
+  const FAIL_LINES = [
+    "The button is currently doing a victory lap.",
+    "Final score: Button 45 — You 0. A rivalry is born.",
+    "The button would like to thank its cardio coach.",
+    "Somewhere, a speedrunner just felt a disturbance.",
+    "The button has filed a restraining order. Fair."
+  ];
+  const RANKS = [
+    [0, "Certified Button Snack"],
+    [3, "Mildly Threatening Cursor"],
+    [6, "Button's Sleep Paralysis Demon"],
+    [10, "Certified Button Menace"],
+    [15, "The Button's Final Boss"]
+  ];
+  function rankFor(n) { let r = RANKS[0][1]; for (const [min, name] of RANKS) if (n >= min) r = name; return r; }
+
+  let running = false, paused = false, raf = 0, last = 0;
+  let catches, combo, comboTimer, timeLeft, startTime, elapsed;
+  let btn, decoys, popups, particles, pointer, keys, fakeOutUsed, golden;
+
+  function reset() {
+    catches = 0; combo = 1; comboTimer = 0; timeLeft = 45; elapsed = 0;
+    decoys = []; popups = []; particles = [];
+    pointer = { x: W/2, y: H/2 };
+    keys = {};
+    fakeOutUsed = false; golden = false;
+    btn = { x: W/2 - 90, y: H/2 - 32, w: 180, h: 64, vx: 0, vy: 0, label: "CLICK ME 😌", state: "idle", stateT: 0, scale: 1 };
+    catchesEl.textContent = '0'; comboEl.textContent = '×1'; timerEl.textContent = '45';
+    startTime = performance.now();
+  }
+
+  function randomPos(b) {
+    b.x = 30 + Math.random() * (W - b.w - 60);
+    b.y = 60 + Math.random() * (H - b.h - 120);
+  }
+
+  function flee(b, boost) {
+    const ang = Math.random() * Math.PI * 2;
+    const sp = (boost || 1) * (260 + catches * 18 + Math.random() * 120);
+    b.vx = Math.cos(ang) * sp; b.vy = Math.sin(ang) * sp;
+  }
+
+  function say(text, x, y, color, big) {
+    popups.push({ text, x: x ?? btn.x + btn.w/2, y: y ?? btn.y - 14, life: 1, color: color || '#fff', big: !!big });
+  }
+
+  function burst(x, y, color, n) {
+    for (let i = 0; i < n; i++) particles.push({ x, y, vx: (Math.random()-.5)*7, vy: (Math.random()-.7)*7, life: 30 + Math.random()*20, color });
+  }
+
+  function startFakeOut() {
+    btn.state = "fakeout"; btn.stateT = 0; btn.vx = btn.vy = 0;
+    say("OK OK I GIVE UP 😔", btn.x + btn.w/2, btn.y - 18, '#facc15', true);
+    sFakeOut();
+  }
+
+  function onCatch(wasGolden) {
+    if (wasGolden) { catches += 5; sGolden(); say("+5 GOLDEN CATCH! $$$", pointer.x, pointer.y - 20, '#facc15', true); }
+    else { catches += 1; sCatch(); }
+    comboTimer = 0;
+    combo = Math.min(9, combo + (comboTimer < 180 ? 1 : 0));
+    burst(btn.x + btn.w/2, btn.y + btn.h/2, wasGolden ? '#facc15' : '#22d3ee', wasGolden ? 40 : 22);
+    say(wasGolden ? "GOLDEN!!!" : ["GOTCHA!", "FINALLY!", "BUTTON: CAUGHT", "OW."][Math.floor(Math.random()*4)], btn.x + btn.w/2, btn.y - 14, wasGolden ? '#facc15' : '#67e8f9', true);
+    // shrink + speed up as it gets more traumatized
+    btn.w = Math.max(110, 180 - catches * 5);
+    btn.h = Math.max(42, 64 - catches * 1.5);
+    btn.label = TAUNTS[Math.min(TAUNTS.length - 1, catches + Math.floor(Math.random()*3))];
+    randomPos(btn);
+    flee(btn, 1.4);
+    btn.state = "fleeing";
+    // golden event (rare, ~10%)
+    golden = Math.random() < 0.10;
+    if (golden) say("✨ GOLDEN BUTTON — 5× CATCH ✨", W/2, 56, '#facc15', true);
+    // escalating decoys after 20s
+    decoys = [];
+    if (elapsed > 20) {
+      const nDecoy = elapsed > 32 ? 3 : 2;
+      for (let i = 0; i < nDecoy; i++) {
+        const d = { x: 0, y: 0, w: btn.w, h: btn.h, label: ["CLICK ME 😌", "REAL ONE TRUST", "DEFINITELY ME"][i % 3] };
+        randomPos(d); decoys.push(d);
+      }
+    }
+    catchesEl.textContent = catches; comboEl.textContent = '×' + combo;
+  }
+
+  function tryCatch(px, py) {
+    // hit the real button?
+    const inBtn = px >= btn.x && px <= btn.x + btn.w && py >= btn.y && py <= btn.y + btn.h;
+    if (inBtn) {
+      if (btn.state === "fakeout" && btn.stateT < 0.85) {
+        // it lied. of course it lied.
+        say("SIKE. 😌", btn.x + btn.w/2, btn.y - 18, '#f472b6', true);
+        flee(btn, 2.2); btn.state = "fleeing"; sFakeOut();
+        return;
+      }
+      const wasGolden = golden; golden = false;
+      onCatch(wasGolden);
+      return;
+    }
+    // decoy?
+    for (const d of decoys) {
+      if (px >= d.x && px <= d.x + d.w && py >= d.y && py <= d.y + d.h) {
+        say("FAKE. 💀", px, py - 14, '#f472b6', true); sMiss();
+        decoys = decoys.filter(x => x !== d);
+        burst(px, py, '#f472b6', 14);
+        return;
+      }
+    }
+    // near miss?
+    const dx = Math.max(btn.x - px, 0, px - (btn.x + btn.w));
+    const dy = Math.max(btn.y - py, 0, py - (btn.y + btn.h));
+    if (Math.hypot(dx, dy) < 46) { say("SO CLOSE!", px, py - 16, '#facc15', false); sMiss(); flee(btn, 1.2); return; }
+    sMiss();
+    say(["MISS.", "AIR. YOU CLICKED AIR.", "BOLD STRATEGY."][Math.floor(Math.random()*3)], px, py - 14, '#94a3b8', false);
+  }
+
+  function gameOver(won) {
+    running = false;
+    if (catches > best) { best = catches; localStorage.setItem(KEY, best); bestEl.textContent = best; }
+    document.getElementById('overTitle').textContent = won ? "YOU ACTUALLY CAUGHT IT?! 🏆" : "TIME UP. THE BUTTON WINS.";
+    document.getElementById('finalScore').textContent = `Catches: ${catches} · Rank: ${rankFor(catches)} · Best: ${best}`;
+    document.getElementById('overJoke').textContent = FAIL_LINES[Math.floor(Math.random() * FAIL_LINES.length)];
+    overOverlay.classList.remove('hidden');
+    sGolden();
+  }
+
+  function start() {
+    reset();
+    startOverlay.classList.add('hidden'); overOverlay.classList.add('hidden');
+    running = true; paused = false; last = performance.now();
+    cancelAnimationFrame(raf); raf = requestAnimationFrame(loop);
+  }
+
+  function loop(now) {
+    if (!running) return;
+    const dt = Math.min(32, now - last); last = now;
+    if (!paused) { update(dt / 16.7, dt); }
+    draw();
+    raf = requestAnimationFrame(loop);
+  }
+
+  function update(f, dtMs) {
+    elapsed += dtMs / 1000;
+    timeLeft = Math.max(0, 45 - elapsed);
+    timerEl.textContent = Math.ceil(timeLeft);
+    if (timeLeft <= 0) { gameOver(catches >= 15); return; }
+
+    comboTimer += dtMs;
+    if (comboTimer > 3000 && combo > 1) { combo = 1; comboEl.textContent = '×1'; }
+
+    // fake-out trigger once, mid-game (the famous lie)
+    if (!fakeOutUsed && elapsed > 13 && catches >= 2) { fakeOutUsed = true; startFakeOut(); }
+
+    // button AI
+    btn.stateT += dtMs / 1000;
+    if (btn.state === "fakeout") {
+      if (btn.stateT > 1.6) { btn.state = "idle"; flee(btn, 1.6); say("JK 😌", btn.x + btn.w/2, btn.y - 16, '#f472b6', true); }
+    } else {
+      btn.x += btn.vx * f / 10; btn.y += btn.vy * f / 10;
+      btn.vx *= 0.92; btn.vy *= 0.92;
+      // panic when cursor is near
+      const cx = btn.x + btn.w/2, cy = btn.y + btn.h/2;
+      const d = Math.hypot(pointer.x - cx, pointer.y - cy);
+      if (d < 130) flee(btn, 1 + (130 - d) / 110);
+      btn.x = Math.max(10, Math.min(W - btn.w - 10, btn.x));
+      btn.y = Math.max(44, Math.min(H - btn.h - 10, btn.y));
+    }
+
+    // keyboard reticle
+    const spd = 9 * f;
+    if (keys.ArrowLeft) pointer.x -= spd; if (keys.ArrowRight) pointer.x += spd;
+    if (keys.ArrowUp) pointer.y -= spd; if (keys.ArrowDown) pointer.y += spd;
+    pointer.x = Math.max(0, Math.min(W, pointer.x)); pointer.y = Math.max(0, Math.min(H, pointer.y));
+
+    // particles / popups
+    particles = particles.filter(p => (p.life -= f) > 0);
+    particles.forEach(p => { p.x += p.vx * f; p.y += p.vy * f; p.vy += 0.15 * f; });
+    popups = popups.filter(p => (p.life -= 0.014 * f) > 0);
+  }
+
+  function drawBtn(b, isReal) {
+    ctx.save();
+    const cx = b.x + b.w/2, cy = b.y + b.h/2;
+    ctx.translate(cx, cy);
+    ctx.shadowColor = golden && isReal ? '#facc15' : (isReal ? '#22d3ee' : 'rgba(244,114,182,.7)');
+    ctx.shadowBlur = 22;
+    const g = ctx.createLinearGradient(-b.w/2, -b.h/2, b.w/2, b.h/2);
+    if (golden && isReal) { g.addColorStop(0, '#fde68a'); g.addColorStop(1, '#f59e0b'); }
+    else if (isReal) { g.addColorStop(0, '#67e8f9'); g.addColorStop(1, '#0284c7'); }
+    else { g.addColorStop(0, '#334155'); g.addColorStop(1, '#1e293b'); }
+    ctx.fillStyle = g;
+    ctx.beginPath(); ctx.roundRect(-b.w/2, -b.h/2, b.w, b.h, 16); ctx.fill();
+    ctx.shadowBlur = 0;
+    ctx.strokeStyle = golden && isReal ? '#fef08a' : 'rgba(255,255,255,.6)'; ctx.lineWidth = 2; ctx.stroke();
+    ctx.fillStyle = isReal ? '#04121a' : '#cbd5e1';
+    ctx.font = `800 ${Math.max(13, Math.min(19, b.w / 9))}px system-ui`;
+    ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+    const label = (golden && isReal) ? "GOLDEN. CLICK. NOW." : b.label;
+    ctx.fillText(label, 0, 1);
+    ctx.restore();
+  }
+
+  function draw() {
+    const g = ctx.createLinearGradient(0, 0, 0, H);
+    g.addColorStop(0, '#0b0620'); g.addColorStop(.7, '#070714'); g.addColorStop(1, '#0d0a24');
+    ctx.fillStyle = g; ctx.fillRect(0, 0, W, H);
+    // grid
+    ctx.strokeStyle = 'rgba(34,211,238,.07)'; ctx.lineWidth = 1;
+    for (let x = 0; x <= W; x += 48) { ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, H); ctx.stroke(); }
+    for (let y = 0; y <= H; y += 48) { ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(W, y); ctx.stroke(); }
+    // HUD inside canvas
+    ctx.textAlign = 'left'; ctx.textBaseline = 'alphabetic';
+    ctx.fillStyle = '#e2e8f0'; ctx.font = '700 20px system-ui';
+    ctx.fillText(`Rank: ${rankFor(catches)} · Elapsed ${Math.floor(elapsed)}s`, 16, 30);
+    // decoys first, then real button
+    decoys.forEach(d => drawBtn(d, false));
+    drawBtn(btn, true);
+    // particles
+    for (const p of particles) { ctx.globalAlpha = Math.max(0, p.life / 30); ctx.fillStyle = p.color; ctx.fillRect(p.x - 3, p.y - 3, 6, 6); }
+    ctx.globalAlpha = 1;
+    // popups
+    for (const p of popups) {
+      ctx.globalAlpha = Math.max(0, p.life);
+      ctx.fillStyle = p.color; ctx.font = `800 ${p.big ? 26 : 17}px system-ui`; ctx.textAlign = 'center';
+      ctx.fillText(p.text, p.x, p.y - (1 - p.life) * 26);
+    }
+    ctx.globalAlpha = 1; ctx.textAlign = 'left';
+    // keyboard reticle
+    ctx.strokeStyle = '#f472b6'; ctx.lineWidth = 2;
+    ctx.beginPath(); ctx.arc(pointer.x, pointer.y, 13, 0, Math.PI * 2); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(pointer.x - 20, pointer.y); ctx.lineTo(pointer.x - 5, pointer.y);
+    ctx.moveTo(pointer.x + 5, pointer.y); ctx.lineTo(pointer.x + 20, pointer.y);
+    ctx.moveTo(pointer.x, pointer.y - 20); ctx.lineTo(pointer.x, pointer.y - 5);
+    ctx.moveTo(pointer.x, pointer.y + 5); ctx.lineTo(pointer.x, pointer.y + 20); ctx.stroke();
+    if (paused) {
+      ctx.fillStyle = 'rgba(5,5,16,.55)'; ctx.fillRect(0, 0, W, H);
+      ctx.fillStyle = '#fff'; ctx.font = '700 44px system-ui'; ctx.textAlign = 'center';
+      ctx.fillText('PAUSED — EVEN THE BUTTON IS RESTING', W/2, H/2); ctx.textAlign = 'left';
+    }
+  }
+
+  function toCanvas(e) {
+    const r = cvs.getBoundingClientRect();
+    return { x: (e.clientX - r.left) * (W / r.width), y: (e.clientY - r.top) * (H / r.height) };
+  }
+
+  cvs.addEventListener('pointermove', e => { const p = toCanvas(e); pointer.x = p.x; pointer.y = p.y; });
+  cvs.addEventListener('pointerdown', e => { e.preventDefault(); if (!running) return; const p = toCanvas(e); pointer.x = p.x; pointer.y = p.y; tryCatch(p.x, p.y); });
+  addEventListener('keydown', e => {
+    keys[e.code] = true;
+    if (['ArrowLeft','ArrowRight','ArrowUp','ArrowDown','Space'].includes(e.code)) e.preventDefault();
+    if (e.code === 'Space') { if (!running) start(); else tryCatch(pointer.x, pointer.y); }
+    else if (e.code === 'KeyR') start();
+    else if (e.code === 'KeyP' && running) paused = !paused;
+  });
+  addEventListener('keyup', e => { keys[e.code] = false; });
+
+  document.getElementById('startBtn').addEventListener('click', e => { e.stopPropagation(); start(); });
+  document.getElementById('againBtn').addEventListener('click', e => { e.stopPropagation(); start(); });
+  document.getElementById('shareBtn').addEventListener('click', async e => {
+    e.stopPropagation();
+    const text = `I caught the runaway button ${catches} times and earned the rank "${rankFor(catches)}" 🏃 The button is still talking trash.`;
+    try { await navigator.clipboard.writeText(text + ' ' + location.href); e.target.textContent = 'Copied! 📋'; }
+    catch (err) { e.target.textContent = text; }
+    setTimeout(() => e.target.textContent = 'Copy my shame', 1800);
+  });
+
+  reset(); 
+  // static first frame
+  (function idle(){ ctx.fillStyle = '#050510'; ctx.fillRect(0,0,W,H); drawBtn(btn, true); })();
+})();
+</script>
+</body>
+</html>
