@@ -1,0 +1,507 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<title>Egg CEO Commute — Daily Mini-Game #5</title>
+<style>
+  :root{--neon:#22d3ee;--pink:#f472b6;--bg:#070714}
+  *{margin:0;padding:0;box-sizing:border-box}
+  html,body{background:var(--bg);color:#e2e8f0;font-family:ui-rounded,system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;min-height:100%}
+  .wrap{max-width:960px;margin:0 auto;padding:16px 14px 28px}
+  header{display:flex;align-items:baseline;justify-content:space-between;gap:12px;flex-wrap:wrap;margin-bottom:10px}
+  h1{font-size:clamp(26px,5vw,40px);letter-spacing:.5px;background:linear-gradient(90deg,var(--neon),var(--pink));-webkit-background-clip:text;background-clip:text;color:transparent}
+  .badge{font-size:12px;border:1px solid rgba(34,211,238,.5);color:var(--neon);padding:4px 10px;border-radius:999px;white-space:nowrap}
+  .hud{display:flex;gap:10px;flex-wrap:wrap;margin:10px 0}
+  .chip{flex:1;min-width:80px;background:rgba(255,255,255,.04);border:1px solid rgba(255,255,255,.08);border-radius:12px;padding:8px 12px}
+  .chip b{display:block;font-size:20px;color:#fff}
+  .chip span{font-size:11px;text-transform:uppercase;letter-spacing:.12em;color:#94a3b8}
+  .stage{position:relative;border-radius:16px;overflow:hidden;border:1px solid rgba(34,211,238,.25);box-shadow:0 0 40px rgba(34,211,238,.12), inset 0 0 60px rgba(0,0,0,.5);background:#050510}
+  canvas{display:block;width:100%;height:auto;touch-action:none}
+  .overlay{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;text-align:center;background:rgba(5,5,16,.78);backdrop-filter:blur(2px);padding:20px;z-index:5}
+  .overlay.hidden{display:none}
+  .overlay h2{font-size:clamp(24px,5vw,38px);margin-bottom:8px;color:#fff}
+  .overlay p{color:#cbd5e1;max-width:520px;line-height:1.5;margin-bottom:16px}
+  .btn{cursor:pointer;border:0;border-radius:999px;padding:13px 28px;font-size:17px;font-weight:700;color:#04121a;background:linear-gradient(90deg,var(--neon),#67e8f9);box-shadow:0 0 22px rgba(34,211,238,.45)}
+  .btn:active{transform:scale(.96)}
+  .btn.ghost{background:transparent;color:var(--neon);border:1px solid rgba(34,211,238,.6);box-shadow:none;margin-left:8px}
+  .keys{margin-top:14px;font-size:13px;color:#94a3b8;line-height:1.7}
+  kbd{background:#1e293b;border:1px solid #334155;border-bottom-width:2px;border-radius:6px;padding:1px 7px;color:#e2e8f0;font-family:inherit}
+  .touch{display:flex;gap:10px;margin-top:10px}
+  .tbtn{flex:1;cursor:pointer;user-select:none;-webkit-user-select:none;text-align:center;border:1px solid rgba(255,255,255,.16);background:rgba(255,255,255,.05);color:#fff;border-radius:14px;padding:14px 6px;font-size:22px;font-weight:800}
+  .tbtn:active{background:rgba(34,211,238,.25)}
+  .tbtn small{display:block;font-size:10px;letter-spacing:.12em;color:#94a3b8;margin-top:2px}
+  footer{margin-top:14px;font-size:13px;color:#64748b;display:flex;justify-content:space-between;gap:10px;flex-wrap:wrap}
+  footer a{color:var(--neon);text-decoration:none}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <h1>EGG CEO COMMUTE 🥚</h1>
+    <div class="badge">🚗 Daily Mini-Game #5 · Balance physics</div>
+  </header>
+
+  <div class="hud">
+    <div class="chip"><span>Score</span><b id="score">0</b></div>
+    <div class="chip"><span>Coffee ☕</span><b id="coffee">0</b></div>
+    <div class="chip"><span>Combo</span><b id="combo">×1</b></div>
+    <div class="chip"><span>Best</span><b id="best">0</b></div>
+  </div>
+
+  <div class="stage">
+    <canvas id="game" width="960" height="540"></canvas>
+    <div class="overlay" id="startOverlay">
+      <h2>DON'T SCRAMBLE THE CEO. 🥚</h2>
+      <p>Your boss is an egg. On your roof. Lean to keep him on. Hop the angry cones. Feed him glowing coffee.</p>
+      <div><button class="btn" id="startBtn">▶ Start commute</button></div>
+      <div class="keys"><kbd>←</kbd><kbd>→</kbd> lean · <kbd>Space</kbd> hop · <kbd>P</kbd> pause · <kbd>R</kbd> restart · hold screen sides to lean</div>
+    </div>
+    <div class="overlay hidden" id="overOverlay">
+      <h2 id="overTitle">CEO SCRAMBLED. 🍳</h2>
+      <p id="finalScore">Score: 0</p>
+      <div>
+        <button class="btn" id="againBtn">↻ Drive again</button>
+        <button class="btn ghost" id="shareBtn">Copy result</button>
+      </div>
+      <div class="keys" id="overJoke">HR has been notified.</div>
+    </div>
+  </div>
+
+  <div class="touch">
+    <div class="tbtn" id="leanL">◀<small>LEAN BACK</small></div>
+    <div class="tbtn" id="hopB">⤒<small>HOP</small></div>
+    <div class="tbtn" id="leanR">▶<small>LEAN FWD</small></div>
+  </div>
+
+  <footer>
+    <span>Built &amp; published automatically — a new mini-game every day.</span>
+    <a href="../index.html">← All daily games</a>
+  </footer>
+</div>
+
+<script>
+(() => {
+  const cvs = document.getElementById('game'), ctx = cvs.getContext('2d');
+  const W = cvs.width, H = cvs.height;
+  const scoreEl = document.getElementById('score'), coffeeEl = document.getElementById('coffee'),
+        comboEl = document.getElementById('combo'), bestEl = document.getElementById('best');
+  const startOverlay = document.getElementById('startOverlay'), overOverlay = document.getElementById('overOverlay');
+  const KEY = 'egg-ceo-best';
+  let best = +(localStorage.getItem(KEY) || 0); bestEl.textContent = best;
+
+  let AC = null;
+  function beep(freq, dur, type, vol, slide) {
+    try {
+      AC = AC || new (window.AudioContext || window.webkitAudioContext)();
+      const o = AC.createOscillator(), g = AC.createGain();
+      o.type = type || 'sine'; o.frequency.setValueAtTime(freq, AC.currentTime);
+      if (slide) o.frequency.exponentialRampToValueAtTime(slide, AC.currentTime + dur);
+      g.gain.setValueAtTime(vol || 0.06, AC.currentTime);
+      g.gain.exponentialRampToValueAtTime(0.001, AC.currentTime + dur);
+      o.connect(g); g.connect(AC.destination); o.start(); o.stop(AC.currentTime + dur);
+    } catch (e) {}
+  }
+  const sHop = () => beep(320, 0.16, 'sine', 0.07, 640);
+  const sCoffee = () => { beep(880, 0.08, 'square', 0.06); setTimeout(() => beep(1318, 0.09, 'square', 0.06), 50); };
+  const sGold = () => [523,659,784,1047].forEach((f,i) => setTimeout(() => beep(f, 0.12, 'triangle', 0.08), i*60));
+  const sBump = () => beep(140, 0.18, 'sawtooth', 0.09, 60);
+  const sNear = () => beep(990, 0.06, 'square', 0.04);
+  const sCrack = () => { beep(1200, 0.05, 'square', 0.05, 300); setTimeout(() => beep(200, 0.4, 'sawtooth', 0.1, 40), 60); };
+
+  const FAIL_LINES = [
+    "CEO has been scrambled.",
+    "HR has been notified.",
+    "The board voted: omelette.",
+    "Performance review: yolky.",
+    "He died as he lived: uncracked, until now."
+  ];
+  const RANKS = [
+    [0, "Intern Chauffeur"], [300, "Careful-ish Driver"], [800, "Egg Whisperer"],
+    [1500, "CEO's Favorite"], [2500, "Scramble-Proof Legend"]
+  ];
+  function rankFor(s) { let r = RANKS[0][1]; for (const [m, n] of RANKS) if (s >= m) r = n; return r; }
+
+  // world / terrain
+  function groundAt(wx, amp) {
+    return 400
+      + Math.sin(wx * 0.004) * 46 * amp
+      + Math.sin(wx * 0.011 + 1.7) * 22 * amp
+      + Math.sin(wx * 0.027 + 0.4) * 7 * amp;
+  }
+  function slopeAt(wx, amp) {
+    const d = 6;
+    return (groundAt(wx + d, amp) - groundAt(wx - d, amp)) / (2 * d);
+  }
+
+  let running = false, paused = false, raf = 0, last = 0;
+  let score, coffee, combo, comboT, elapsed, worldX, speed, amp, shake;
+  let car, egg, cones, coffees, particles, popups, buildings, clouds;
+  let spawnConeT, spawnCoffeeT, ceoEventT, sugarT, fallen, fallAnim;
+  const input = { left: false, right: false };
+
+  function makeBg() {
+    buildings = [];
+    for (let i = 0; i < 9; i++) buildings.push({ x: i * 130 + Math.random()*30, w: 70 + Math.random()*50, h: 90 + Math.random()*110, face: ['😴','😐','🤓'][i % 3], win: Math.random()*10 });
+    clouds = [];
+    for (let i = 0; i < 6; i++) clouds.push({ x: Math.random()*W, y: 30 + Math.random()*110, s: 0.7 + Math.random()*0.8, face: '😊' });
+  }
+  function reset() {
+    score = 0; coffee = 0; combo = 1; comboT = 0; elapsed = 0;
+    worldX = 0; speed = 3.6; amp = 1; shake = 0;
+    car = { x: 210, y: 0, vy: 0, angle: 0, airborne: false, squash: 0, wheel: 0, face: '😄', faceT: 0 };
+    car.y = groundAt(0, amp) - 26;
+    egg = { off: 0, vx: 0, lean: 0, crack: 0, face: '😎', faceT: 0, bounce: 0 };
+    cones = []; coffees = []; particles = []; popups = [];
+    spawnConeT = 1.4; spawnCoffeeT = 0.7; ceoEventT = 7; sugarT = 0;
+    fallen = false; fallAnim = 0;
+    makeBg();
+    scoreEl.textContent = '0'; coffeeEl.textContent = '0'; comboEl.textContent = '×1';
+  }
+  function say(text, x, y, color, big) { popups.push({ text, x, y, life: 1, color: color || '#fff', big: !!big }); }
+  function burst(x, y, color, n) {
+    for (let i = 0; i < n; i++) particles.push({ x, y, vx: (Math.random()-.5)*7, vy: (Math.random()-.8)*7, life: 24 + Math.random()*20, color, r: 2 + Math.random()*3 });
+  }
+
+  function spawnCone() {
+    const wx = worldX + W + 80;
+    cones.push({ wx, passed: false, hit: false, wob: Math.random()*6 });
+  }
+  function spawnCoffee() {
+    const gold = Math.random() < 0.11;
+    const wx = worldX + W + 60;
+    const gy = groundAt(wx, amp);
+    coffees.push({ wx, yOff: gold ? 120 : 78 + Math.random()*36, r: gold ? 19 : 15, gold, taken: false, rot: Math.random()*6, gy });
+  }
+
+  function gameOver() {
+    if (fallen) return;
+    fallen = true; fallAnim = 0; sCrack();
+    burst(eggScreenX(), car.y - 92, '#fef9c3', 30); burst(eggScreenX(), car.y - 92, '#facc15', 16);
+    setTimeout(() => {
+      running = false;
+      const fs = Math.floor(score);
+      if (fs > best) { best = fs; localStorage.setItem(KEY, best); bestEl.textContent = best; }
+      document.getElementById('finalScore').textContent = 'Score: ' + fs + ' · Coffee: ' + coffee + ' · Rank: ' + rankFor(fs) + ' · Best: ' + best;
+      document.getElementById('overJoke').textContent = FAIL_LINES[Math.floor(Math.random()*FAIL_LINES.length)];
+      overOverlay.classList.remove('hidden');
+    }, 650);
+  }
+  function eggScreenX() { return car.x + egg.off; }
+
+  function start() {
+    reset();
+    startOverlay.classList.add('hidden'); overOverlay.classList.add('hidden');
+    running = true; paused = false; last = performance.now();
+    cancelAnimationFrame(raf); raf = requestAnimationFrame(loop);
+  }
+  function loop(now) {
+    if (!running) { if (!fallen) draw(); return; }
+    const dt = Math.min(32, now - last); last = now;
+    if (!paused) update(dt/16.7, dt);
+    draw();
+    raf = requestAnimationFrame(loop);
+  }
+
+  function doHop() {
+    if (!running || paused || fallen) return;
+    if (!car.airborne) { car.vy = -11.5; car.airborne = true; sHop(); car.face = '🤢'; car.faceT = 0.5; burst(car.x, car.y + 20, '#94a3b8', 6); }
+  }
+
+  function update(f, dtMs) {
+    elapsed += dtMs/1000;
+    speed = Math.min(7.4, 3.6 + elapsed * 0.045);
+    amp = Math.min(1.55, 1 + elapsed * 0.008);
+    worldX += speed * f;
+    score += speed * 0.30 * f * (sugarT > 0 ? 2 : 1);
+    scoreEl.textContent = Math.floor(score);
+    if (comboT > 0) { comboT -= dtMs; if (comboT <= 0) { combo = 1; comboEl.textContent = '×1'; } }
+    if (sugarT > 0) sugarT -= dtMs/1000;
+
+    // car follows terrain unless airborne
+    const gy = groundAt(worldX + car.x, amp);
+    const slope = slopeAt(worldX + car.x, amp);
+    if (car.airborne) {
+      car.vy += 0.55 * f; car.y += car.vy * f;
+      const groundY = gy - 26;
+      if (car.y >= groundY) {
+        const hard = car.vy > 9;
+        car.y = groundY; car.airborne = false; car.vy = 0; car.squash = 7;
+        burst(car.x, car.y + 22, '#94a3b8', hard ? 14 : 7);
+        if (hard) { egg.vx += (Math.random() < 0.5 ? -1 : 1) * 1.1; addCrack(0.34); }
+      }
+    } else {
+      const targetY = gy - 26;
+      const bump = targetY - car.y;
+      car.y = targetY;
+      if (Math.abs(bump) > 7) egg.vx += bump * 0.012;
+    }
+    car.angle = Math.atan(slope) * (car.airborne ? 0.4 : 1);
+    car.wheel += speed * 0.10 * f;
+    if (car.squash > 0) car.squash -= f;
+    if (car.faceT > 0) { car.faceT -= dtMs/1000; if (car.faceT <= 0) car.face = '😄'; }
+
+    // egg balance physics: slope + lean input + bumps fight over the egg
+    const leanForce = (input.left ? -1 : 0) + (input.right ? 1 : 0);
+    egg.vx += (slope * 1.15 + leanForce * 0.14) * f;
+    egg.vx += Math.sin(elapsed * 2.1) * 0.006 * f * (1 + elapsed * 0.01);
+    if (sugarT > 0) egg.vx += Math.sin(elapsed * 22) * 0.05 * f;
+    egg.vx *= Math.pow(0.965, f);
+    egg.off += egg.vx * f * 3.2;
+    egg.lean = egg.off / 46;
+    egg.bounce = Math.abs(egg.vx);
+    if (egg.faceT > 0) { egg.faceT -= dtMs/1000; if (egg.faceT <= 0) eggFaceByState(); } else eggFaceByState();
+    if (Math.abs(egg.off) > 52 && !fallen) { egg.off = egg.off > 0 ? 52 : -52; gameOver(); }
+
+    // CEO random events — the twist escalates
+    ceoEventT -= dtMs/1000;
+    if (ceoEventT <= 0) {
+      ceoEventT = 6 + Math.random()*5;
+      const ev = Math.random();
+      if (ev < 0.4) { egg.vx += (Math.random() < 0.5 ? -1 : 1) * 2.0; egg.face = '😴'; egg.faceT = 0.9; say('CEO NAPPING!', car.x, car.y - 140, '#c4b5fd', true); shake = Math.max(shake, 3); }
+      else if (ev < 0.7) { egg.vx += (Math.random() < 0.5 ? -1 : 1) * 1.3; say('BOARD CALL!', car.x, car.y - 140, '#f472b6', true); shake = Math.max(shake, 5); }
+      else { say('HURRY! ⏰', car.x, car.y - 140, '#facc15', true); speed = Math.min(8, speed + 0.4); }
+    }
+
+    // spawns
+    spawnConeT -= dtMs/1000;
+    if (spawnConeT <= 0) { spawnCone(); spawnConeT = Math.max(0.85, 2.0 - elapsed * 0.008) + Math.random()*0.7; }
+    spawnCoffeeT -= dtMs/1000;
+    if (spawnCoffeeT <= 0) { spawnCoffee(); spawnCoffeeT = 1.0 + Math.random()*1.1; }
+
+    // cones
+    for (const c of cones) {
+      c.wob += 0.1 * f;
+      const sx = c.wx - worldX;
+      if (!c.passed && sx < car.x - 34) {
+        c.passed = true;
+        if (!c.hit && Math.abs(sx - car.x) < 80) { say('SO CLOSE!', car.x + 16, car.y - 120, '#facc15', false); score += 15 * combo; sNear(); }
+      }
+      if (!c.hit && Math.abs(sx - car.x) < 30 && !car.airborne) {
+        c.hit = true; egg.crack += 0; addCrack(0.4);
+        egg.vx += (Math.random() < 0.5 ? -1 : 1) * 2.4; shake = Math.max(shake, 8); sBump();
+        say('OUCH!', car.x, car.y - 130, '#f87171', true);
+        burst(sx, car.y + 8, '#f87171', 14);
+        score = Math.max(0, score - 20);
+      }
+    }
+    cones = cones.filter(c => c.wx - worldX > -80);
+
+    // coffees — the ONLY glowing collectibles
+    for (const p of coffees) {
+      p.rot += 0.08 * f;
+      const sx = p.wx - worldX;
+      const py = p.gy - p.yOff;
+      if (!p.taken && Math.hypot(sx - eggScreenX(), py - (car.y - 78)) < p.r + 30) {
+        p.taken = true; coffee++;
+        combo = comboT > 0 ? Math.min(9, combo + 1) : 1; comboT = 3200;
+        comboEl.textContent = '×' + combo; coffeeEl.textContent = coffee;
+        if (p.gold) { sugarT = 5; const pts = 100 * combo; score += pts; sGold(); say('SUGAR RUSH!', sx, py - 26, '#facc15', true); burst(sx, py, '#facc15', 24); egg.face = '🤪'; egg.faceT = 1.2; }
+        else { const pts = 25 * combo; score += pts; sCoffee(); say('☕ +' + pts, sx, py - 22, '#67e8f9', false); burst(sx, py, '#facc15', 10); egg.vx *= 0.45; egg.face = '😎'; egg.faceT = 0.7; }
+      }
+    }
+    coffees = coffees.filter(p => !p.taken && p.wx - worldX > -50);
+
+    for (const b of buildings) { b.x -= speed * 0.25 * f; if (b.x + b.w < 0) { b.x = W + Math.random()*40; b.h = 90 + Math.random()*110; } }
+    for (const cl of clouds) { cl.x -= speed * 0.4 * f; if (cl.x < -90) { cl.x = W + 60; cl.y = 30 + Math.random()*110; } }
+
+    particles = particles.filter(p => (p.life -= f) > 0);
+    particles.forEach(p => { p.x += p.vx * f; p.y += p.vy * f; p.vy += 0.15 * f; });
+    popups = popups.filter(p => (p.life -= 0.013 * f) > 0);
+    if (shake > 0) shake *= 0.86; if (shake < 0.2) shake = 0;
+    if (fallen) fallAnim += dtMs/1000;
+  }
+  function eggFaceByState() {
+    if (sugarT > 0) egg.face = '🤪';
+    else if (Math.abs(egg.off) > 34) egg.face = '🤯';
+    else if (Math.abs(egg.off) > 18) egg.face = '😰';
+    else egg.face = '😎';
+  }
+  function addCrack(n) {
+    const before = Math.floor(egg.crack);
+    egg.crack = Math.min(3, egg.crack + n);
+    if (Math.floor(egg.crack) > before) { egg.face = '😱'; egg.faceT = 0.8; }
+  }
+
+  function drawEgg(x, y) {
+    ctx.save(); ctx.translate(x, y); ctx.rotate(egg.lean * 0.5);
+    const sq = 1 + Math.min(0.12, egg.bounce * 0.03);
+    ctx.scale(2 - sq > 1.12 ? 1.12 : 2 - sq, sq);
+    ctx.shadowColor = 'rgba(254,249,195,.8)'; ctx.shadowBlur = 12;
+    const g = ctx.createLinearGradient(0, -34, 0, 26);
+    g.addColorStop(0, '#fffef5'); g.addColorStop(1, '#fde68a');
+    ctx.fillStyle = g; ctx.beginPath(); ctx.ellipse(0, 0, 25, 32, 0, 0, Math.PI*2); ctx.fill();
+    ctx.shadowBlur = 0;
+    ctx.strokeStyle = '#d97706'; ctx.lineWidth = 2; ctx.stroke();
+    // cracks by stage
+    ctx.strokeStyle = 'rgba(120,53,15,.85)'; ctx.lineWidth = 1.6;
+    if (egg.crack >= 1) { ctx.beginPath(); ctx.moveTo(-8, -18); ctx.lineTo(-2, -8); ctx.lineTo(-9, -1); ctx.stroke(); }
+    if (egg.crack >= 2) { ctx.beginPath(); ctx.moveTo(10, -12); ctx.lineTo(4, -2); ctx.lineTo(11, 6); ctx.stroke(); }
+    if (egg.crack >= 3) { ctx.beginPath(); ctx.moveTo(-14, 8); ctx.lineTo(-4, 14); ctx.lineTo(4, 9); ctx.lineTo(13, 15); ctx.stroke(); }
+    // tie + shades: he is management
+    ctx.fillStyle = '#dc2626'; ctx.beginPath(); ctx.moveTo(0, 12); ctx.lineTo(-4, 6); ctx.lineTo(4, 6); ctx.closePath(); ctx.fill();
+    ctx.fillRect(-2, 12, 4, 12);
+    ctx.font = '19px system-ui'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+    ctx.fillText(egg.face, 0, -10);
+    ctx.restore();
+    // danger wobble ring when close to edge
+    if (Math.abs(egg.off) > 32 && !fallen) {
+      ctx.save(); ctx.globalAlpha = 0.5 + Math.sin(elapsed * 18) * 0.3;
+      ctx.strokeStyle = '#f87171'; ctx.lineWidth = 3;
+      ctx.beginPath(); ctx.arc(x, y, 42, 0, Math.PI*2); ctx.stroke(); ctx.restore();
+    }
+  }
+  function drawCar() {
+    ctx.save(); ctx.translate(car.x, car.y); ctx.rotate(car.angle);
+    const sq = car.squash > 0 ? 1 - car.squash * 0.016 : 1;
+    ctx.scale(1, Math.max(0.84, sq));
+    // wheels
+    for (const wx of [-30, 30]) {
+      ctx.save(); ctx.translate(wx, 20); ctx.rotate(car.wheel);
+      ctx.fillStyle = '#111827'; ctx.beginPath(); ctx.arc(0, 0, 13, 0, Math.PI*2); ctx.fill();
+      ctx.strokeStyle = '#e2e8f0'; ctx.lineWidth = 3;
+      ctx.beginPath(); ctx.moveTo(-9, 0); ctx.lineTo(9, 0); ctx.moveTo(0, -9); ctx.lineTo(0, 9); ctx.stroke();
+      ctx.restore();
+    }
+    // body
+    ctx.shadowColor = '#f472b6'; ctx.shadowBlur = 14;
+    const g = ctx.createLinearGradient(0, -16, 0, 20);
+    g.addColorStop(0, '#f9a8d4'); g.addColorStop(1, '#db2777');
+    ctx.fillStyle = g; ctx.beginPath(); ctx.roundRect(-46, -14, 92, 30, 12); ctx.fill();
+    ctx.shadowBlur = 0;
+    ctx.fillStyle = '#22d3ee'; ctx.beginPath(); ctx.roundRect(-30, -26, 52, 16, 7); ctx.fill();
+    // roof tray the egg sits in
+    ctx.fillStyle = '#fef08a'; ctx.beginPath(); ctx.roundRect(-34, -34, 68, 8, 4); ctx.fill();
+    ctx.strokeStyle = '#d97706'; ctx.lineWidth = 1.5; ctx.strokeRect(-34, -34, 68, 8);
+    ctx.font = '16px system-ui'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+    ctx.fillText(car.face, 8, 2);
+    ctx.restore();
+  }
+  function drawCone(c) {
+    const sx = c.wx - worldX, gy = groundAt(c.wx, amp);
+    ctx.save(); ctx.translate(sx, gy - 16); ctx.rotate(Math.sin(c.wob) * 0.07);
+    ctx.fillStyle = '#dc2626'; ctx.beginPath();
+    ctx.moveTo(0, -24); ctx.lineTo(16, 12); ctx.lineTo(-16, 12); ctx.closePath(); ctx.fill();
+    ctx.fillStyle = '#fff'; ctx.fillRect(-9, -2, 18, 6);
+    ctx.fillStyle = '#7f1d1d'; ctx.fillRect(-18, 12, 36, 6);
+    ctx.font = '14px system-ui'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+    ctx.fillText('😠', 0, -7);
+    ctx.restore();
+  }
+  function drawCoffee(p) {
+    const sx = p.wx - worldX, py = p.gy - p.yOff + Math.sin(p.rot * 2) * 4;
+    ctx.save(); ctx.translate(sx, py);
+    const pulse = 1 + Math.sin(elapsed * 6 + p.rot) * 0.10;
+    ctx.scale(pulse, pulse);
+    ctx.shadowColor = '#facc15'; ctx.shadowBlur = p.gold ? 26 : 16;
+    ctx.fillStyle = p.gold ? '#facc15' : '#fef3c7';
+    ctx.beginPath(); ctx.arc(0, 0, p.r + 5, 0, Math.PI*2); ctx.globalAlpha = 0.28; ctx.fill(); ctx.globalAlpha = 1;
+    ctx.font = (p.gold ? '34px' : '28px') + ' system-ui'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+    ctx.fillText('☕', 0, 0);
+    ctx.restore();
+  }
+
+  function draw() {
+    ctx.save();
+    if (shake) ctx.translate((Math.random()-.5)*shake, (Math.random()-.5)*shake);
+    const g = ctx.createLinearGradient(0, 0, 0, H);
+    g.addColorStop(0, '#1e1b4b'); g.addColorStop(0.62, '#0f172a'); g.addColorStop(1, '#070714');
+    ctx.fillStyle = g; ctx.fillRect(-20, -20, W+40, H+40);
+    // sun with shades (background object)
+    ctx.save(); ctx.translate(850, 74); ctx.shadowColor = '#facc15'; ctx.shadowBlur = 26;
+    ctx.fillStyle = '#fde047'; ctx.beginPath(); ctx.arc(0, 0, 30, 0, Math.PI*2); ctx.fill(); ctx.shadowBlur = 0;
+    ctx.font = '24px system-ui'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; ctx.fillText('😎', 0, 1); ctx.restore();
+    // clouds
+    for (const cl of clouds) {
+      ctx.save(); ctx.translate(cl.x, cl.y); ctx.scale(cl.s, cl.s);
+      ctx.fillStyle = 'rgba(226,232,240,.88)';
+      ctx.beginPath(); ctx.ellipse(0, 0, 42, 17, 0, 0, Math.PI*2); ctx.ellipse(-24, 5, 26, 12, 0, 0, Math.PI*2); ctx.ellipse(25, 5, 27, 12, 0, 0, Math.PI*2); ctx.fill();
+      ctx.font = '15px system-ui'; ctx.textAlign = 'center'; ctx.fillText(cl.face, 0, 1); ctx.restore();
+    }
+    // office buildings (background objects with faces)
+    for (const b of buildings) {
+      ctx.fillStyle = '#1e293b'; ctx.fillRect(b.x, 400 - b.h, b.w, b.h + 60);
+      ctx.fillStyle = 'rgba(250,204,21,.75)';
+      for (let i = 0; i < 4; i++) for (let j = 0; j < 3; j++) if ((i * 3 + j + Math.floor(b.win)) % 3) ctx.fillRect(b.x + 8 + j * (b.w - 16) / 2.4, 412 - b.h + i * 20, 8, 10);
+      ctx.font = '16px system-ui'; ctx.textAlign = 'center'; ctx.fillText(b.face, b.x + b.w/2, 404 - b.h);
+    }
+    // road terrain
+    ctx.beginPath(); ctx.moveTo(-20, H + 20);
+    for (let sx = -20; sx <= W + 20; sx += 10) ctx.lineTo(sx, groundAt(worldX + sx, amp));
+    ctx.lineTo(W + 20, H + 20); ctx.closePath();
+    const rg = ctx.createLinearGradient(0, 330, 0, H);
+    rg.addColorStop(0, '#334155'); rg.addColorStop(1, '#0f172a');
+    ctx.fillStyle = rg; ctx.fill();
+    ctx.strokeStyle = '#22d3ee'; ctx.lineWidth = 3; ctx.beginPath();
+    for (let sx = -20; sx <= W + 20; sx += 10) { const y = groundAt(worldX + sx, amp); if (sx === -20) ctx.moveTo(sx, y); else ctx.lineTo(sx, y); }
+    ctx.stroke();
+    ctx.fillStyle = 'rgba(250,204,21,.8)';
+    for (let sx = 0; sx <= W; sx += 64) { const wx = Math.floor((worldX + sx) / 64) * 64; const lx = wx - worldX; ctx.fillRect(lx, groundAt(wx, amp) + 16, 26, 5); }
+
+    cones.forEach(drawCone);
+    coffees.forEach(drawCoffee);
+    drawCar();
+    // egg (rides the tray; falls in game-over anim)
+    if (!fallen) drawEgg(eggScreenX(), car.y - 62 + Math.sin(elapsed * 9) * Math.min(3, egg.bounce));
+    else {
+      const t = Math.min(1, fallAnim * 2.2);
+      const fx = eggScreenX() + egg.off * t * 2, fy = car.y - 62 + t * t * 190;
+      ctx.save(); ctx.translate(fx, fy); ctx.rotate(t * 5);
+      ctx.font = '36px system-ui'; ctx.textAlign = 'center'; ctx.fillText('🍳', 0, 0); ctx.restore();
+    }
+    for (const p of particles) { ctx.globalAlpha = Math.max(0, p.life/26); ctx.fillStyle = p.color; ctx.beginPath(); ctx.arc(p.x, p.y, p.r, 0, Math.PI*2); ctx.fill(); }
+    ctx.globalAlpha = 1;
+    for (const p of popups) {
+      ctx.globalAlpha = Math.max(0, p.life);
+      ctx.fillStyle = p.color; ctx.font = '800 ' + (p.big ? 26 : 16) + 'px system-ui'; ctx.textAlign = 'center';
+      ctx.fillText(p.text, p.x, p.y - (1 - p.life) * 24);
+    }
+    ctx.globalAlpha = 1;
+    if (sugarT > 0) { ctx.fillStyle = '#facc15'; ctx.font = '800 18px system-ui'; ctx.textAlign = 'left'; ctx.fillText('SUGAR RUSH ×2', 16, 30); }
+    if (paused) {
+      ctx.fillStyle = 'rgba(5,5,16,.6)'; ctx.fillRect(0, 0, W, H);
+      ctx.fillStyle = '#fff'; ctx.font = '700 42px system-ui'; ctx.textAlign = 'center';
+      ctx.fillText('PAUSED 🥚', W/2, H/2);
+    }
+    ctx.restore();
+  }
+
+  addEventListener('keydown', e => {
+    if (['Space','ArrowLeft','ArrowRight','ArrowUp'].includes(e.code)) e.preventDefault();
+    if (e.code === 'ArrowLeft' || e.code === 'KeyA') input.left = true;
+    if (e.code === 'ArrowRight' || e.code === 'KeyD') input.right = true;
+    if (e.code === 'Space' || e.code === 'ArrowUp' || e.code === 'KeyW') { if (!running && !fallen) start(); else doHop(); }
+    else if (e.code === 'KeyR') start();
+    else if (e.code === 'KeyP' && running) { paused = !paused; draw(); }
+  });
+  addEventListener('keyup', e => {
+    if (e.code === 'ArrowLeft' || e.code === 'KeyA') input.left = false;
+    if (e.code === 'ArrowRight' || e.code === 'KeyD') input.right = false;
+  });
+  function bindHold(id, on, off) {
+    const el = document.getElementById(id);
+    el.addEventListener('pointerdown', e => { e.preventDefault(); on(); });
+    el.addEventListener('pointerup', off); el.addEventListener('pointerleave', off); el.addEventListener('pointercancel', off);
+  }
+  bindHold('leanL', () => input.left = true, () => input.left = false);
+  bindHold('leanR', () => input.right = true, () => input.right = false);
+  document.getElementById('hopB').addEventListener('pointerdown', e => { e.preventDefault(); if (!running && !fallen) start(); else doHop(); });
+  cvs.addEventListener('pointerdown', e => { if (!running && !fallen) start(); });
+
+  document.getElementById('startBtn').addEventListener('click', e => { e.stopPropagation(); start(); });
+  document.getElementById('againBtn').addEventListener('click', e => { e.stopPropagation(); start(); });
+  document.getElementById('shareBtn').addEventListener('click', async e => {
+    e.stopPropagation();
+    const fs = Math.floor(score);
+    const text = 'I scrambled the Egg CEO at score ' + fs + ' (' + coffee + ' coffees) 🥚 Rank: ' + rankFor(fs) + '. He has been scrambled.';
+    try { await navigator.clipboard.writeText(text + ' ' + location.href); e.target.textContent = 'Copied! 📋'; }
+    catch (err) { e.target.textContent = text; }
+    setTimeout(() => e.target.textContent = 'Copy result', 1800);
+  });
+
+  reset();
+  draw();
+})();
+</script>
+</body>
+</html>
