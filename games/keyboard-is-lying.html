@@ -1,0 +1,254 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<title>Keyboard Is Lying — Daily Mini-Game #7</title>
+<style>
+  :root{--neon:#22d3ee;--pink:#f472b6;--bg:#070714}
+  *{margin:0;padding:0;box-sizing:border-box}
+  html,body{background:var(--bg);color:#e2e8f0;font-family:ui-rounded,system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;min-height:100%}
+  .wrap{max-width:960px;margin:0 auto;padding:16px 14px 28px}
+  header{display:flex;align-items:baseline;justify-content:space-between;gap:12px;flex-wrap:wrap;margin-bottom:10px}
+  h1{font-size:clamp(24px,5vw,38px);background:linear-gradient(90deg,var(--neon),var(--pink));-webkit-background-clip:text;background-clip:text;color:transparent}
+  .badge{font-size:12px;border:1px solid rgba(34,211,238,.5);color:var(--neon);padding:4px 10px;border-radius:999px;white-space:nowrap}
+  .hud{display:flex;gap:10px;flex-wrap:wrap;margin:10px 0}
+  .chip{flex:1;min-width:80px;background:rgba(255,255,255,.04);border:1px solid rgba(255,255,255,.08);border-radius:12px;padding:8px 12px}
+  .chip b{display:block;font-size:20px;color:#fff}
+  .chip span{font-size:11px;text-transform:uppercase;letter-spacing:.12em;color:#94a3b8}
+  .stage{position:relative;border-radius:16px;overflow:hidden;border:1px solid rgba(34,211,238,.25);box-shadow:0 0 40px rgba(34,211,238,.12);background:#050510}
+  canvas{display:block;width:100%;height:auto;touch-action:none}
+  .overlay{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;text-align:center;background:rgba(5,5,16,.84);padding:20px;z-index:5}
+  .overlay.hidden{display:none}
+  .overlay h2{font-size:clamp(24px,5vw,36px);margin-bottom:8px;color:#fff}
+  .overlay p{color:#cbd5e1;max-width:520px;line-height:1.5;margin-bottom:16px}
+  .btn{cursor:pointer;border:0;border-radius:999px;padding:13px 28px;font-size:17px;font-weight:700;color:#04121a;background:linear-gradient(90deg,var(--neon),#67e8f9)}
+  .btn.ghost{background:transparent;color:var(--neon);border:1px solid rgba(34,211,238,.6);margin-left:8px}
+  .keys{margin-top:14px;font-size:13px;color:#94a3b8;line-height:1.7}
+  kbd{background:#1e293b;border:1px solid #334155;border-radius:6px;padding:1px 7px;color:#e2e8f0}
+  footer{margin-top:14px;font-size:13px;color:#64748b;display:flex;justify-content:space-between;flex-wrap:wrap;gap:10px}
+  footer a{color:var(--neon);text-decoration:none}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <h1>KEYBOARD IS LYING ⌨️</h1>
+    <div class="badge">🤥 Daily Mini-Game #7 · Lying-keys typer</div>
+  </header>
+  <div class="hud">
+    <div class="chip"><span>Score</span><b id="score">0</b></div>
+    <div class="chip"><span>Popped</span><b id="popped">0</b></div>
+    <div class="chip"><span>Combo</span><b id="combo">×1</b></div>
+    <div class="chip"><span>Hearts</span><b id="hearts">❤️❤️❤️</b></div>
+    <div class="chip"><span>Best</span><b id="best">0</b></div>
+  </div>
+  <div class="stage">
+    <canvas id="game" width="960" height="540"></canvas>
+    <div class="overlay" id="startOverlay">
+      <h2>YOUR KEYBOARD IS LYING! ⌨️🤥</h2>
+      <p>Pop the glowing happy letters. Never trust the angry red ones.</p>
+      <div><button class="btn" id="startBtn">▶ Start typing</button></div>
+      <div class="keys"><kbd>A</kbd>–<kbd>Z</kbd> type the letter · tap bubbles on phone · <kbd>P</kbd> pause · <kbd>R</kbd> restart</div>
+    </div>
+    <div class="overlay hidden" id="overOverlay">
+      <h2 id="overTitle">THE KEYS LIED. YOU BELIEVED. ⌨️💥</h2>
+      <p id="finalScore">Score: 0</p>
+      <div><button class="btn" id="againBtn">↻ Type again</button><button class="btn ghost" id="shareBtn">Copy result</button></div>
+      <div class="keys" id="overJoke">Your keyboard is laughing.</div>
+    </div>
+  </div>
+  <footer><span>Built &amp; published automatically — a new mini-game every day.</span><a href="../index.html">← All daily games</a></footer>
+</div>
+<script>
+(() => {
+  const cvs=document.getElementById('game'),ctx=cvs.getContext('2d');
+  const W=cvs.width,H=cvs.height,FLOOR=H-92;
+  const scoreEl=document.getElementById('score'),poppedEl=document.getElementById('popped'),comboEl=document.getElementById('combo'),heartsEl=document.getElementById('hearts'),bestEl=document.getElementById('best');
+  const startOverlay=document.getElementById('startOverlay'),overOverlay=document.getElementById('overOverlay');
+  const KEY='keyboard-is-lying-best'; let best=+(localStorage.getItem(KEY)||0); bestEl.textContent=best;
+  let AC=null;
+  function beep(f,d,t,v,s){try{AC=AC||new(window.AudioContext||window.webkitAudioContext)();const o=AC.createOscillator(),g=AC.createGain();o.type=t||'sine';o.frequency.setValueAtTime(f,AC.currentTime);if(s)o.frequency.exponentialRampToValueAtTime(s,AC.currentTime+d);g.gain.setValueAtTime(v||0.06,AC.currentTime);g.gain.exponentialRampToValueAtTime(0.001,AC.currentTime+d);o.connect(g);g.connect(AC.destination);o.start();o.stop(AC.currentTime+d);}catch(e){}}
+  const sPop=()=>{beep(740,0.07,'square',0.06);setTimeout(()=>beep(1180,0.08,'square',0.05),45);};
+  const sGold=()=>[523,659,784,1047].forEach((f,i)=>setTimeout(()=>beep(f,0.11,'triangle',0.08),i*55));
+  const sLie=()=>beep(160,0.28,'sawtooth',0.09,60);
+  const sMiss=()=>beep(300,0.15,'triangle',0.07,120);
+  const sTrait=()=>{beep(420,0.12,'square',0.06,880);setTimeout(()=>beep(880,0.12,'square',0.06,420),120);};
+  const FAILS=["Your keyboard is laughing.","Trusted a red key. Bold.","The letters unionized against you.","Lie detector: broken.","QWERTY said: gotcha."];
+  const RANKS=[[0,"Keyboard Victim"],[200,"Typo Survivor"],[500,"Lie Spotter"],[900,"Truth Typer"],[1500,"Keyboard Whisperer"]];
+  function rankFor(s){let r=RANKS[0][1];for(const[m,n]of RANKS)if(s>=m)r=n;return r;}
+  const LETTERS='ABCDEFGHIJKLMNOPQRSTUVWXYZ'.split('');
+  let running=false,paused=false,raf=0,last=0,dead=false;
+  let objs,particles,popups,bgKeys,score,popped,combo,comboT,hearts,elapsed,spawnT,lieUnlocked,traitorT,goldT,shuffleT,kbLetters,shake,catFace,catT,level;
+  function say(t,x,y,c,big){popups.push({text:t,x,y,life:1,color:c||'#fff',big:!!big});}
+  function burst(x,y,c,n){for(let i=0;i<n;i++)particles.push({x,y,vx:(Math.random()-.5)*6,vy:(Math.random()-.9)*6,life:22+Math.random()*18,color:c,r:2+Math.random()*3,star:Math.random()<0.4});}
+  function pickLetter(){const used=new Set(objs.map(o=>o.letter));const free=LETTERS.filter(l=>!used.has(l));return free[Math.floor(Math.random()*free.length)]||'A';}
+  function makeBg(){bgKeys=[];for(let i=0;i<26;i++)bgKeys.push({x:Math.random()*W,y:Math.random()*H,letter:LETTERS[i%26],rot:(Math.random()-.5)*0.6,ph:Math.random()*6,s:0.7+Math.random()*0.8});}
+  function shuffledKB(){const a=LETTERS.slice();for(let i=a.length-1;i>0;i--){const j=Math.floor(Math.random()*(i+1));[a[i],a[j]]=[a[j],a[i]];}return a.slice(0,10);}
+  function reset(){
+    objs=[];particles=[];popups=[];score=0;popped=0;combo=1;comboT=0;hearts=3;elapsed=0;spawnT=0;lieUnlocked=false;traitorT=16;goldT=9;shuffleT=20;kbLetters=LETTERS.slice(0,10);shake=0;catFace='😺';catT=0;level=1;dead=false;
+    makeBg();scoreEl.textContent='0';poppedEl.textContent='0';comboEl.textContent='×1';heartsEl.textContent='❤️❤️❤️';
+    spawn('truth');spawn('truth');
+  }
+  function spawn(kind){
+    const letter=pickLetter(); if(!letter)return;
+    const x=50+Math.random()*(W-100);
+    const baseVy=55+elapsed*1.1+Math.random()*25;
+    const o={x,y:-34,vy:kind==='gold'?baseVy*0.85:baseVy,letter,kind,r:kind==='gold'?30:27,ph:Math.random()*6,state:'truth',switchT:0,age:0,scale:1,laugh:0};
+    if(kind==='traitor'){o.state='truth';o.switchAt=1.6+Math.random()*0.8;}
+    objs.push(o);
+  }
+  function heartsText(){return '❤️'.repeat(Math.max(0,hearts))+'🖤'.repeat(Math.max(0,3-hearts));}
+  function loseHeart(why){
+    hearts--;heartsEl.textContent=heartsText();combo=1;comboEl.textContent='×1';catFace='😵';catT=900;shake=9;sMiss();
+    if(hearts<=0)gameOver();
+  }
+  function popObj(o,idx){
+    objs.splice(idx,1);popped++;poppedEl.textContent=popped;
+    combo=comboT>0?Math.min(9,combo+1):1;comboT=3200;comboEl.textContent='×'+combo;
+    const gold=o.kind==='gold';const pts=(gold?50:10)*combo;score+=pts;scoreEl.textContent=Math.floor(score);
+    if(gold){sGold();say('GOLDEN! +'+pts,o.x,o.y-10,'#facc15',true);burst(o.x,o.y,'#facc15',26);}
+    else{sPop();say('GOTCHA! +'+pts,o.x,o.y-10,'#4ade80',false);burst(o.x,o.y,'#22d3ee',14);}
+    catFace=combo>=5?'😻':'😸';catT=700;
+  }
+  function hitLie(o,idx){
+    // lying key laughs, grows, steals points — then pops in red burst
+    o.laugh=1;o.scale=1.45;sLie();score=Math.max(0,score-25);scoreEl.textContent=Math.floor(score);
+    say('LIAR! -25',o.x,o.y-12,'#f87171',true);burst(o.x,o.y,'#ef4444',20);shake=10;catFace='😵';catT=1000;
+    objs.splice(idx,1);combo=1;comboEl.textContent='×1';
+    // lying is so funny it costs a heart only if it was a traitor betrayal? No: keep hearts for missed truths; lie hit = points+combo loss only, near-miss funny fail stays clipable
+  }
+  function handleLetter(ch){
+    if(!running||paused||dead)return;
+    ch=ch.toUpperCase(); if(!/^[A-Z]$/.test(ch))return;
+    // lowest matching object decides (closest to floor = most urgent)
+    let bestIdx=-1,bestY=-1;
+    objs.forEach((o,i)=>{if(o.letter===ch&&o.y>bestY){bestY=o.y;bestIdx=i;}});
+    if(bestIdx<0){say('WRONG KEY!',W/2,FLOOR-70,'#facc15',false);shake=5;catFace='😾';catT=600;beep(220,0.08,'square',0.04);return;}
+    const o=objs[bestIdx];
+    const isLie=o.kind==='lie'||(o.kind==='traitor'&&o.state==='lie');
+    if(isLie)hitLie(o,bestIdx); else popObj(o,bestIdx);
+  }
+  function gameOver(){
+    if(dead)return;dead=true;sLie();
+    const head=objs[0]; if(head)burst(head.x,head.y,'#f87171',24);
+    setTimeout(()=>{running=false;const fs=Math.floor(score);if(fs>best){best=fs;localStorage.setItem(KEY,best);bestEl.textContent=best;}
+      document.getElementById('finalScore').textContent='Score: '+fs+' · Popped: '+popped+' · Rank: '+rankFor(fs)+' · Best: '+best;
+      document.getElementById('overJoke').textContent=FAILS[Math.floor(Math.random()*FAILS.length)];
+      overOverlay.classList.remove('hidden');},520);
+  }
+  function start(){reset();startOverlay.classList.add('hidden');overOverlay.classList.add('hidden');running=true;paused=false;last=performance.now();cancelAnimationFrame(raf);raf=requestAnimationFrame(loop);}
+  function update(dt){
+    elapsed+=dt/1000;
+    if(comboT>0){comboT-=dt;if(comboT<=0){combo=1;comboEl.textContent='×1';}}
+    if(catT>0){catT-=dt;if(catT<=0)catFace='😺';}
+    if(shake>0)shake*=0.88;
+    // unlock liars early (twist in first 15s)
+    if(!lieUnlocked&&elapsed>7){lieUnlocked=true;say('LIARS INCOMING!',W/2,64,'#f87171',true);spawn('lie');}
+    // escalation every ~15s
+    const newLevel=1+Math.floor(elapsed/15);
+    if(newLevel>level){level=newLevel;say('FASTER LIARS!',W/2,64,'#f472b6',true);shake=4;}
+    // spawns
+    spawnT-=dt/1000;
+    if(spawnT<=0){spawnT=Math.max(0.45,1.05-elapsed*0.006);const roll=Math.random();if(lieUnlocked&&roll<0.28)spawn('lie');else spawn('truth');}
+    goldT-=dt/1000; if(goldT<=0){goldT=14+Math.random()*10;spawn('gold');say('GOLDEN KEY!',W/2,90,'#facc15',false);}
+    traitorT-=dt/1000; if(traitorT<=0&&lieUnlocked){traitorT=17+Math.random()*8;spawn('traitor');}
+    shuffleT-=dt/1000; if(shuffleT<=0){shuffleT=8;kbLetters=shuffledKB();say('KEYBOARD LIES!',W/2,FLOOR-118,'#22d3ee',true);sTrait();}
+    // move objects
+    for(let i=objs.length-1;i>=0;i--){
+      const o=objs[i];o.age+=dt/1000;o.y+=o.vy*dt/1000*(1+ (level-1)*0.08);o.ph+=dt*0.006;
+      if(o.laugh>0)o.laugh-=dt/500;
+      // TRAITOR role-switch: ONE switch only, with >=0.5s transition and 4 signals changing together (shape, main color, glow color, face) in drawTraitor()
+      if(o.kind==='traitor'&&o.state==='truth'&&o.age>o.switchAt){o.state='switching';o.switchT=0;sTrait();say('TRAITOR!',o.x,o.y-34,'#f472b6',false);}
+      else if(o.kind==='traitor'&&o.state==='switching'){o.switchT+=dt/1000;if(o.switchT>=0.75){o.state='lie';o.kind='traitor';}}
+      if(o.y>=FLOOR-10){
+        const isLie=o.kind==='lie'||(o.kind==='traitor'&&o.state==='lie');
+        objs.splice(i,1);
+        if(isLie){score+=5;scoreEl.textContent=Math.floor(score);say('DODGED! +5',o.x,FLOOR-34,'#4ade80',false);burst(o.x,FLOOR,'#94a3b8',8);}
+        else {say('MISSED!',o.x,FLOOR-34,'#f87171',true);burst(o.x,FLOOR,'#f87171',14);loseHeart();}
+        if(dead)return;
+      }
+    }
+    particles=particles.filter(p=>(p.life-=dt/16)>0);particles.forEach(p=>{p.x+=p.vx;p.y+=p.vy;p.vy+=0.14;});
+    popups=popups.filter(p=>(p.life-=0.013)>0);
+  }
+  function drawSpiky(x,y,r,color,glow,face,letter,scale,wob){
+    ctx.save();ctx.translate(x,y+Math.sin(wob)*2);ctx.scale(scale,scale);
+    ctx.shadowColor=glow;ctx.shadowBlur=16;ctx.fillStyle=color;
+    ctx.beginPath();const spikes=10;for(let i=0;i<spikes*2;i++){const ang=(i/(spikes*2))*Math.PI*2;const rad=i%2===0?r:r*0.78;const px=Math.cos(ang)*rad,py=Math.sin(ang)*rad;i===0?ctx.moveTo(px,py):ctx.lineTo(px,py);}ctx.closePath();ctx.fill();ctx.shadowBlur=0;
+    ctx.fillStyle='#fff';ctx.font='800 22px system-ui';ctx.textAlign='center';ctx.textBaseline='middle';ctx.fillText(letter,0,-4);
+    ctx.font='15px system-ui';ctx.fillText(face,0,16);
+    ctx.restore();
+  }
+  function drawRound(x,y,r,color,glow,face,letter,scale,pulse,gold){
+    ctx.save();ctx.translate(x,y);ctx.scale(scale*pulse,scale*(2-pulse));
+    ctx.shadowColor=glow;ctx.shadowBlur=22;ctx.globalAlpha=0.28;ctx.fillStyle=glow;ctx.beginPath();ctx.arc(0,0,r+9,0,Math.PI*2);ctx.fill();ctx.globalAlpha=1;
+    ctx.fillStyle=color;ctx.beginPath();ctx.arc(0,0,r,0,Math.PI*2);ctx.fill();ctx.shadowBlur=0;
+    if(gold){ctx.strokeStyle='#fef08a';ctx.lineWidth=3;ctx.beginPath();ctx.arc(0,0,r-3,0,Math.PI*2);ctx.stroke();}
+    ctx.fillStyle='#04121a';ctx.font='800 24px system-ui';ctx.textAlign='center';ctx.textBaseline='middle';ctx.fillText(letter,0,-5);
+    ctx.font='15px system-ui';ctx.fillText(face,0,15);
+    ctx.restore();
+  }
+  function lerpColor(a,b,t){const pa=[1,3,5].map(i=>parseInt(a.substr(i,2),16)),pb=[1,3,5].map(i=>parseInt(b.substr(i,2),16));return 'rgb('+pa.map((v,i)=>Math.round(v+(pb[i]-v)*t)).join(',')+')';}
+  function draw(){
+    ctx.save();if(shake)ctx.translate((Math.random()-.5)*shake,(Math.random()-.5)*shake);
+    const g=ctx.createLinearGradient(0,0,0,H);g.addColorStop(0,'#0f172a');g.addColorStop(1,'#1e1b4b');ctx.fillStyle=g;ctx.fillRect(-20,-20,W+40,H+40);
+    // background floating keys (object family: drifting keycaps)
+    for(const b of bgKeys){ctx.save();ctx.translate(b.x,b.y+Math.sin(elapsed*1.4+b.ph)*7);ctx.rotate(Math.sin(elapsed*0.7+b.ph)*0.14);ctx.globalAlpha=0.16;ctx.fillStyle='#e2e8f0';ctx.beginPath();ctx.roundRect(-15*b.s,-15*b.s,30*b.s,30*b.s,7);ctx.fill();ctx.globalAlpha=0.4;ctx.fillStyle='#fff';ctx.font='700 '+(15*b.s)+'px system-ui';ctx.textAlign='center';ctx.textBaseline='middle';ctx.fillText(b.letter,0,1);ctx.restore();}
+    ctx.globalAlpha=1;
+    // floor = the lying keyboard strip
+    ctx.fillStyle='#020617';ctx.fillRect(0,FLOOR,W,H-FLOOR);
+    ctx.strokeStyle='rgba(34,211,238,.5)';ctx.beginPath();ctx.moveTo(0,FLOOR);ctx.lineTo(W,FLOOR);ctx.stroke();
+    // visual keyboard (LIES: labels shuffled after shuffleT starts)
+    const kw=Math.min(74,(W-30)/10);kbLetters.forEach((L,i)=>{const x=15+kw/2+i*kw,y=FLOOR+42;ctx.save();ctx.translate(x,y);ctx.fillStyle='#1e293b';ctx.strokeStyle='rgba(255,255,255,.18)';ctx.beginPath();ctx.roundRect(-kw/2+4,-24,kw-8,48,9);ctx.fill();ctx.stroke();ctx.fillStyle='#e2e8f0';ctx.font='800 19px system-ui';ctx.textAlign='center';ctx.textBaseline='middle';ctx.fillText(L,0,0);ctx.restore();});
+    // combo fire behind cat
+    if(combo>=4){ctx.save();ctx.translate(W/2,FLOOR-6);ctx.globalAlpha=0.75;ctx.font=(34+Math.sin(elapsed*18)*5)+'px system-ui';ctx.textAlign='center';ctx.fillText('🔥',-34,0);ctx.fillText('🔥',34,0);ctx.restore();ctx.globalAlpha=1;}
+    // player avatar: Keyboard Cat
+    ctx.save();ctx.translate(W/2,FLOOR-18+Math.sin(elapsed*3)*2);ctx.font='40px system-ui';ctx.textAlign='center';ctx.textBaseline='middle';ctx.shadowColor='#22d3ee';ctx.shadowBlur=combo>=4?18:8;ctx.fillText(catFace,0,0);ctx.shadowBlur=0;ctx.font='11px system-ui';ctx.fillText('⌨️',0,24);ctx.restore();
+    // falling objects
+    for(const o of objs){
+      const pulse=1+Math.sin(elapsed*7+o.ph)*0.05;
+      if(o.kind==='truth')drawRound(o.x,o.y,o.r,'#a7f3d0','#4ade80','🙂',o.letter,o.scale,pulse,false);
+      else if(o.kind==='gold')drawRound(o.x,o.y,o.r,'#fde68a','#facc15','🤩',o.letter,o.scale,pulse,true);
+      else if(o.kind==='lie')drawSpiky(o.x,o.y,o.r,'#7f1d1d','#ef4444',o.laugh>0?'😈':'😠',o.letter,o.scale,elapsed*6+o.ph);
+      else if(o.kind==='traitor'){
+        if(o.state==='truth')drawRound(o.x,o.y,o.r,'#a7f3d0','#4ade80','🙂',o.letter,o.scale,pulse,false);
+        else if(o.state==='switching'){
+          // >=0.5s transition (0.75s): shape round->spiky, color green->red, glow green->red, face flickers — all 4 signals together
+          const t=Math.min(1,o.switchT/0.75);const flick=Math.sin(elapsed*34)>0;
+          const col=lerpColor('#a7f3d0','#7f1d1d',t), glow=lerpColor('#4ade80','#ef4444',t);
+          if(t<0.5)drawRound(o.x,o.y,o.r,col,glow,flick?'😠':'🙂',o.letter,o.scale,pulse,false);
+          else drawSpiky(o.x,o.y,o.r,col,glow,flick?'😠':'🙂',o.letter,o.scale,elapsed*10+o.ph);
+          ctx.save();ctx.globalAlpha=0.7+Math.sin(elapsed*30)*0.3;ctx.strokeStyle=glow;ctx.lineWidth=3;ctx.beginPath();ctx.arc(o.x,o.y,o.r+13,0,Math.PI*2);ctx.stroke();ctx.restore();
+        } else drawSpiky(o.x,o.y,o.r,'#7f1d1d','#ef4444','😠',o.letter,o.scale,elapsed*6+o.ph);
+      }
+    }
+    for(const p of particles){ctx.globalAlpha=Math.max(0,p.life/24);ctx.fillStyle=p.color;if(p.star){ctx.font='12px system-ui';ctx.textAlign='center';ctx.fillText('✦',p.x,p.y);}else{ctx.beginPath();ctx.arc(p.x,p.y,p.r,0,Math.PI*2);ctx.fill();}}
+    ctx.globalAlpha=1;
+    for(const p of popups){ctx.globalAlpha=Math.max(0,p.life);ctx.fillStyle=p.color;ctx.font='800 '+(p.big?25:15)+'px system-ui';ctx.textAlign='center';ctx.fillText(p.text,p.x,p.y-(1-p.life)*24);}
+    ctx.globalAlpha=1;
+    if(paused){ctx.fillStyle='rgba(5,5,16,.6)';ctx.fillRect(0,0,W,H);ctx.fillStyle='#fff';ctx.font='700 42px system-ui';ctx.textAlign='center';ctx.fillText('PAUSED ⌨️',W/2,H/2);}
+    ctx.restore();
+  }
+  function loop(now){if(!running){draw();return;}const dt=Math.min(40,now-last);last=now;if(!paused)update(dt);draw();raf=requestAnimationFrame(loop);}
+  addEventListener('keydown',e=>{
+    if(/^[a-zA-Z]$/.test(e.key)){if(!running&&!dead)start();handleLetter(e.key);}
+    else if(e.code==='KeyR')start();
+    else if(e.code==='KeyP'&&running){paused=!paused;draw();}
+    else if(e.code==='Space'){e.preventDefault();if(!running&&!dead)start();}
+  });
+  function canvasPos(e){const r=cvs.getBoundingClientRect();return{x:(e.clientX-r.left)*(W/r.width),y:(e.clientY-r.top)*(H/r.height)};}
+  cvs.addEventListener('pointerdown',e=>{
+    if(!running&&!dead){start();return;}
+    if(paused)return;const p=canvasPos(e);
+    let bestIdx=-1,bestD=1e9;objs.forEach((o,i)=>{const d=Math.hypot(o.x-p.x,o.y-p.y);if(d<o.r+16&&d<bestD){bestD=d;bestIdx=i;}});
+    if(bestIdx>=0){const o=objs[bestIdx];const isLie=o.kind==='lie'||(o.kind==='traitor'&&o.state==='lie');if(isLie)hitLie(o,bestIdx);else popObj(o,bestIdx);}
+  });
+  document.getElementById('startBtn').addEventListener('click',e=>{e.stopPropagation();start();});
+  document.getElementById('againBtn').addEventListener('click',e=>{e.stopPropagation();start();});
+  document.getElementById('shareBtn').addEventListener('click',async e=>{e.stopPropagation();const fs=Math.floor(score);const text='I scored '+fs+' in Keyboard Is Lying ⌨️ Popped: '+popped+' · Rank: '+rankFor(fs)+'. My keyboard lied to me.';try{await navigator.clipboard.writeText(text+' '+location.href);e.target.textContent='Copied! 📋';}catch(err){e.target.textContent=text;}setTimeout(()=>e.target.textContent='Copy result',1800);});
+  reset();draw();
+})();
+</script>
+</body>
+</html>

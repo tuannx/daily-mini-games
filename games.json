@@ -52,5 +52,14 @@
     "mechanic": "Fleeing-food snake",
     "tagline": "Classic snake, but the apple has legs — and a revenge arc.",
     "title": "Snake, But the Food Runs"
+  },
+  {
+    "date": "2026-10-08",
+    "day": 7,
+    "emoji": "⌨️",
+    "file": "games/keyboard-is-lying.html",
+    "mechanic": "Lying-keys typer",
+    "tagline": "Your keyboard is lying. Pop green. Dodge red. Trust nothing.",
+    "title": "Keyboard Is Lying"
   }
 ]
