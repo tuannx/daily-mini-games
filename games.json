@@ -70,5 +70,14 @@
     "mechanic": "No-reason clicker",
     "tagline": "One button. Zero reasons. It dodges, clones, hires a lawyer.",
     "title": "Absolutely No Reason Button"
+  },
+  {
+    "date": "2026-10-09",
+    "day": 9,
+    "emoji": "💥",
+    "file": "games/wreck-the-tower/index.html",
+    "mechanic": "3D physics demolition (Rust WASM)",
+    "tagline": "Six cannonballs, one grumpy boss block, jelly + exploding bricks. Real 3D physics — wreck it.",
+    "title": "Wreck the Tower"
   }
 ]
