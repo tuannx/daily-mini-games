@@ -61,5 +61,14 @@
     "mechanic": "Lying-keys typer",
     "tagline": "Your keyboard is lying. Pop green. Dodge red. Trust nothing.",
     "title": "Keyboard Is Lying"
+  },
+  {
+    "date": "2026-10-09",
+    "day": 8,
+    "emoji": "🔘",
+    "file": "games/absolutely-no-reason-button.html",
+    "mechanic": "No-reason clicker",
+    "tagline": "One button. Zero reasons. It dodges, clones, hires a lawyer.",
+    "title": "Absolutely No Reason Button"
   }
 ]

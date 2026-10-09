@@ -1,0 +1,257 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<title>Absolutely No Reason Button — Daily Mini-Game #8</title>
+<style>
+  :root{--neon:#22d3ee;--pink:#f472b6;--bg:#070714}
+  *{margin:0;padding:0;box-sizing:border-box}
+  html,body{background:var(--bg);color:#e2e8f0;font-family:ui-rounded,system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;min-height:100%}
+  .wrap{max-width:960px;margin:0 auto;padding:16px 14px 28px}
+  header{display:flex;align-items:baseline;justify-content:space-between;gap:12px;flex-wrap:wrap;margin-bottom:10px}
+  h1{font-size:clamp(24px,5vw,38px);background:linear-gradient(90deg,var(--neon),var(--pink));-webkit-background-clip:text;background-clip:text;color:transparent}
+  .badge{font-size:12px;border:1px solid rgba(34,211,238,.5);color:var(--neon);padding:4px 10px;border-radius:999px;white-space:nowrap}
+  .hud{display:flex;gap:10px;flex-wrap:wrap;margin:10px 0}
+  .chip{flex:1;min-width:80px;background:rgba(255,255,255,.04);border:1px solid rgba(255,255,255,.08);border-radius:12px;padding:8px 12px}
+  .chip b{display:block;font-size:20px;color:#fff}
+  .chip span{font-size:11px;text-transform:uppercase;letter-spacing:.12em;color:#94a3b8}
+  .stage{position:relative;border-radius:16px;overflow:hidden;border:1px solid rgba(34,211,238,.25);box-shadow:0 0 40px rgba(34,211,238,.12);background:#050510}
+  canvas{display:block;width:100%;height:auto;touch-action:none}
+  .overlay{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;text-align:center;background:rgba(5,5,16,.84);padding:20px;z-index:5}
+  .overlay.hidden{display:none}
+  .overlay h2{font-size:clamp(24px,5vw,36px);margin-bottom:8px;color:#fff}
+  .overlay p{color:#cbd5e1;max-width:520px;line-height:1.5;margin-bottom:16px}
+  .btn{cursor:pointer;border:0;border-radius:999px;padding:13px 28px;font-size:17px;font-weight:700;color:#04121a;background:linear-gradient(90deg,var(--neon),#67e8f9)}
+  .btn.ghost{background:transparent;color:var(--neon);border:1px solid rgba(34,211,238,.6);margin-left:8px}
+  .keys{margin-top:14px;font-size:13px;color:#94a3b8;line-height:1.7}
+  kbd{background:#1e293b;border:1px solid #334155;border-radius:6px;padding:1px 7px;color:#e2e8f0}
+  footer{margin-top:14px;font-size:13px;color:#64748b;display:flex;justify-content:space-between;flex-wrap:wrap;gap:10px}
+  footer a{color:var(--neon);text-decoration:none}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <h1>ABSOLUTELY NO REASON BUTTON 🔘</h1>
+    <div class="badge">🔘 Daily Mini-Game #8 · No-reason clicker</div>
+  </header>
+  <div class="hud">
+    <div class="chip"><span>Score</span><b id="score">0</b></div>
+    <div class="chip"><span>Presses</span><b id="presses">0</b></div>
+    <div class="chip"><span>Combo</span><b id="combo">×1</b></div>
+    <div class="chip"><span>Time</span><b id="time">60</b></div>
+    <div class="chip"><span>Best</span><b id="best">0</b></div>
+  </div>
+  <div class="stage">
+    <canvas id="game" width="960" height="540"></canvas>
+    <div class="overlay" id="startOverlay">
+      <h2>NO REASON. JUST PRESS. 🔘</h2>
+      <p>Press the glowing button. Dodge nothing. Question everything.</p>
+      <div><button class="btn" id="startBtn">▶ Press for no reason</button></div>
+      <div class="keys"><kbd>Click</kbd>/<kbd>Tap</kbd> the button · <kbd>Space</kbd> press · <kbd>P</kbd> pause · <kbd>R</kbd> restart</div>
+    </div>
+    <div class="overlay hidden" id="overOverlay">
+      <h2 id="overTitle">TIME'S UP. STILL NO REASON. 🔘</h2>
+      <p id="finalScore">Score: 0</p>
+      <div><button class="btn" id="againBtn">↻ Press again</button><button class="btn ghost" id="shareBtn">Copy result</button></div>
+      <div class="keys" id="overJoke">Zero reasons. Maximum effort.</div>
+    </div>
+  </div>
+  <footer><span>Built &amp; published automatically — a new mini-game every day.</span><a href="../index.html">← All daily games</a></footer>
+</div>
+<script>
+(() => {
+  const cvs=document.getElementById('game'),ctx=cvs.getContext('2d');
+  const W=cvs.width,H=cvs.height,FLOOR=H-54;
+  const scoreEl=document.getElementById('score'),pressesEl=document.getElementById('presses'),comboEl=document.getElementById('combo'),timeEl=document.getElementById('time'),bestEl=document.getElementById('best');
+  const startOverlay=document.getElementById('startOverlay'),overOverlay=document.getElementById('overOverlay');
+  const KEY='absolutely-no-reason-button-best',HATKEY='absolutely-no-reason-button-hat';
+  let best=+(localStorage.getItem(KEY)||0); bestEl.textContent=best;
+  let AC=null;
+  function beep(f,d,t,v,s){try{AC=AC||new(window.AudioContext||window.webkitAudioContext)();const o=AC.createOscillator(),g=AC.createGain();o.type=t||'sine';o.frequency.setValueAtTime(f,AC.currentTime);if(s)o.frequency.exponentialRampToValueAtTime(Math.max(30,s),AC.currentTime+d);g.gain.setValueAtTime(v||0.06,AC.currentTime);g.gain.exponentialRampToValueAtTime(0.001,AC.currentTime+d);o.connect(g);g.connect(AC.destination);o.start();o.stop(AC.currentTime+d);}catch(e){}}
+  const sPop=(c)=>beep(520+Math.min(500,c*22),0.08,'square',0.055,900);
+  const sGold=()=>[523,659,784,1047].forEach((f,i)=>setTimeout(()=>beep(f,0.11,'triangle',0.08),i*55));
+  const sBad=()=>beep(150,0.25,'sawtooth',0.09,60);
+  const sFake=()=>{beep(300,0.3,'sine',0.07,900);setTimeout(()=>beep(900,0.12,'square',0.06,500),260);};
+  const FAILS=["Zero reasons. Maximum effort.","The button needs therapy now.","Historians remain confused.","You were the reason all along.","Button pressed. Dignity optional."];
+  const RANKS=[[0,"Button Bystander"],[400,"Curious Presser"],[900,"Reason Denier"],[1500,"Button's Nemesis"],[2400,"No-Reason Legend"]];
+  function rankFor(s){let r=RANKS[0][1];for(const[m,n]of RANKS)if(s>=m)r=n;return r;}
+  let running=false,paused=false,raf=0,last=0,over=false;
+  let score,presses,combo,comboT,elapsed,timeLeft,level;
+  let mainBtn,minis,decoys,golden,particles,popups,crowd,ghosts;
+  let decoyT,goldT,miniT,fakeT,fakeState,fakeTimer,dodgeCd,fingerOn,fingerT,shake,hatOn;
+  function say(t,x,y,c,big){popups.push({text:t,x:Math.max(70,Math.min(W-70,x)),y,life:1,color:c||'#fff',big:!!big});}
+  function burst(x,y,c,n,confetti){for(let i=0;i<n;i++)particles.push({x,y,vx:(Math.random()-.5)*7,vy:(Math.random()-.95)*7,life:24+Math.random()*20,color:c,r:2+Math.random()*3,star:Math.random()<0.35,conf:!!confetti,rot:Math.random()*6,vr:(Math.random()-.5)*0.3});}
+  function smoke(x,y){for(let i=0;i<16;i++)particles.push({x:x+(Math.random()-.5)*40,y:y+(Math.random()-.5)*30,vx:(Math.random()-.5)*2,vy:-0.6-Math.random(),life:30+Math.random()*16,color:'#94a3b8',r:6+Math.random()*9,star:false,conf:false,rot:0,vr:0,smoke:true});}
+  function makeCrowd(){crowd=[];for(let i=0;i<28;i++)crowd.push({x:22+i*((W-44)/27),ph:Math.random()*6,c:['#22d3ee','#f472b6','#facc15','#4ade80','#a78bfa'][i%5],face:i%7===0});}
+  function reset(){
+    score=0;presses=0;combo=0;comboT=0;elapsed=0;timeLeft=60;level=1;over=false;shake=0;
+    mainBtn={x:W/2,y:H/2-20,tx:W/2,ty:H/2-20,r:58,sx:1,sy:1,squash:0,face:'🙂',dodge:0,wand:Math.random()*6};
+    minis=[];decoys=[];golden=null;particles=[];popups=[];ghosts=[];
+    decoyT=6;goldT=9;miniT=3;fakeT=7;fakeState='normal';fakeTimer=0;dodgeCd=3;fingerOn=false;fingerT=0;
+    hatOn=localStorage.getItem(HATKEY)==='1';
+    makeCrowd();
+    scoreEl.textContent='0';pressesEl.textContent='0';comboEl.textContent='×1';timeEl.textContent='60';
+  }
+  function mult(){return Math.min(5,1+Math.floor(combo/10));}
+  function addScore(base,x,y,label,color){
+    const pts=base*mult();score+=pts;scoreEl.textContent=Math.floor(score);
+    say(label+' +'+pts,x,y,color||'#4ade80',base>=50);
+    return pts;
+  }
+  function pressMain(bigBonus){
+    if(fakeState==='surrender'){say('IT BLUFFED!',mainBtn.x,mainBtn.y-84,'#f472b6',true);sFake();}
+    presses++;pressesEl.textContent=presses;
+    combo=comboT>0?combo+1:1;comboT=2800;comboEl.textContent='×'+mult();
+    mainBtn.squash=1;mainBtn.face=combo>=15?'🤪':(combo>=6?'😄':'🙂');
+    addScore(bigBonus?20:10,mainBtn.x,mainBtn.y-mainBtn.r-8,bigBonus?'BIG POP!':'POP!');
+    sPop(combo);burst(mainBtn.x,mainBtn.y,'#facc15',combo>=10?20:12,combo>=10);
+    if(presses===25&&!fingerOn){fingerOn=true;say('AUTO FINGER!',mainBtn.x,mainBtn.y-96,'#22d3ee',true);}
+    if(presses>0&&presses%30===0){burst(mainBtn.x,mainBtn.y-20,'#f472b6',30,true);say('STILL NO REASON!',mainBtn.x,60,'#facc15',true);}
+  }
+  function pressMini(m,idx){
+    minis.splice(idx,1);presses++;pressesEl.textContent=presses;
+    combo=comboT>0?combo+1:1;comboT=2800;comboEl.textContent='×'+mult();
+    addScore(15,m.x,m.y-m.r-8,'MINI POP!','#4ade80');sPop(combo+4);burst(m.x,m.y,'#4ade80',14,false);
+  }
+  function pressGolden(){
+    const gx=golden.x,gy=golden.y;golden=null;goldT=15+Math.random()*7;
+    presses++;pressesEl.textContent=presses;combo=comboT>0?combo+3:3;comboT=3200;comboEl.textContent='×'+mult();
+    addScore(50,gx,gy-44,'GOLDEN!','#facc15');sGold();burst(gx,gy,'#facc15',34,true);
+  }
+  function hitDecoy(d,idx){
+    decoys.splice(idx,1);combo=0;comboEl.textContent='×1';shake=10;sBad();
+    say('OUCH!',d.x,d.y-30,'#f87171',true);burst(d.x,d.y,'#ef4444',18,false);
+    mainBtn.face='😮';
+  }
+  function spawnDecoy(){
+    const pad=60;let x,y,tries=0;
+    do{x=pad+Math.random()*(W-pad*2);y=90+Math.random()*(FLOOR-170);tries++;}while(Math.hypot(x-mainBtn.x,y-mainBtn.y)<150&&tries<8);
+    decoys.push({x,y,r:30,vx:(Math.random()-.5)*36,vy:(Math.random()-.5)*30,ph:Math.random()*6,life:7,shake:Math.random()*6});
+  }
+  function spawnMini(){
+    const a=Math.random()*Math.PI*2,d=120+Math.random()*70;
+    const x=Math.max(50,Math.min(W-50,mainBtn.x+Math.cos(a)*d)),y=Math.max(90,Math.min(FLOOR-70,mainBtn.y+Math.sin(a)*d));
+    minis.push({x,y,r:21,vx:(Math.random()-.5)*55,vy:(Math.random()-.5)*55,ph:Math.random()*6,life:6});
+  }
+  function gameOver(){
+    if(over)return;over=true;
+    setTimeout(()=>{running=false;const fs=Math.floor(score);
+      if(fs>best){best=fs;localStorage.setItem(KEY,best);bestEl.textContent=best;}
+      if(presses>=60)localStorage.setItem(HATKEY,'1');
+      document.getElementById('finalScore').textContent='Score: '+fs+' · Presses: '+presses+' · Rank: '+rankFor(fs)+' · Best: '+best;
+      document.getElementById('overJoke').textContent=FAILS[Math.floor(Math.random()*FAILS.length)];
+      overOverlay.classList.remove('hidden');},450);
+  }
+  function start(){reset();startOverlay.classList.add('hidden');overOverlay.classList.add('hidden');running=true;paused=false;last=performance.now();cancelAnimationFrame(raf);raf=requestAnimationFrame(loop);}
+  function update(dt){
+    const s=dt/1000;elapsed+=s;timeLeft=Math.max(0,60-elapsed);timeEl.textContent=Math.ceil(timeLeft);
+    if(timeLeft<=0){gameOver();return;}
+    if(comboT>0){comboT-=dt;if(comboT<=0){combo=0;comboEl.textContent='×1';if(fakeState==='normal')mainBtn.face='🙂';}}
+    if(shake>0)shake*=0.88;
+    const newLevel=1+Math.floor(elapsed/12);
+    if(newLevel>level){level=newLevel;
+      if(level===2)say('IT DODGES!',W/2,58,'#22d3ee',true);
+      if(level===3)say('FAKE SURRENDER!',W/2,58,'#f472b6',true);
+      if(level===4){say('CLONES INCOMING!',W/2,58,'#4ade80',true);spawnMini();spawnMini();}
+      if(level===5){hatOn=true;say('LAWYER CALLED!',W/2,58,'#facc15',true);}
+    }
+    // main button gentle wander + dodge dashes (movement only: shape/color/glow/face family never changes)
+    mainBtn.wand+=s;
+    if(level>=2){dodgeCd-=s;if(dodgeCd<=0&&fakeState==='normal'){dodgeCd=2.4+Math.random()*1.8;mainBtn.dodge=0.32;ghosts.push({x:mainBtn.x,y:mainBtn.y,life:0.5});mainBtn.tx=80+Math.random()*(W-160);mainBtn.ty=100+Math.random()*(FLOOR-190);mainBtn.face='😏';}}
+    else{mainBtn.tx=W/2+Math.sin(mainBtn.wand*0.7)*130;mainBtn.ty=(H/2-20)+Math.cos(mainBtn.wand*0.9)*70;}
+    const speed=mainBtn.dodge>0?10:2.2; if(mainBtn.dodge>0)mainBtn.dodge-=s;
+    mainBtn.x+=(mainBtn.tx-mainBtn.x)*Math.min(1,s*speed);mainBtn.y+=(mainBtn.ty-mainBtn.y)*Math.min(1,s*speed);
+    if(mainBtn.squash>0)mainBtn.squash=Math.max(0,mainBtn.squash-dt/160);
+    const sq=mainBtn.squash;mainBtn.sx=1+0.28*sq;mainBtn.sy=1-0.30*sq;
+    // fake surrender cycle from level 3: deflate + white flag, then pop back bigger (still the same friendly glowing button)
+    if(level>=3&&fakeState==='normal'){fakeT-=s;if(fakeT<=0){fakeState='surrender';fakeTimer=0.9;say('SURRENDER?!',mainBtn.x,mainBtn.y-88,'#e2e8f0',false);}}
+    else if(fakeState==='surrender'){fakeTimer-=s;if(fakeTimer<=0){fakeState='popback';fakeTimer=0.45;smoke(mainBtn.x,mainBtn.y);say('FAKE OUT!',mainBtn.x,mainBtn.y-88,'#facc15',true);sFake();burst(mainBtn.x,mainBtn.y,'#e2e8f0',12,false);}}
+    else if(fakeState==='popback'){fakeTimer-=s;if(fakeTimer<=0){fakeState='normal';fakeT=6+Math.random()*4;}}
+    // spawns
+    decoyT-=s;if(decoyT<=0){decoyT=level>=5?2.6+Math.random()*1.4:3.8+Math.random()*1.8;if(elapsed>6)spawnDecoy();}
+    goldT-=s;if(goldT<=0&&!golden){golden={x:90+Math.random()*(W-180),y:100+Math.random()*(FLOOR-210),r:34,ttl:3,ph:Math.random()*6};say('GOLDEN!',golden.x,golden.y-52,'#facc15',true);goldT=99;}
+    if(golden){golden.ttl-=s;if(golden.ttl<=0){golden=null;goldT=8+Math.random()*6;}}
+    if(level>=4){miniT-=s;if(miniT<=0){miniT=3.4+Math.random()*2;if(minis.length<4)spawnMini();}}
+    if(fingerOn){fingerT-=s;if(fingerT<=0){fingerT=1.8;score+=5*mult();scoreEl.textContent=Math.floor(score);burst(mainBtn.x+mainBtn.r*0.7,mainBtn.y-mainBtn.r*0.5,'#22d3ee',6,false);beep(980,0.05,'square',0.035);}}
+    // move minis + decoys
+    for(let i=minis.length-1;i>=0;i--){const m=minis[i];m.life-=s;m.x+=m.vx*s;m.y+=m.vy*s;m.ph+=dt*0.006;if(m.x<m.r||m.x>W-m.r)m.vx*=-1;if(m.y<70||m.y>FLOOR-40)m.vy*=-1;if(m.life<=0)minis.splice(i,1);}
+    for(let i=decoys.length-1;i>=0;i--){const d=decoys[i];d.life-=s;d.x+=d.vx*s;d.y+=d.vy*s;d.shake+=dt*0.01;if(d.x<d.r||d.x>W-d.r)d.vx*=-1;if(d.y<70||d.y>FLOOR-40)d.vy*=-1;if(d.life<=0)decoys.splice(i,1);}
+    ghosts=ghosts.filter(g=>(g.life-=s)>0);
+    particles=particles.filter(p=>(p.life-=dt/16)>0);particles.forEach(p=>{p.x+=p.vx;p.y+=p.vy;p.vy+=p.smoke?-0.02:0.16;p.rot=(p.rot||0)+(p.vr||0);});
+    popups=popups.filter(p=>(p.life-=0.013)>0);
+  }
+  function drawButtonFace(x,y,face,size){ctx.font=size+'px system-ui';ctx.textAlign='center';ctx.textBaseline='middle';ctx.fillText(face,x,y);}
+  function drawMain(){
+    const m=mainBtn;let extra=1;
+    if(fakeState==='surrender')extra=0.45; else if(fakeState==='popback')extra=1.32;
+    ctx.save();ctx.translate(m.x,m.y+Math.sin(elapsed*3)*3);ctx.scale(m.sx*extra,m.sy*(fakeState==='surrender'?0.5:extra));
+    ctx.shadowColor='#facc15';ctx.shadowBlur=30;ctx.globalAlpha=0.30;ctx.fillStyle='#facc15';ctx.beginPath();ctx.arc(0,0,m.r+14,0,Math.PI*2);ctx.fill();ctx.globalAlpha=1;
+    const g=ctx.createRadialGradient(-14,-16,8,0,0,m.r);g.addColorStop(0,'#fef9c3');g.addColorStop(0.55,'#fde047');g.addColorStop(1,'#22d3ee');
+    ctx.fillStyle=g;ctx.beginPath();ctx.arc(0,0,m.r,0,Math.PI*2);ctx.fill();ctx.shadowBlur=0;
+    ctx.strokeStyle='#ecfeff';ctx.lineWidth=3;ctx.beginPath();ctx.arc(0,0,m.r-3,0,Math.PI*2);ctx.stroke();
+    ctx.fillStyle='#082f49';ctx.font='800 15px system-ui';ctx.textAlign='center';ctx.fillText('PRESS',0,16);
+    drawButtonFace(0,-14,m.face,30);
+    ctx.restore();
+    if(hatOn||level>=5){ctx.save();ctx.translate(m.x,m.y-m.r*extra-8+Math.sin(elapsed*3)*3);ctx.font='30px system-ui';ctx.textAlign='center';ctx.fillText('🎩',0,0);ctx.restore();}
+    if(fakeState==='surrender'){ctx.save();ctx.translate(m.x+34,m.y-m.r-24);ctx.font='28px system-ui';ctx.textAlign='center';ctx.fillText('🏳️',0,0);ctx.restore();}
+    if(level>=5){const a=elapsed*1.6;const lx=m.x+Math.cos(a)*92,ly=m.y+Math.sin(a)*58;ctx.save();ctx.font='24px system-ui';ctx.textAlign='center';ctx.fillText('💼',lx,ly);ctx.restore();}
+    if(fingerOn){ctx.save();ctx.translate(m.x+m.r*0.78,m.y-m.r*0.62+Math.abs(Math.sin(elapsed*5))*8);ctx.font='30px system-ui';ctx.textAlign='center';ctx.fillText('👆',0,0);ctx.restore();}
+  }
+  function draw(){
+    ctx.save();if(shake)ctx.translate((Math.random()-.5)*shake,(Math.random()-.5)*shake);
+    const g=ctx.createLinearGradient(0,0,0,H);g.addColorStop(0,'#0f172a');g.addColorStop(1,'#1e1b4b');ctx.fillStyle=g;ctx.fillRect(-20,-20,W+40,H+40);
+    // background floating mini-buttons (decor, drifting)
+    for(let i=0;i<10;i++){const bx=(i*97+elapsed*12*(i%2?1:-1))% (W+60)-30,by=50+((i*53)%360)+Math.sin(elapsed+i)*8;ctx.save();ctx.globalAlpha=0.13;ctx.fillStyle='#fde047';ctx.beginPath();ctx.arc(bx,by,13,0,Math.PI*2);ctx.fill();ctx.restore();}
+    ctx.globalAlpha=1;
+    // crowd of cheering dots (bounces harder with combo)
+    const amp=2+Math.min(11,combo*0.55)+(level-1);
+    for(const c of crowd){const by=FLOOR+24+Math.sin(elapsed*6+c.ph)*amp;ctx.save();ctx.fillStyle=c.c;ctx.beginPath();ctx.arc(c.x,by,7,0,Math.PI*2);ctx.fill();if(c.face){ctx.font='13px system-ui';ctx.textAlign='center';ctx.fillText('🙌',c.x,by-14);}ctx.restore();}
+    ctx.fillStyle='#020617';ctx.fillRect(0,FLOOR+38,W,H-FLOOR);ctx.strokeStyle='rgba(34,211,238,.45)';ctx.beginPath();ctx.moveTo(0,FLOOR+38);ctx.lineTo(W,FLOOR+38);ctx.stroke();
+    // dodge ghosts
+    for(const gh of ghosts){ctx.save();ctx.globalAlpha=gh.life*0.5;ctx.strokeStyle='#22d3ee';ctx.lineWidth=3;ctx.beginPath();ctx.arc(gh.x,gh.y,mainBtn.r,0,Math.PI*2);ctx.stroke();ctx.restore();}
+    ctx.globalAlpha=1;
+    // decoys: jagged red/purple squares, angry face, never glowing warm
+    for(const d of decoys){ctx.save();ctx.translate(d.x+Math.sin(d.shake)*2,d.y);ctx.rotate(Math.sin(d.shake*0.7)*0.12);ctx.globalAlpha=Math.min(1,d.life);ctx.fillStyle='#7f1d1d';ctx.strokeStyle='#c084fc';ctx.lineWidth=2;ctx.beginPath();const n=8;for(let i=0;i<n*2;i++){const ang=i/(n*2)*Math.PI*2;const rad=i%2===0?d.r:d.r*0.8;const px=Math.cos(ang)*rad,py=Math.sin(ang)*rad;i===0?ctx.moveTo(px,py):ctx.lineTo(px,py);}ctx.closePath();ctx.fill();ctx.stroke();drawButtonFace(0,1,'😠',24);ctx.restore();}
+    ctx.globalAlpha=1;
+    // minis: same friendly glowing family, smaller
+    for(const m of minis){ctx.save();ctx.translate(m.x,m.y);const p=1+Math.sin(elapsed*8+m.ph)*0.07;ctx.scale(p,p);ctx.shadowColor='#4ade80';ctx.shadowBlur=18;ctx.fillStyle='#bbf7d0';ctx.beginPath();ctx.arc(0,0,m.r,0,Math.PI*2);ctx.fill();ctx.shadowBlur=0;ctx.strokeStyle='#4ade80';ctx.lineWidth=2;ctx.stroke();drawButtonFace(0,1,'😉',19);ctx.restore();}
+    // golden: brightest glow, crown, 3 seconds only
+    if(golden){ctx.save();ctx.translate(golden.x,golden.y);const p=1+Math.sin(elapsed*10+golden.ph)*0.1;ctx.scale(p,p);ctx.shadowColor='#facc15';ctx.shadowBlur=42;ctx.globalAlpha=0.4;ctx.fillStyle='#facc15';ctx.beginPath();ctx.arc(0,0,golden.r+16,0,Math.PI*2);ctx.fill();ctx.globalAlpha=1;ctx.fillStyle='#fde047';ctx.beginPath();ctx.arc(0,0,golden.r,0,Math.PI*2);ctx.fill();ctx.shadowBlur=0;ctx.strokeStyle='#fff7cc';ctx.lineWidth=3;ctx.stroke();drawButtonFace(0,4,'🤩',26);ctx.font='22px system-ui';ctx.textAlign='center';ctx.fillText('👑',0,-golden.r-8);ctx.restore();}
+    drawMain();
+    for(const p of particles){ctx.globalAlpha=Math.max(0,p.life/26);ctx.fillStyle=p.color;if(p.smoke){ctx.beginPath();ctx.arc(p.x,p.y,p.r,0,Math.PI*2);ctx.fill();}else if(p.conf){ctx.save();ctx.translate(p.x,p.y);ctx.rotate(p.rot||0);ctx.fillRect(-4,-2,8,4);ctx.restore();}else if(p.star){ctx.font='12px system-ui';ctx.textAlign='center';ctx.fillText('✦',p.x,p.y);}else{ctx.beginPath();ctx.arc(p.x,p.y,p.r,0,Math.PI*2);ctx.fill();}}
+    ctx.globalAlpha=1;
+    for(const p of popups){ctx.globalAlpha=Math.max(0,p.life);ctx.fillStyle=p.color;ctx.font='800 '+(p.big?25:15)+'px system-ui';ctx.textAlign='center';ctx.fillText(p.text,p.x,p.y-(1-p.life)*24);}
+    ctx.globalAlpha=1;
+    // timer bar
+    ctx.fillStyle='rgba(255,255,255,.12)';ctx.fillRect(18,16,W-36,8);ctx.fillStyle=timeLeft<=10?'#f87171':'#22d3ee';ctx.fillRect(18,16,(W-36)*Math.max(0,timeLeft)/60,8);
+    if(paused){ctx.fillStyle='rgba(5,5,16,.6)';ctx.fillRect(0,0,W,H);ctx.fillStyle='#fff';ctx.font='700 42px system-ui';ctx.textAlign='center';ctx.fillText('PAUSED 🔘',W/2,H/2);}
+    ctx.restore();
+  }
+  function loop(now){if(!running){draw();return;}const dt=Math.min(40,now-last);last=now;if(!paused)update(dt);draw();if(running)raf=requestAnimationFrame(loop);}
+  function canvasPos(e){const r=cvs.getBoundingClientRect();return{x:(e.clientX-r.left)*(W/r.width),y:(e.clientY-r.top)*(H/r.height)};}
+  cvs.addEventListener('pointerdown',e=>{
+    if(!running&&!over){start();return;} if(!running||paused||over)return;
+    const p=canvasPos(e);
+    if(golden&&Math.hypot(golden.x-p.x,golden.y-p.y)<golden.r+16){pressGolden();return;}
+    for(let i=minis.length-1;i>=0;i--){if(Math.hypot(minis[i].x-p.x,minis[i].y-p.y)<minis[i].r+14){pressMini(minis[i],i);return;}}
+    if(Math.hypot(mainBtn.x-p.x,mainBtn.y-p.y)<mainBtn.r+16){pressMain(fakeState==='popback');return;}
+    for(let i=decoys.length-1;i>=0;i--){if(Math.hypot(decoys[i].x-p.x,decoys[i].y-p.y)<decoys[i].r+12){hitDecoy(decoys[i],i);return;}}
+    // near miss: clicked just beside a decoy and lived
+    for(const d of decoys){if(Math.hypot(d.x-p.x,d.y-p.y)<d.r+52){score+=5;scoreEl.textContent=Math.floor(score);say('SO CLOSE! +5',p.x,p.y-12,'#facc15',false);burst(p.x,p.y,'#facc15',7,false);beep(660,0.06,'triangle',0.04);return;}}
+    burst(p.x,p.y,'#64748b',5,false);
+  });
+  addEventListener('keydown',e=>{
+    if(e.code==='Space'){e.preventDefault();if(!running&&!over)start();else if(running&&!paused&&!over)pressMain(fakeState==='popback');}
+    else if(e.code==='KeyR')start();
+    else if(e.code==='KeyP'&&running){paused=!paused;draw();}
+  });
+  document.getElementById('startBtn').addEventListener('click',e=>{e.stopPropagation();start();});
+  document.getElementById('againBtn').addEventListener('click',e=>{e.stopPropagation();start();});
+  document.getElementById('shareBtn').addEventListener('click',async e=>{e.stopPropagation();const fs=Math.floor(score);const text='I pressed a button '+presses+' times for no reason and scored '+fs+' — Rank: '+rankFor(fs)+'.';try{await navigator.clipboard.writeText(text+' '+location.href);e.target.textContent='Copied! 📋';}catch(err){e.target.textContent=text;}setTimeout(()=>e.target.textContent='Copy result',1800);});
+  reset();draw();
+})();
+</script>
+</body>
+</html>
