@@ -79,5 +79,14 @@
     "mechanic": "3D physics demolition (Rust WASM)",
     "tagline": "Six cannonballs, one grumpy boss block, jelly + exploding bricks. Real 3D physics — wreck it.",
     "title": "Wreck the Tower"
+  },
+  {
+    "date": "2026-10-10",
+    "day": 10,
+    "emoji": "🍿",
+    "file": "games/popcorn-panic.html",
+    "mechanic": "Popping catch chaos",
+    "tagline": "Catch the glowing pops, dodge the furious red kernels — then the pan flips your controls.",
+    "title": "Popcorn Panic"
   }
 ]

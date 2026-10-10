@@ -1,0 +1,345 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<title>Popcorn Panic — Daily Mini-Game #10</title>
+<style>
+  :root{--neon:#22d3ee;--pink:#f472b6;--bg:#070714}
+  *{margin:0;padding:0;box-sizing:border-box}
+  html,body{background:var(--bg);color:#e2e8f0;font-family:ui-rounded,system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;min-height:100%}
+  .wrap{max-width:960px;margin:0 auto;padding:16px 14px 28px}
+  header{display:flex;align-items:baseline;justify-content:space-between;gap:12px;flex-wrap:wrap;margin-bottom:10px}
+  h1{font-size:clamp(24px,5vw,38px);background:linear-gradient(90deg,#fbbf24,var(--pink));-webkit-background-clip:text;background-clip:text;color:transparent}
+  .badge{font-size:12px;border:1px solid rgba(251,191,36,.5);color:#fbbf24;padding:4px 10px;border-radius:999px;white-space:nowrap}
+  .hud{display:flex;gap:10px;flex-wrap:wrap;margin:10px 0}
+  .chip{flex:1;min-width:80px;background:rgba(255,255,255,.04);border:1px solid rgba(255,255,255,.08);border-radius:12px;padding:8px 12px}
+  .chip b{display:block;font-size:20px;color:#fff}
+  .chip span{font-size:11px;text-transform:uppercase;letter-spacing:.12em;color:#94a3b8}
+  .stage{position:relative;border-radius:16px;overflow:hidden;border:1px solid rgba(251,191,36,.25);box-shadow:0 0 40px rgba(251,191,36,.12);background:#0d0716}
+  canvas{display:block;width:100%;height:auto;touch-action:none}
+  .overlay{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;text-align:center;background:rgba(5,5,16,.82);padding:20px;z-index:5}
+  .overlay.hidden{display:none}
+  .overlay h2{font-size:clamp(24px,5vw,36px);margin-bottom:8px;color:#fff}
+  .overlay p{color:#cbd5e1;max-width:520px;line-height:1.5;margin-bottom:16px}
+  .btn{cursor:pointer;border:0;border-radius:999px;padding:13px 28px;font-size:17px;font-weight:700;color:#1a1002;background:linear-gradient(90deg,#fbbf24,#f472b6)}
+  .btn.ghost{background:transparent;color:#fbbf24;border:1px solid rgba(251,191,36,.6);margin-left:8px}
+  .keys{margin-top:14px;font-size:13px;color:#94a3b8;line-height:1.7}
+  kbd{background:#1e293b;border:1px solid #334155;border-radius:6px;padding:1px 7px;color:#e2e8f0}
+  footer{margin-top:14px;font-size:13px;color:#64748b;display:flex;justify-content:space-between;flex-wrap:wrap;gap:10px}
+  footer a{color:#fbbf24;text-decoration:none}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <h1>POPCORN PANIC 🍿</h1>
+    <div class="badge">🍿 Daily Mini-Game #10 · Popping catch chaos</div>
+  </header>
+  <div class="hud">
+    <div class="chip"><span>Score</span><b id="score">0</b></div>
+    <div class="chip"><span>Caught 🍿</span><b id="caught">0</b></div>
+    <div class="chip"><span>Combo</span><b id="combo">×1</b></div>
+    <div class="chip"><span>Lives</span><b id="lives">❤❤❤</b></div>
+    <div class="chip"><span>Best</span><b id="best">0</b></div>
+  </div>
+  <div class="stage">
+    <canvas id="game" width="960" height="540"></canvas>
+    <div class="overlay" id="startOverlay">
+      <h2>THE CORN FIGHTS BACK. 🍿💥</h2>
+      <p>Catch the glowing pops. Dodge the angry red ones.</p>
+      <div><button class="btn" id="startBtn">▶ Start popping</button></div>
+      <div class="keys"><kbd>←</kbd><kbd>→</kbd> / mouse / touch move bowl · <kbd>P</kbd> pause · <kbd>R</kbd> restart</div>
+    </div>
+    <div class="overlay hidden" id="overOverlay">
+      <h2 id="overTitle">FULLY POPPED. 🍿</h2>
+      <p id="finalScore">Score: 0</p>
+      <div><button class="btn" id="againBtn">↻ Pop again</button><button class="btn ghost" id="shareBtn">Copy result</button></div>
+      <div class="keys" id="overJoke">The kernels are celebrating.</div>
+    </div>
+  </div>
+  <footer><span>Built &amp; published automatically — a new mini-game every day.</span><a href="../index.html">← All daily games</a></footer>
+</div>
+<script>
+(() => {
+  const cvs = document.getElementById('game'), ctx = cvs.getContext('2d');
+  const W = cvs.width, H = cvs.height;
+  const scoreEl = document.getElementById('score'), caughtEl = document.getElementById('caught'),
+    comboEl = document.getElementById('combo'), livesEl = document.getElementById('lives'), bestEl = document.getElementById('best');
+  const startOverlay = document.getElementById('startOverlay'), overOverlay = document.getElementById('overOverlay');
+  const KEY = 'popcorn-panic-best'; let best = +(localStorage.getItem(KEY) || 0); bestEl.textContent = best;
+
+  let AC = null;
+  function beep(f, d, t, v, s) { try { AC = AC || new (window.AudioContext || window.webkitAudioContext)(); const o = AC.createOscillator(), g = AC.createGain(); o.type = t || 'sine'; o.frequency.setValueAtTime(f, AC.currentTime); if (s) o.frequency.exponentialRampToValueAtTime(s, AC.currentTime + d); g.gain.setValueAtTime(v || 0.06, AC.currentTime); g.gain.exponentialRampToValueAtTime(0.001, AC.currentTime + d); o.connect(g); g.connect(AC.destination); o.start(); o.stop(AC.currentTime + d); } catch (e) {} }
+  const sPop = () => beep(500 + Math.random() * 400, 0.07, 'square', 0.05, 900);
+  const sCatch = () => { beep(760, 0.06, 'triangle', 0.06); };
+  const sGold = () => [523, 659, 784, 1047].forEach((f, i) => setTimeout(() => beep(f, 0.1, 'triangle', 0.07), i * 50));
+  const sBoom = () => beep(160, 0.35, 'sawtooth', 0.1, 40);
+  const sFlip = () => beep(300, 0.2, 'square', 0.06, 800);
+
+  // ---- state ----
+  let running = false, paused = false, over = false;
+  let score = 0, caught = 0, lives = 3, combo = 1, comboTimer = 0;
+  let t = 0, spawnTimer = 0, flipTimer = 14, flipped = 0, level = 1;
+  let popups = [], particles = [], flames = [];
+  const bowl = { x: W / 2, w: 130, h: 34, y: H - 60, vx: 0, squash: 0, tilt: 0 };
+  let items = []; // {x,y,vx,vy,type:'pop'|'bomb'|'gold',rot,vr,squash}
+  let kernels = []; // heating on the pan {x,heat,shake}
+  const keysDown = {};
+  let pointerX = null;
+
+  const RANKS = [[0, 'RAW KERNEL'], [60, 'WARM-UP ACT'], [150, 'POP STAR'], [300, 'BUTTER ROYALTY'], [500, 'KERNEL COLONEL'], [800, 'POPCORN DEITY']];
+  const FAIL_LINES = ['The kernels are celebrating.', 'You got out-popped by corn.', 'The pan sends its regards.', 'Butter could not save you.', 'Somewhere, a kernel brags about this.'];
+  const POP_WORDS = ['POP!', 'NICE!', 'SNACKED!', 'BUTTERY!'];
+
+  function rank() { let r = RANKS[0][1]; for (const [th, name] of RANKS) if (score >= th) r = name; return r; }
+
+  function reset() {
+    score = 0; caught = 0; lives = 3; combo = 1; comboTimer = 0;
+    t = 0; spawnTimer = 0.4; flipTimer = 12; flipped = 0; level = 1;
+    popups = []; particles = []; items = []; kernels = [];
+    bowl.x = W / 2; bowl.squash = 0;
+    over = false;
+    for (let i = 0; i < 14; i++) flames.push({ x: Math.random() * W, p: Math.random() * 6.28 });
+    syncHud();
+  }
+  function syncHud() {
+    scoreEl.textContent = score; caughtEl.textContent = caught;
+    comboEl.textContent = '×' + combo;
+    livesEl.textContent = '❤'.repeat(Math.max(0, lives)) || '💀';
+    if (score > best) { best = score; bestEl.textContent = best; localStorage.setItem(KEY, best); }
+  }
+  function popup(x, y, text, color) { popups.push({ x, y, text, color: color || '#fff', life: 1 }); }
+  function burst(x, y, color, n) { for (let i = 0; i < n; i++) particles.push({ x, y, vx: (Math.random() - 0.5) * 300, vy: -Math.random() * 260 - 40, life: 0.6 + Math.random() * 0.4, color, r: 2 + Math.random() * 4 }); }
+
+  function spawnKernel() {
+    kernels.push({ x: 60 + Math.random() * (W - 120), heat: 0, shake: 0 });
+  }
+  function launch(k) {
+    const roll = Math.random();
+    let type = 'pop';
+    if (roll > 0.965) type = 'gold'; else if (roll > 0.78 - Math.min(0.12, level * 0.015)) type = 'bomb';
+    items.push({ x: k.x, y: H - 118, vx: (Math.random() - 0.5) * 160, vy: -(560 + Math.random() * 240 + level * 18), type, rot: Math.random() * 6.28, vr: (Math.random() - 0.5) * 6, squash: 1 });
+    sPop();
+  }
+
+  function startGame() {
+    reset(); running = true; paused = false;
+    startOverlay.classList.add('hidden'); overOverlay.classList.add('hidden');
+    requestAnimationFrame(loop);
+  }
+  function endGame() {
+    over = true; running = false; sBoom();
+    burst(bowl.x, bowl.y, '#f87171', 40); burst(bowl.x, bowl.y, '#fde68a', 30);
+    document.getElementById('overTitle').textContent = 'FULLY POPPED. 🍿';
+    document.getElementById('finalScore').textContent = 'Score: ' + score + ' · ' + caught + ' caught · Rank: ' + rank();
+    document.getElementById('overJoke').textContent = FAIL_LINES[Math.floor(Math.random() * FAIL_LINES.length)];
+    overOverlay.classList.remove('hidden');
+    syncHud();
+  }
+
+  // ---- input ----
+  addEventListener('keydown', e => {
+    keysDown[e.key.toLowerCase()] = true;
+    if (e.key.toLowerCase() === 'p' && running) paused = !paused;
+    if (e.key.toLowerCase() === 'r' && (over || running)) startGame();
+    if (['arrowleft', 'arrowright', ' '].includes(e.key.toLowerCase())) e.preventDefault();
+  });
+  addEventListener('keyup', e => keysDown[e.key.toLowerCase()] = false);
+  function canvasX(clientX) { const r = cvs.getBoundingClientRect(); return (clientX - r.left) * (W / r.width); }
+  cvs.addEventListener('pointermove', e => pointerX = canvasX(e.clientX));
+  cvs.addEventListener('pointerdown', e => { pointerX = canvasX(e.clientX); if (!running && !over) startGame(); else if (over) startGame(); });
+  document.getElementById('startBtn').onclick = startGame;
+  document.getElementById('againBtn').onclick = startGame;
+  document.getElementById('shareBtn').onclick = () => {
+    const txt = '🍿 I scored ' + score + ' in Popcorn Panic (' + rank() + ') — the pan flipped my controls and I still popped. ' + location.href;
+    (navigator.clipboard ? navigator.clipboard.writeText(txt) : Promise.reject()).then(() => popup(W / 2, H / 2, 'COPIED!', '#fbbf24')).catch(() => {});
+  };
+
+  // ---- update ----
+  let last = 0;
+  function loop(ts) {
+    if (!running) return;
+    const dt = Math.min(0.033, (ts - last) / 1000 || 0.016); last = ts;
+    if (!paused) update(dt);
+    draw();
+    if (running) requestAnimationFrame(loop);
+  }
+
+  function update(dt) {
+    t += dt;
+    level = 1 + Math.floor(t / 15);
+    // PAN FLIP twist
+    flipTimer -= dt;
+    if (flipTimer <= 0) { flipped = 4; flipTimer = 13 + Math.random() * 5; popup(W / 2, 120, 'PAN FLIP!', '#f472b6'); sFlip(); }
+    if (flipped > 0) flipped -= dt;
+
+    // bowl movement
+    const dirSign = flipped > 0 ? -1 : 1;
+    let mv = 0;
+    if (keysDown['arrowleft'] || keysDown['a']) mv -= 1;
+    if (keysDown['arrowright'] || keysDown['d']) mv += 1;
+    if (pointerX !== null) { const d = pointerX - bowl.x; bowl.x += d * Math.min(1, dt * 14) * dirSign; bowl.tilt = Math.max(-0.25, Math.min(0.25, d * 0.002 * dirSign)); }
+    bowl.x += mv * 560 * dt * dirSign;
+    bowl.tilt += ((mv * 0.18 * dirSign) - bowl.tilt) * dt * 10;
+    bowl.x = Math.max(bowl.w / 2, Math.min(W - bowl.w / 2, bowl.x));
+    bowl.squash = Math.max(0, bowl.squash - dt * 5);
+
+    if (comboTimer > 0) { comboTimer -= dt; if (comboTimer <= 0) { combo = 1; syncHud(); } }
+
+    // kernels heating on pan
+    spawnTimer -= dt;
+    if (spawnTimer <= 0 && kernels.length < 7) { spawnKernel(); spawnTimer = Math.max(0.35, 1.05 - level * 0.09); }
+    for (const k of kernels) { k.heat += dt * (0.55 + level * 0.06); k.shake = k.heat > 0.75 ? (k.heat - 0.75) * 14 : 0; }
+    kernels = kernels.filter(k => { if (k.heat >= 1) { launch(k); return false; } return true; });
+
+    // items physics
+    for (const it of items) {
+      it.vy += 900 * dt; it.x += it.vx * dt; it.y += it.vy * dt; it.rot += it.vr * dt;
+      if (it.x < 16) { it.x = 16; it.vx = Math.abs(it.vx) * 0.7; }
+      if (it.x > W - 16) { it.x = W - 16; it.vx = -Math.abs(it.vx) * 0.7; }
+    }
+    // collisions with bowl (only while falling)
+    const topY = bowl.y - (flipped > 0 ? -6 : 0);
+    items = items.filter(it => {
+      const inX = Math.abs(it.x - bowl.x) < bowl.w / 2;
+      if (it.vy > 0 && inX && it.y > topY - 12 && it.y < bowl.y + 26) {
+        if (it.type === 'bomb') {
+          lives--; combo = 1; bowl.squash = 1; sBoom();
+          burst(it.x, it.y, '#f87171', 26); popup(it.x, it.y - 30, 'OUCH!', '#f87171');
+          syncHud(); if (lives <= 0) { endGame(); } return false;
+        }
+        const pts = it.type === 'gold' ? 50 : 10;
+        score += pts * combo; caught++;
+        if (it.type === 'gold') { sGold(); popup(it.x, it.y - 30, 'GOLDEN!', '#fde047'); burst(it.x, it.y, '#fde047', 18); }
+        else { sCatch(); popup(it.x, it.y - 30, POP_WORDS[Math.floor(Math.random() * POP_WORDS.length)], '#fde68a'); }
+        bowl.squash = 0.7;
+        combo = Math.min(8, combo + (comboTimer > 0 ? 1 : 0)); comboTimer = 2.2;
+        burst(it.x, it.y, '#fff7cc', 6);
+        syncHud(); return false;
+      }
+      if (it.y > H - 100) { // hit the pan
+        if (it.type === 'pop' || it.type === 'gold') { popup(it.x, H - 130, 'SO CLOSE!', '#94a3b8'); combo = 1; syncHud(); }
+        burst(it.x, H - 100, it.type === 'bomb' ? '#f87171' : '#78716c', 8);
+        if (it.type === 'bomb') sPop();
+        return false;
+      }
+      return true;
+    });
+
+    for (const p of popups) { p.y -= 44 * dt; p.life -= dt * 0.9; }
+    popups = popups.filter(p => p.life > 0);
+    for (const p of particles) { p.vy += 700 * dt; p.x += p.vx * dt; p.y += p.vy * dt; p.life -= dt; }
+    particles = particles.filter(p => p.life > 0);
+  }
+
+  // ---- draw ----
+  function face(x, y, mood, s) {
+    ctx.save(); ctx.translate(x, y); ctx.scale(s, s);
+    ctx.fillStyle = '#1f2937';
+    if (mood === 'angry') {
+      ctx.fillRect(-9, -6, 6, 6); ctx.fillRect(3, -6, 6, 6);
+      ctx.save(); ctx.rotate(0.5); ctx.fillRect(-11, -13, 8, 3); ctx.restore();
+      ctx.save(); ctx.rotate(-0.5); ctx.fillRect(3, -13, 8, 3); ctx.restore();
+      ctx.beginPath(); ctx.arc(0, 8, 5, Math.PI * 1.15, Math.PI * 1.85); ctx.strokeStyle = '#1f2937'; ctx.lineWidth = 2.5; ctx.stroke();
+    } else if (mood === 'panic') {
+      ctx.beginPath(); ctx.arc(-6, -4, 3, 0, 7); ctx.arc(6, -4, 3, 0, 7); ctx.fill();
+      ctx.beginPath(); ctx.arc(0, 7, 4, 0, 7); ctx.fill();
+    } else {
+      ctx.beginPath(); ctx.arc(-6, -4, 2.6, 0, 7); ctx.arc(6, -4, 2.6, 0, 7); ctx.fill();
+      ctx.beginPath(); ctx.arc(0, 3, 6, 0.15 * Math.PI, 0.85 * Math.PI); ctx.strokeStyle = '#1f2937'; ctx.lineWidth = 2.5; ctx.stroke();
+    }
+    ctx.restore();
+  }
+
+  function draw() {
+    ctx.clearRect(0, 0, W, H);
+    const g = ctx.createLinearGradient(0, 0, 0, H); g.addColorStop(0, '#160a24'); g.addColorStop(1, '#0d0716');
+    ctx.fillStyle = g; ctx.fillRect(0, 0, W, H);
+
+    // background: floating butter splats (object family 6)
+    ctx.fillStyle = 'rgba(251,191,36,0.10)';
+    for (let i = 0; i < 6; i++) { const bx = (i * 173 + t * 14) % (W + 60) - 30, by = 60 + (i * 67) % 220; ctx.beginPath(); ctx.arc(bx, by, 13 + (i % 3) * 5, 0, 7); ctx.fill(); }
+
+    // stove flames (family 7)
+    for (const f of flames) {
+      const fh = 26 + Math.sin(t * 9 + f.p) * 9;
+      ctx.fillStyle = 'rgba(249,115,22,0.75)';
+      ctx.beginPath(); ctx.moveTo(f.x - 13, H - 92); ctx.quadraticCurveTo(f.x, H - 92 - fh, f.x + 13, H - 92); ctx.fill();
+      ctx.fillStyle = 'rgba(253,224,71,0.9)';
+      ctx.beginPath(); ctx.moveTo(f.x - 6, H - 92); ctx.quadraticCurveTo(f.x, H - 92 - fh * 0.55, f.x + 6, H - 92); ctx.fill();
+    }
+    // pan (family 7b)
+    ctx.fillStyle = '#1f2430'; ctx.strokeStyle = '#f97316'; ctx.lineWidth = 3;
+    ctx.beginPath(); ctx.roundRect(30, H - 96, W - 60, 26, 12); ctx.fill(); ctx.stroke();
+
+    // heating kernels (family 1: unpopped kernel, shakes + reddens)
+    for (const k of kernels) {
+      const jx = (Math.random() - 0.5) * k.shake, jy = (Math.random() - 0.5) * k.shake * 0.6;
+      const r = 11 + k.heat * 4;
+      ctx.save(); ctx.translate(k.x + jx, H - 104 + jy);
+      const grad = ctx.createRadialGradient(0, 0, 2, 0, 0, r);
+      grad.addColorStop(0, k.heat > 0.7 ? '#fca5a5' : '#fde68a'); grad.addColorStop(1, k.heat > 0.7 ? '#dc2626' : '#d97706');
+      ctx.fillStyle = grad; ctx.beginPath(); ctx.arc(0, 0, r, 0, 7); ctx.fill();
+      if (k.heat > 0.45) face(0, 0, 'panic', 0.8);
+      ctx.restore();
+    }
+
+    // flying items
+    for (const it of items) {
+      ctx.save(); ctx.translate(it.x, it.y); ctx.rotate(it.rot);
+      if (it.type === 'pop') {
+        // popped corn: the ONLY glowing family
+        ctx.shadowColor = '#fde047'; ctx.shadowBlur = 18;
+        ctx.fillStyle = '#fff7cc';
+        ctx.beginPath(); ctx.arc(0, 0, 13, 0, 7); ctx.arc(-9, 5, 9, 0, 7); ctx.arc(9, 5, 9, 0, 7); ctx.arc(0, -8, 10, 0, 7); ctx.fill();
+        ctx.shadowBlur = 0; face(0, 0, 'happy', 0.85);
+      } else if (it.type === 'gold') {
+        ctx.shadowColor = '#f59e0b'; ctx.shadowBlur = 26;
+        ctx.fillStyle = '#fbbf24';
+        ctx.beginPath(); ctx.arc(0, 0, 14, 0, 7); ctx.arc(-10, 5, 9, 0, 7); ctx.arc(10, 5, 9, 0, 7); ctx.fill();
+        ctx.shadowBlur = 0; face(0, 0, 'happy', 0.9);
+      } else {
+        // bomb kernel: angry, red/purple — the avoid family
+        ctx.fillStyle = '#7f1d2e';
+        ctx.beginPath(); ctx.arc(0, 0, 14 + Math.sin(t * 16) * 1.5, 0, 7); ctx.fill();
+        ctx.fillStyle = '#ef4444'; ctx.beginPath(); ctx.arc(0, 0, 10, 0, 7); ctx.fill();
+        face(0, 0, 'angry', 0.95);
+      }
+      ctx.restore();
+    }
+
+    // bowl (player, family 2) — flips upside down during PAN FLIP
+    ctx.save(); ctx.translate(bowl.x, bowl.y); ctx.rotate(bowl.tilt);
+    const sq = 1 - bowl.squash * 0.25;
+    ctx.scale(1 + bowl.squash * 0.15, sq);
+    if (flipped > 0) ctx.rotate(Math.PI);
+    ctx.fillStyle = flipped > 0 ? '#f472b6' : '#38bdf8';
+    ctx.strokeStyle = '#e0f2fe'; ctx.lineWidth = 3;
+    ctx.beginPath(); ctx.moveTo(-bowl.w / 2, -14); ctx.quadraticCurveTo(0, 30, bowl.w / 2, -14); ctx.closePath(); ctx.fill(); ctx.stroke();
+    ctx.fillStyle = '#0ea5e9'; ctx.fillRect(-bowl.w / 2 - 6, -20, bowl.w + 12, 9);
+    face(0, 2, flipped > 0 ? 'panic' : 'happy', 1);
+    ctx.restore();
+
+    // particles (family 5)
+    for (const p of particles) { ctx.globalAlpha = Math.max(0, p.life); ctx.fillStyle = p.color; ctx.beginPath(); ctx.arc(p.x, p.y, p.r, 0, 7); ctx.fill(); }
+    ctx.globalAlpha = 1;
+
+    // HUD in-canvas: hook line + flip warning + rank
+    ctx.textAlign = 'center';
+    ctx.fillStyle = '#fde68a'; ctx.font = '700 22px system-ui';
+    ctx.fillText(flipped > 0 ? 'PAN FLIPPED!' : 'CATCH THE GLOW!', W / 2, 34);
+    ctx.fillStyle = '#94a3b8'; ctx.font = '600 15px system-ui';
+    ctx.fillText(rank() + ' · Lv ' + level, W / 2, 58);
+    if (paused) { ctx.fillStyle = '#fff'; ctx.font = '800 40px system-ui'; ctx.fillText('PAUSED', W / 2, H / 2); }
+
+    // popups
+    ctx.font = '800 20px system-ui';
+    for (const p of popups) { ctx.globalAlpha = Math.max(0, p.life); ctx.fillStyle = p.color; ctx.fillText(p.text, p.x, p.y); }
+    ctx.globalAlpha = 1; ctx.textAlign = 'left';
+  }
+  draw();
+})();
+</script>
+</body>
+</html>
