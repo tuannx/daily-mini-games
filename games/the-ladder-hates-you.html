@@ -1,0 +1,537 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<title>The Ladder Hates You — Daily Mini-Game #11</title>
+<style>
+  :root{--neon:#22d3ee;--pink:#f472b6;--bg:#070714}
+  *{margin:0;padding:0;box-sizing:border-box}
+  html,body{background:var(--bg);color:#e2e8f0;font-family:ui-rounded,system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;min-height:100%}
+  .wrap{max-width:960px;margin:0 auto;padding:16px 14px 28px}
+  header{display:flex;align-items:baseline;justify-content:space-between;gap:12px;flex-wrap:wrap;margin-bottom:10px}
+  h1{font-size:clamp(24px,5vw,38px);background:linear-gradient(90deg,#fbbf24,#f472b6);-webkit-background-clip:text;background-clip:text;color:transparent}
+  .badge{font-size:12px;border:1px solid rgba(251,191,36,.5);color:#fbbf24;padding:4px 10px;border-radius:999px;white-space:nowrap}
+  .hud{display:flex;gap:10px;flex-wrap:wrap;margin:10px 0}
+  .chip{flex:1;min-width:80px;background:rgba(255,255,255,.04);border:1px solid rgba(255,255,255,.08);border-radius:12px;padding:8px 12px}
+  .chip b{display:block;font-size:20px;color:#fff}
+  .chip span{font-size:11px;text-transform:uppercase;letter-spacing:.12em;color:#94a3b8}
+  .stage{position:relative;border-radius:16px;overflow:hidden;border:1px solid rgba(251,191,36,.25);box-shadow:0 0 40px rgba(251,191,36,.12);background:#0b0b18}
+  canvas{display:block;width:100%;height:auto;touch-action:none}
+  .overlay{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;text-align:center;background:rgba(5,5,16,.82);padding:20px;z-index:5}
+  .overlay.hidden{display:none}
+  .overlay h2{font-size:clamp(24px,5vw,36px);margin-bottom:8px;color:#fff}
+  .overlay p{color:#cbd5e1;max-width:520px;line-height:1.5;margin-bottom:16px}
+  .btn{cursor:pointer;border:0;border-radius:999px;padding:13px 28px;font-size:17px;font-weight:700;color:#1a1002;background:linear-gradient(90deg,#fbbf24,#f472b6)}
+  .btn.ghost{background:transparent;color:#fbbf24;border:1px solid rgba(251,191,36,.6);margin-left:8px}
+  .keys{margin-top:14px;font-size:13px;color:#94a3b8;line-height:1.7}
+  kbd{background:#1e293b;border:1px solid #334155;border-radius:6px;padding:1px 7px;color:#e2e8f0}
+  footer{margin-top:14px;font-size:13px;color:#64748b;display:flex;justify-content:space-between;flex-wrap:wrap;gap:10px}
+  footer a{color:#fbbf24;text-decoration:none}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <h1>THE LADDER HATES YOU 🪜</h1>
+    <div class="badge">🪜 Daily Mini-Game #11 · Rage-bait one-tap climber</div>
+  </header>
+  <div class="hud">
+    <div class="chip"><span>Score</span><b id="score">0</b></div>
+    <div class="chip"><span>Height</span><b id="height">0</b></div>
+    <div class="chip"><span>Combo</span><b id="combo">×1</b></div>
+    <div class="chip"><span>Lives</span><b id="lives">❤❤❤</b></div>
+    <div class="chip"><span>Best</span><b id="best">0</b></div>
+  </div>
+  <div class="stage">
+    <canvas id="game" width="960" height="540"></canvas>
+    <div class="overlay" id="startOverlay">
+      <h2>YOU CAN'T MOVE. THE RUNGS CAN. 🪜</h2>
+      <p>Tap to jump up one rung. Time it — the rungs slide, flee, and hold grudges.</p>
+      <div><button class="btn" id="startBtn">▶ Start climbing</button></div>
+      <div class="keys"><kbd>Tap</kbd>/<kbd>Space</kbd> jump · <kbd>P</kbd> pause · <kbd>R</kbd> restart</div>
+    </div>
+    <div class="overlay hidden" id="overOverlay">
+      <h2 id="overTitle">GRAVITY WINS. 🪜💥</h2>
+      <p id="finalScore">Score: 0</p>
+      <div><button class="btn" id="againBtn">↻ Climb again</button><button class="btn ghost" id="shareBtn">Copy result</button></div>
+      <div class="keys" id="overJoke">The ladder filed a complaint.</div>
+    </div>
+  </div>
+  <footer><span>Built &amp; published automatically — a new mini-game every day.</span><a href="../index.html">← All daily games</a></footer>
+</div>
+<script>
+(() => {
+  const cvs = document.getElementById('game'), ctx = cvs.getContext('2d');
+  const W = cvs.width, H = cvs.height;
+  const scoreEl = document.getElementById('score'), heightEl = document.getElementById('height'),
+    comboEl = document.getElementById('combo'), livesEl = document.getElementById('lives'), bestEl = document.getElementById('best');
+  const startOverlay = document.getElementById('startOverlay'), overOverlay = document.getElementById('overOverlay');
+  const KEY = 'ladder-hates-you-best'; let best = +(localStorage.getItem(KEY) || 0); bestEl.textContent = best;
+
+  let AC = null;
+  function beep(f, d, t, v, s) { try { AC = AC || new (window.AudioContext || window.webkitAudioContext)(); const o = AC.createOscillator(), g = AC.createGain(); o.type = t || 'sine'; o.frequency.setValueAtTime(f, AC.currentTime); if (s) o.frequency.exponentialRampToValueAtTime(s, AC.currentTime + d); g.gain.setValueAtTime(v || 0.06, AC.currentTime); g.gain.exponentialRampToValueAtTime(0.001, AC.currentTime + d); o.connect(g); g.connect(AC.destination); o.start(); o.stop(AC.currentTime + d); } catch (e) {} }
+  const sJump = () => beep(300, 0.12, 'square', 0.05, 700);
+  const sLand = () => beep(170, 0.08, 'triangle', 0.07, 90);
+  const sGold = () => [523, 659, 784, 1047].forEach((f, i) => setTimeout(() => beep(f, 0.1, 'triangle', 0.07), i * 50));
+  const sBonk = () => beep(120, 0.25, 'sawtooth', 0.1, 50);
+  const sFall = () => beep(900, 0.7, 'sine', 0.06, 120);
+  const sPop = () => beep(520, 0.07, 'square', 0.05, 900);
+
+  // ---- state ----
+  const CX = W / 2, ROW_GAP = 78, RUNG_W = 150;
+  let running = false, paused = false, over = false;
+  let t = 0, rungT = 0;             // rungT freezes during the rung strike
+  let score = 0, combo = 1, comboTimer = 0, lives = 3;
+  let curRow = 0, maxRow = 0;
+  let strike = 0, nextStrike = 30, strikeAnnounced = false;
+  let birdTimer = 9, slideAnnounced = false, birdAnnounced = false;
+  let slowmo = 0, camShake = 0, railShake = 0;
+  let popups = [], particles = [], birds = [], leaves = [], clouds = [];
+  let rows = {};                    // rowIdx -> {type, phase, speed, stolen, fade}
+  let jump = null;                  // {from, to, t, dur, mood}
+  let flail = null;                 // {t, dur}
+  let fall = null;                  // game-over fall {vy, spin, y}
+  let camY = 0;
+  const keysDown = {};
+
+  const RANKS = [[0, 'RUNG INTERN'], [250, 'LADDER TOLERATED'], [600, 'CERTIFIED CLIMBER'], [1000, 'RUNG LAWYER'], [1500, 'SKY LANDLORD']];
+  const FAIL_LINES = ['The ladder filed a complaint.', 'Gravity sends its regards.', 'The rungs are high-fiving right now.', 'You vs physics. Physics wins.', 'Somewhere, a rung is laughing.'];
+  const hat = () => best >= 800 ? 2 : best >= 300 ? 1 : 0;
+
+  function rank() { let r = RANKS[0][1]; for (const [th, name] of RANKS) if (score >= th) r = name; return r; }
+
+  function rollType(row) {
+    const r = Math.random();
+    if (r < 0.045) return 'gold';
+    const angryP = Math.min(0.25, 0.09 + row * 0.0012);
+    if (r < 0.045 + angryP) return 'angry';
+    if (t > 40 && r < 0.045 + angryP + 0.10) return 'ghost';
+    return 'normal';
+  }
+  function makeRow(i) {
+    return { type: rollType(i), phase: Math.random() * 6.28, speed: 0.9 + Math.random() * 0.5 + i * 0.0015, stolen: 0, fade: 1 };
+  }
+  function ensureRows(upTo) { for (let i = 0; i <= upTo; i++) if (!rows[i]) rows[i] = makeRow(i); }
+  function slideLevel() {
+    if (t < 10) return 0;
+    if (t < 25) return (t - 10) / 15;
+    return Math.min(1.5, 1 + (t - 25) / 55);
+  }
+  function rungX(r, rt) {
+    const amp = Math.min(135, slideLevel() * 92);
+    return CX + amp * Math.sin(rt * r.speed + r.phase);
+  }
+
+  function reset() {
+    t = 0; rungT = 0; score = 0; combo = 1; comboTimer = 0; lives = 3;
+    curRow = 0; maxRow = 0; strike = 0; nextStrike = 30;
+    birdTimer = 9; slideAnnounced = false; birdAnnounced = false;
+    slowmo = 0; camShake = 0; railShake = 0;
+    popups = []; particles = []; birds = []; leaves = []; rows = {};
+    jump = null; flail = null; fall = null; over = false; camY = -H * 0.55 + 40;
+    ensureRows(14);
+    clouds = [];
+    for (let i = 0; i < 5; i++) clouds.push({ x: Math.random() * W, y: Math.random() * H * 0.6, v: 8 + Math.random() * 14, s: 0.7 + Math.random() * 0.8 });
+    syncHud();
+  }
+  function syncHud() {
+    scoreEl.textContent = score; heightEl.textContent = maxRow;
+    comboEl.textContent = '×' + combo;
+    livesEl.textContent = '❤'.repeat(Math.max(0, lives)) || '💀';
+    if (score > best) { best = score; bestEl.textContent = best; localStorage.setItem(KEY, best); }
+  }
+  function popup(x, y, text, color) { popups.push({ x, y, text, color: color || '#fff', life: 1 }); }
+  function burst(x, y, color, n, spd) { for (let i = 0; i < n; i++) particles.push({ x, y, vx: (Math.random() - 0.5) * (spd || 300), vy: -Math.random() * 260 - 40, life: 0.6 + Math.random() * 0.4, color, r: 2 + Math.random() * 4 }); }
+  function worldY(row) { return -(row * ROW_GAP); }
+  function climberY() { // world y of climber
+    if (jump) { const k = Math.min(1, jump.t / jump.dur); const e = Math.sin(k * Math.PI); return worldY(jump.from) + (worldY(jump.to) - worldY(jump.from)) * k + e * 26; }
+    if (flail) return worldY(jump ? jump.to : curRow) - 10 + Math.sin(flail.t * 30) * 6;
+    if (fall) return fall.y;
+    return worldY(curRow);
+  }
+
+  function doJump() {
+    if (!running || paused || over || jump || flail || fall) return;
+    ensureRows(curRow + 10);
+    jump = { from: curRow, to: curRow + 1, t: 0, dur: slowmo > 0 ? 0.5 : 0.38 };
+    sJump();
+  }
+  function landOn(row) {
+    const r = rows[row]; curRow = row; maxRow = Math.max(maxRow, row);
+    const cx = rungX(r, rungT), off = Math.abs(CX - cx);
+    if (off > RUNG_W / 2 - 8) { miss(); return; } // rung fled from under you
+    if (r.type === 'ghost') {
+      lives--; combo = 1; camShake = 8; sFall();
+      popup(CX, rowScreenY(row) - 60, 'RUDE!', '#93c5fd');
+      burst(CX, rowScreenY(row), '#93c5fd', 14);
+      dropTo(Math.max(0, row - 2)); railShake = 6; syncHud(); checkDeath(); return;
+    }
+    if (r.type === 'angry') {
+      lives--; combo = 1; camShake = 12; sBonk();
+      popup(CX, rowScreenY(row) - 60, 'NOPE!', '#f87171');
+      burst(CX, rowScreenY(row), '#ef4444', 22);
+      dropTo(Math.max(0, row - 3)); railShake = 10; syncHud(); checkDeath(); return;
+    }
+    if (r.type === 'gold') {
+      const pts = 50 * combo; score += pts; slowmo = 0.7; sGold();
+      popup(CX, rowScreenY(row) - 70, 'GOLDEN!', '#fde047');
+      burst(CX, rowScreenY(row), '#fde047', 26, 420);
+    } else {
+      const edge = RUNG_W / 2 - 26;
+      let pts = 10 * combo;
+      if (off > edge) { pts += 5; popup(CX, rowScreenY(row) - 60, 'SO CLOSE!', '#a7f3d0'); }
+      else if (combo >= 4) popup(CX, rowScreenY(row) - 60, '×' + combo, '#22d3ee');
+      score += pts; sLand();
+      burst(CX, rowScreenY(row), '#fff7cc', 5, 160);
+    }
+    if (comboTimer > 0) combo = Math.min(8, combo + 1); comboTimer = 2.2;
+    syncHud();
+  }
+  function miss() {
+    flail = { t: 0, dur: 0.45 }; // grab air, cartoon flail
+    sFall();
+  }
+  function flailEnd() {
+    flail = null; lives--; combo = 1; camShake = 8;
+    popup(CX, rowScreenY(curRow + 1) - 60, 'OOPS.', '#fbbf24');
+    dropTo(Math.max(0, curRow - 1)); syncHud(); checkDeath();
+  }
+  function dropTo(row) { curRow = row; }
+  function checkDeath() {
+    if (lives <= 0) {
+      fall = { y: climberY(), vy: 60, spin: 0 };
+      sFall();
+    }
+  }
+  function rowScreenY(row) { return worldY(row) - camY; }
+
+  function startGame() {
+    reset(); running = true; paused = false;
+    startOverlay.classList.add('hidden'); overOverlay.classList.add('hidden');
+    requestAnimationFrame(loop);
+  }
+  function endGame() {
+    over = true; running = false; sBonk();
+    document.getElementById('overTitle').textContent = 'GRAVITY WINS. 🪜💥';
+    document.getElementById('finalScore').textContent = 'Score: ' + score + ' · Height: ' + maxRow + ' rungs · Rank: ' + rank();
+    document.getElementById('overJoke').textContent = FAIL_LINES[Math.floor(Math.random() * FAIL_LINES.length)];
+    overOverlay.classList.remove('hidden');
+    syncHud();
+  }
+
+  // ---- input ----
+  addEventListener('keydown', e => {
+    const k = e.key.toLowerCase();
+    if (k === ' ' || k === 'arrowup') { doJump(); e.preventDefault(); }
+    if (k === 'p' && running) paused = !paused;
+    if (k === 'r' && (over || running)) startGame();
+  });
+  function canvasTap() { if (!running && !over) startGame(); else if (over) startGame(); else doJump(); }
+  cvs.addEventListener('pointerdown', canvasTap);
+  document.getElementById('startBtn').onclick = startGame;
+  document.getElementById('againBtn').onclick = startGame;
+  document.getElementById('shareBtn').onclick = () => {
+    const txt = '🪜 I climbed ' + maxRow + ' rungs in The Ladder Hates You (' + rank() + ') — the ladder filed a complaint. ' + location.href;
+    (navigator.clipboard ? navigator.clipboard.writeText(txt) : Promise.reject()).then(() => popup(W / 2, H / 2 + camY * 0, 'COPIED!', '#fbbf24')).catch(() => {});
+  };
+
+  // ---- birds ----
+  function spawnBird() {
+    const row = curRow + 2 + Math.floor(Math.random() * 3);
+    ensureRows(row);
+    birds.push({ row, x: -80, dir: 1, t: 0, stole: false, ret: 0 });
+  }
+
+  // ---- update ----
+  let last = 0;
+  function loop(ts) {
+    if (!running) return;
+    const dt = Math.min(0.033, (ts - last) / 1000 || 0.016); last = ts;
+    if (!paused) update(dt);
+    draw();
+    if (running) requestAnimationFrame(loop);
+  }
+
+  function update(dt) {
+    const sdt = slowmo > 0 ? dt * 0.45 : dt;
+    if (slowmo > 0) slowmo -= dt;
+    t += dt;
+    if (strike > 0) strike -= dt; else rungT += sdt;
+
+    // escalation banners
+    if (t >= 10 && !slideAnnounced) { slideAnnounced = true; popup(CX, 160, 'RUDE.', '#f472b6'); sPop(); }
+    if (t >= 20 && !birdAnnounced) { birdAnnounced = true; popup(CX, 160, 'BIRDS!', '#f472b6'); sPop(); }
+    // rung strike
+    if (t >= nextStrike && strike <= 0) { strike = 3; nextStrike = t + 45; popup(CX, 200, 'STRIKE!', '#fde047'); sPop(); }
+    // birds steal rungs
+    if (t > 20) { birdTimer -= dt; if (birdTimer <= 0) { spawnBird(); birdTimer = 7 + Math.random() * 4; } }
+
+    if (comboTimer > 0) { comboTimer -= dt; if (comboTimer <= 0) { combo = 1; syncHud(); } }
+
+    // jump physics
+    if (jump) {
+      jump.t += dt;
+      if (jump.t >= jump.dur) {
+        const row = jump.to; jump = null;
+        const r = rows[row];
+        if (r.stolen > 0) miss(); else landOn(row);
+      }
+    } else if (flail) {
+      flail.t += dt;
+      if (flail.t >= flail.dur) flailEnd();
+    }
+
+    // game-over fall
+    if (fall) {
+      fall.vy += 1400 * dt; fall.y += fall.vy * dt; fall.spin += dt * 9;
+      if (fall.y >= -5) { // splat at ground (world y = 0)
+        const splatSY = 0 - camY;
+        burst(CX, splatSY, '#fca5a5', 30, 380); burst(CX, splatSY, '#fde68a', 16, 300);
+        camShake = 14; railShake = 12;
+        fall = null;
+        setTimeout(() => { if (over === false && running) endGame(); }, 700);
+        running = false; // stop loop-driven fall; draw() once more below via endGame path
+        draw();
+        return;
+      }
+    }
+
+    // birds
+    for (const b of birds) {
+      b.t += dt; b.x += b.dir * 320 * dt;
+      const r = rows[b.row];
+      if (!b.stole && r && Math.abs(b.x - rungX(r, rungT)) < 60 && b.x > 100) {
+        b.stole = true; r.stolen = 6; // gone for 6s, then pops back
+        popup(b.x, rowScreenY(b.row) - 50, 'MINE!', '#fda4af');
+      }
+      if (b.x > W + 100) b.ret = 1;
+    }
+    birds = birds.filter(b => !b.ret);
+    for (const key in rows) { const r = rows[key]; if (r.stolen > 0) { r.stolen -= dt; if (r.stolen <= 0) { r.fade = 0; popup(CX, rowScreenY(+key) - 40, 'BACK!', '#a7f3d0'); sPop(); } } if (r.fade < 1) r.fade = Math.min(1, r.fade + dt * 3); }
+
+    // camera follows climber
+    const target = climberY() - H * 0.58;
+    camY += (target - camY) * Math.min(1, dt * 5);
+    if (camShake > 0) camShake = Math.max(0, camShake - dt * 30);
+    if (railShake > 0) railShake = Math.max(0, railShake - dt * 22);
+
+    // ambient
+    for (const c of clouds) { c.x += c.v * dt; if (c.x > W + 120) { c.x = -120; c.y = Math.random() * H * 0.5; } }
+    if (Math.random() < dt * 2) leaves.push({ x: CX + (Math.random() - 0.5) * 300, y: climberY() - H * 0.7, vx: 30 + Math.random() * 40, vy: 60, rot: Math.random() * 6.28 });
+    for (const l of leaves) { l.x += l.vx * dt; l.y += l.vy * dt; l.rot += dt * 4; }
+    leaves = leaves.filter(l => l.y < climberY() + 120);
+    for (const p of popups) { p.y -= 44 * dt; p.life -= dt * 0.9; }
+    popups = popups.filter(p => p.life > 0);
+    for (const p of particles) { p.vy += 700 * dt; p.x += p.vx * dt; p.y += p.vy * dt; p.life -= dt; }
+    particles = particles.filter(p => p.life > 0);
+  }
+
+  // ---- faces ----
+  function face(x, y, mood, s) {
+    ctx.save(); ctx.translate(x, y); ctx.scale(s, s);
+    ctx.fillStyle = '#1f2937';
+    if (mood === 'angry') {
+      ctx.fillRect(-9, -6, 6, 6); ctx.fillRect(3, -6, 6, 6);
+      ctx.save(); ctx.rotate(0.5); ctx.fillRect(-11, -13, 8, 3); ctx.restore();
+      ctx.save(); ctx.rotate(-0.5); ctx.fillRect(3, -13, 8, 3); ctx.restore();
+      ctx.beginPath(); ctx.arc(0, 8, 5, Math.PI * 1.15, Math.PI * 1.85); ctx.strokeStyle = '#1f2937'; ctx.lineWidth = 2.5; ctx.stroke();
+    } else if (mood === 'panic' || mood === 'ghost') {
+      ctx.beginPath(); ctx.arc(-6, -4, 3, 0, 7); ctx.arc(6, -4, 3, 0, 7); ctx.fill();
+      ctx.beginPath(); ctx.arc(0, 7, 4, 0, 7); ctx.fill();
+    } else if (mood === 'star') {
+      ctx.fillStyle = '#fbbf24';
+      ctx.beginPath(); ctx.arc(-6, -4, 2.6, 0, 7); ctx.arc(6, -4, 2.6, 0, 7); ctx.fill();
+      ctx.beginPath(); ctx.arc(0, 4, 6, Math.PI * 1.15, Math.PI * 1.85); ctx.strokeStyle = '#fbbf24'; ctx.lineWidth = 2.5; ctx.stroke();
+    } else {
+      ctx.beginPath(); ctx.arc(-6, -4, 2.6, 0, 7); ctx.arc(6, -4, 2.6, 0, 7); ctx.fill();
+      ctx.beginPath(); ctx.arc(0, 3, 6, 0.15 * Math.PI, 0.85 * Math.PI); ctx.strokeStyle = '#1f2937'; ctx.lineWidth = 2.5; ctx.stroke();
+    }
+    ctx.restore();
+  }
+
+  function drawRung(x, sy, r, key) {
+    if (r.stolen > 0) return;
+    const a = r.fade < 1 ? r.fade : 1;
+    ctx.save(); ctx.globalAlpha = a;
+    ctx.translate(x, sy);
+    const squash = r.squashT > 0 ? 1 - r.squashT * 0.3 : 1;
+    ctx.scale(1, squash);
+    if (r.type === 'gold') {
+      ctx.shadowColor = '#fbbf24'; ctx.shadowBlur = 26; // ONLY glowing family
+      ctx.fillStyle = '#fbbf24';
+      ctx.beginPath(); ctx.roundRect(-RUNG_W / 2, -11, RUNG_W, 22, 10); ctx.fill();
+      ctx.shadowBlur = 0;
+      ctx.strokeStyle = '#fef3c7'; ctx.lineWidth = 2; ctx.stroke();
+      face(0, 0, 'star', 0.95);
+    } else if (r.type === 'ghost') {
+      ctx.fillStyle = 'rgba(147,197,253,0.42)';
+      ctx.beginPath(); ctx.roundRect(-RUNG_W / 2, -11, RUNG_W, 22, 10); ctx.fill();
+      ctx.strokeStyle = 'rgba(191,219,254,0.8)'; ctx.setLineDash([6, 5]); ctx.lineWidth = 2; ctx.stroke(); ctx.setLineDash([]);
+      face(0, 0, 'ghost', 0.9);
+    } else if (r.type === 'angry') {
+      const pulse = 1 + Math.sin(t * 10 + r.phase) * 0.06;
+      ctx.scale(pulse, 1);
+      const g = ctx.createLinearGradient(0, -11, 0, 11); g.addColorStop(0, '#7c2d12'); g.addColorStop(1, '#dc2626');
+      ctx.fillStyle = g;
+      ctx.beginPath(); ctx.roundRect(-RUNG_W / 2, -11, RUNG_W, 22, 10); ctx.fill();
+      ctx.strokeStyle = '#7f1d1d'; ctx.lineWidth = 2; ctx.stroke();
+      face(0, 0, 'angry', 0.95);
+    } else {
+      ctx.fillStyle = '#c98a4b';
+      ctx.beginPath(); ctx.roundRect(-RUNG_W / 2, -10, RUNG_W, 20, 9); ctx.fill();
+      ctx.strokeStyle = '#8a5a2b'; ctx.lineWidth = 2; ctx.stroke();
+      ctx.strokeStyle = 'rgba(138,90,43,0.6)'; ctx.beginPath(); ctx.moveTo(-RUNG_W / 2 + 12, 0); ctx.lineTo(RUNG_W / 2 - 12, 0); ctx.stroke();
+      face(0, 0, 'calm', 0.8);
+    }
+    ctx.restore();
+    // rung-strike picket sign
+    if (strike > 0) {
+      ctx.save(); ctx.translate(x + RUNG_W / 2 + 18, sy - 6);
+      ctx.strokeStyle = '#94a3b8'; ctx.lineWidth = 3; ctx.beginPath(); ctx.moveTo(0, 0); ctx.lineTo(0, -34); ctx.stroke();
+      ctx.fillStyle = '#fef3c7'; ctx.fillRect(-4, -58, 44, 26);
+      ctx.fillStyle = '#b45309'; ctx.font = '800 15px system-ui'; ctx.textAlign = 'center'; ctx.fillText('NO!', 18, -40);
+      ctx.restore();
+    }
+  }
+
+  function drawClimber(x, sy, mood, squashT, rot) {
+    ctx.save(); ctx.translate(x, sy);
+    if (rot) ctx.rotate(rot);
+    const sq = squashT > 0 ? 1 - squashT * 0.25 : 1;
+    ctx.scale(1 + (squashT > 0 ? squashT * 0.2 : 0), sq);
+    // body
+    ctx.fillStyle = '#22d3ee';
+    ctx.beginPath(); ctx.arc(0, 0, 17, 0, 7); ctx.fill();
+    ctx.strokeStyle = '#0e7490'; ctx.lineWidth = 3; ctx.stroke();
+    // limbs
+    const wig = Math.sin(t * (flail ? 28 : 10)) * (flail ? 8 : 3);
+    ctx.strokeStyle = '#0e7490'; ctx.lineWidth = 5; ctx.lineCap = 'round';
+    ctx.beginPath(); ctx.moveTo(-10, 4); ctx.lineTo(-20, 10 + wig); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(10, 4); ctx.lineTo(20, 10 - wig); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(-6, 14); ctx.lineTo(-8, 26); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(6, 14); ctx.lineTo(8, 26); ctx.stroke();
+    face(0, -2, mood, 1);
+    // hat (unlocked cosmetic)
+    const h = hat();
+    if (h === 1) { ctx.fillStyle = '#fbbf24'; ctx.fillRect(-14, -34, 28, 10); ctx.fillRect(-8, -42, 16, 10); }
+    if (h === 2) { ctx.fillStyle = '#fde047'; ctx.beginPath(); ctx.moveTo(-14, -24); ctx.lineTo(-14, -40); ctx.lineTo(-7, -30); ctx.lineTo(0, -44); ctx.lineTo(7, -30); ctx.lineTo(14, -40); ctx.lineTo(14, -24); ctx.closePath(); ctx.fill(); }
+    ctx.restore();
+  }
+
+  function draw() {
+    const shx = camShake > 0 ? (Math.random() - 0.5) * camShake : 0;
+    const shy = camShake > 0 ? (Math.random() - 0.5) * camShake : 0;
+    ctx.save(); ctx.translate(shx, shy);
+    ctx.clearRect(-20, -20, W + 40, H + 40);
+    const g = ctx.createLinearGradient(0, 0, 0, H); g.addColorStop(0, '#0c1445'); g.addColorStop(1, '#1a0b2e');
+    ctx.fillStyle = g; ctx.fillRect(-20, -20, W + 40, H + 40);
+
+    // sun with sunglasses (fixed screen pos, slowly rotating rays)
+    ctx.save(); ctx.translate(W - 90, 80); ctx.rotate(t * 0.1);
+    for (let i = 0; i < 8; i++) { ctx.rotate(Math.PI / 4); ctx.fillStyle = 'rgba(253,224,71,0.55)'; ctx.fillRect(-4, -58, 8, 22); }
+    ctx.rotate(-t * 0.1); ctx.fillStyle = '#fde047'; ctx.beginPath(); ctx.arc(0, 0, 34, 0, 7); ctx.fill();
+    ctx.fillStyle = '#111827'; ctx.fillRect(-24, -8, 48, 13); ctx.fillRect(-26, -10, 10, 17); ctx.fillRect(16, -10, 10, 17);
+    ctx.restore();
+
+    // clouds (screen space, drift)
+    for (const c of clouds) {
+      ctx.fillStyle = 'rgba(148,163,184,0.28)';
+      ctx.beginPath(); ctx.arc(c.x, c.y, 26 * c.s, 0, 7); ctx.arc(c.x + 24 * c.s, c.y + 6 * c.s, 20 * c.s, 0, 7); ctx.arc(c.x - 24 * c.s, c.y + 6 * c.s, 18 * c.s, 0, 7); ctx.fill();
+    }
+
+    // ladder rails (world space; shake when bonked)
+    const railX = railShake > 0 ? (Math.random() - 0.5) * railShake : 0;
+    const topSY = -camY - 40, botSY = H + 40;
+    ctx.strokeStyle = '#8b5cf6'; ctx.lineWidth = 12; ctx.lineCap = 'round';
+    ctx.beginPath(); ctx.moveTo(CX - 90 + railX, topSY); ctx.lineTo(CX - 90 + railX, botSY); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(CX + 90 + railX, topSY); ctx.lineTo(CX + 90 + railX, botSY); ctx.stroke();
+    ctx.strokeStyle = '#c4b5fd'; ctx.lineWidth = 3;
+    ctx.beginPath(); ctx.moveTo(CX - 90 + railX, topSY); ctx.lineTo(CX - 90 + railX, botSY); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(CX + 90 + railX, topSY); ctx.lineTo(CX + 90 + railX, botSY); ctx.stroke();
+
+    // ground grass at row 0
+    const gy = 0 - camY;
+    if (gy > -60 && gy < H + 60) {
+      ctx.fillStyle = '#166534'; ctx.fillRect(0, gy, W, H - gy + 60);
+      ctx.fillStyle = '#22c55e';
+      for (let i = 0; i < 24; i++) { const gx = (i * 41) % W; ctx.fillRect(gx, gy - 8 - (i % 3) * 4, 5, 12 + (i % 3) * 4); }
+    }
+
+    // rungs in view
+    const rowBot = Math.max(0, Math.floor((camY - H) / -ROW_GAP) - 1);
+    const rowTop = Math.ceil((camY + 40) / -ROW_GAP) + 1;
+    for (let i = Math.max(0, rowBot); i <= Math.max(0, rowTop); i++) {
+      if (!rows[i]) continue;
+      const r = rows[i];
+      const sy = worldY(i) - camY;
+      if (sy < -60 || sy > H + 60) continue;
+      drawRung(rungX(r, rungT), sy, r, i);
+    }
+
+    // leaves (world space flutter)
+    for (const l of leaves) {
+      const sy = l.y - camY; if (sy < -20 || sy > H + 20) continue;
+      ctx.save(); ctx.translate(l.x, sy); ctx.rotate(l.rot);
+      ctx.fillStyle = 'rgba(74,222,128,0.7)'; ctx.beginPath(); ctx.ellipse(0, 0, 9, 5, 0, 0, 7); ctx.fill();
+      ctx.restore();
+    }
+
+    // birds (rung thieves)
+    for (const b of birds) {
+      const sy = worldY(b.row) - camY; if (sy < -40 || sy > H + 40) continue;
+      const flap = Math.sin(b.t * 14) * 12;
+      ctx.save(); ctx.translate(b.x, sy - 44);
+      ctx.fillStyle = '#f472b6';
+      ctx.beginPath(); ctx.ellipse(0, 0, 22, 13, 0, 0, 7); ctx.fill();
+      ctx.beginPath(); ctx.arc(20, -8, 10, 0, 7); ctx.fill();
+      ctx.fillStyle = '#be185d';
+      ctx.beginPath(); ctx.ellipse(-6, -10, 18, 7, -0.5 - flap * 0.02, 0, 7); ctx.fill();
+      face(20, -8, 'star', 0.55);
+      if (b.stole) { // carrying the rung
+        ctx.strokeStyle = '#0e7490'; ctx.lineWidth = 4;
+        ctx.beginPath(); ctx.moveTo(-8, 10); ctx.lineTo(-8, 30); ctx.moveTo(8, 10); ctx.lineTo(8, 30); ctx.stroke();
+        ctx.fillStyle = '#c98a4b'; ctx.fillRect(-46, 30, 92, 12);
+      }
+      ctx.restore();
+    }
+
+    // climber
+    const cy = climberY() - camY;
+    if (fall) {
+      drawClimber(CX, cy, 'panic', 0, fall.spin);
+    } else if (flail) {
+      drawClimber(CX, cy, 'panic', 0, Math.sin(flail.t * 20) * 0.3);
+    } else if (jump) {
+      const k = Math.min(1, jump.t / jump.dur);
+      const mood = k > 0.85 ? 'panic' : 'star';
+      drawClimber(CX, cy, mood, 0, 0);
+    } else {
+      const mood = over ? 'panic' : 'calm';
+      drawClimber(CX, cy - 30, mood, 0, 0);
+    }
+
+    // particles
+    for (const p of particles) { ctx.globalAlpha = Math.max(0, p.life); ctx.fillStyle = p.color; ctx.beginPath(); ctx.arc(p.x, p.y, p.r, 0, 7); ctx.fill(); }
+    ctx.globalAlpha = 1;
+
+    // in-canvas text: hook + rank + strike warning
+    ctx.textAlign = 'center';
+    ctx.fillStyle = '#fde68a'; ctx.font = '700 21px system-ui';
+    if (t < 6 && curRow === 0 && !jump) ctx.fillText('YOU CAN\'T MOVE. THE RUNGS CAN.', W / 2, 34);
+    else if (strike > 0) { ctx.fillStyle = '#fde047'; ctx.fillText('STRIKE!', W / 2, 34); }
+    ctx.fillStyle = '#94a3b8'; ctx.font = '600 15px system-ui';
+    ctx.fillText(rank() + (hat() ? ' · 👑' : ''), W / 2, 58);
+    if (paused) { ctx.fillStyle = '#fff'; ctx.font = '800 40px system-ui'; ctx.fillText('PAUSED', W / 2, H / 2); }
+
+    // popups (world -> screen handled at spawn)
+    ctx.font = '800 20px system-ui';
+    for (const p of popups) { ctx.globalAlpha = Math.max(0, p.life); ctx.fillStyle = p.color; ctx.fillText(p.text, p.x, p.y); }
+    ctx.globalAlpha = 1; ctx.textAlign = 'left';
+    ctx.restore();
+  }
+  draw();
+})();
+</script>
+</body>
+</html>

@@ -88,5 +88,14 @@
     "mechanic": "Popping catch chaos",
     "tagline": "Catch the glowing pops, dodge the furious red kernels — then the pan flips your controls.",
     "title": "Popcorn Panic"
+  },
+  {
+    "date": "2026-10-11",
+    "day": 11,
+    "emoji": "🪜",
+    "file": "games/the-ladder-hates-you.html",
+    "mechanic": "Rage-bait one-tap climber",
+    "tagline": "Tap to climb. You can't move sideways — but the rungs can. They hold grudges.",
+    "title": "The Ladder Hates You"
   }
 ]
