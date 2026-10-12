@@ -97,5 +97,14 @@
     "mechanic": "Rage-bait one-tap climber",
     "tagline": "Tap to climb. You can't move sideways — but the rungs can. They hold grudges.",
     "title": "The Ladder Hates You"
+  },
+  {
+    "date": "2026-10-12",
+    "day": 12,
+    "emoji": "💼",
+    "file": "games/hire-the-weirdos.html",
+    "mechanic": "HR sorting panic",
+    "tagline": "You're the boss. Hire the weirdos — until corporate flips the rules. Karen vetoes.",
+    "title": "Hire the Weirdos"
   }
 ]

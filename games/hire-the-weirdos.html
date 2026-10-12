@@ -1,0 +1,765 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<title>Hire the Weirdos — Daily Mini-Game #12</title>
+<style>
+  :root{--neon:#a3e635;--pink:#f472b6;--bg:#0a0f0a}
+  *{margin:0;padding:0;box-sizing:border-box}
+  html,body{background:var(--bg);color:#e2e8f0;font-family:ui-rounded,system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;min-height:100%}
+  .wrap{max-width:960px;margin:0 auto;padding:16px 14px 28px}
+  header{display:flex;align-items:baseline;justify-content:space-between;gap:12px;flex-wrap:wrap;margin-bottom:10px}
+  h1{font-size:clamp(24px,5vw,38px);background:linear-gradient(90deg,#a3e635,#22d3ee);-webkit-background-clip:text;background-clip:text;color:transparent}
+  .badge{font-size:12px;border:1px solid rgba(163,230,53,.5);color:#a3e635;padding:4px 10px;border-radius:999px;white-space:nowrap}
+  .hud{display:flex;gap:10px;flex-wrap:wrap;margin:10px 0}
+  .chip{flex:1;min-width:80px;background:rgba(255,255,255,.04);border:1px solid rgba(255,255,255,.08);border-radius:12px;padding:8px 12px}
+  .chip b{display:block;font-size:20px;color:#fff}
+  .chip span{font-size:11px;text-transform:uppercase;letter-spacing:.12em;color:#94a3b8}
+  .stage{position:relative;border-radius:16px;overflow:hidden;border:1px solid rgba(163,230,53,.25);box-shadow:0 0 40px rgba(163,230,53,.12);background:#0c120c}
+  canvas{display:block;width:100%;height:auto;touch-action:none}
+  .judgebar{display:flex;gap:12px;margin:12px 0}
+  .jbtn{flex:1;cursor:pointer;border:0;border-radius:18px;padding:18px 10px;font-size:clamp(20px,4vw,28px);font-weight:800;color:#08130a;touch-action:manipulation;user-select:none;-webkit-user-select:none}
+  .jbtn small{display:block;font-size:12px;font-weight:600;opacity:.75;margin-top:2px}
+  #hireBtn{background:linear-gradient(180deg,#bef264,#65a30d);box-shadow:0 6px 0 #3f6212,0 0 28px rgba(163,230,53,.45)}
+  #hireBtn:active{transform:translateY(4px);box-shadow:0 2px 0 #3f6212}
+  #fireBtn{background:linear-gradient(180deg,#fda4af,#e11d48);box-shadow:0 6px 0 #881337,0 0 28px rgba(244,63,94,.45);color:#1c0508}
+  #fireBtn:active{transform:translateY(4px);box-shadow:0 2px 0 #881337}
+  .jbtn:disabled{opacity:.45;filter:grayscale(.4)}
+  .overlay{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;text-align:center;background:rgba(4,8,4,.86);padding:20px;z-index:5}
+  .overlay.hidden{display:none}
+  .overlay h2{font-size:clamp(24px,5vw,36px);margin-bottom:8px;color:#fff}
+  .overlay p{color:#cbd5e1;max-width:520px;line-height:1.5;margin-bottom:16px}
+  .btn{cursor:pointer;border:0;border-radius:999px;padding:13px 28px;font-size:17px;font-weight:700;color:#08130a;background:linear-gradient(90deg,#a3e635,#22d3ee)}
+  .btn.ghost{background:transparent;color:#a3e635;border:1px solid rgba(163,230,53,.6);margin-left:8px}
+  .keys{margin-top:14px;font-size:13px;color:#94a3b8;line-height:1.7}
+  kbd{background:#1e293b;border:1px solid #334155;border-radius:6px;padding:1px 7px;color:#e2e8f0}
+  footer{margin-top:14px;font-size:13px;color:#64748b;display:flex;justify-content:space-between;flex-wrap:wrap;gap:10px}
+  footer a{color:#a3e635;text-decoration:none}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <h1>HIRE THE WEIRDOS 💼</h1>
+    <div class="badge">💼 Daily Mini-Game #12 · HR sorting panic</div>
+  </header>
+  <div class="hud">
+    <div class="chip"><span>Score</span><b id="score">0</b></div>
+    <div class="chip"><span>Combo</span><b id="combo">×1</b></div>
+    <div class="chip"><span>Strikes</span><b id="strikes">—</b></div>
+    <div class="chip"><span>Rank</span><b id="rank" style="font-size:15px">Intern</b></div>
+    <div class="chip"><span>Best</span><b id="best">0</b></div>
+  </div>
+  <div class="stage">
+    <canvas id="game" width="960" height="540"></canvas>
+    <div class="overlay" id="startOverlay">
+      <h2>HIRE THE WEIRD ONES. 💼</h2>
+      <p>You're the boss. Weirdos walk in — <b>HIRE</b> the weird ones, <b>FIRE</b> the normals. Corporate changes the rules. Karen vetoes.</p>
+      <div><button class="btn" id="startBtn">▶ Open interviews</button></div>
+      <div class="keys"><kbd>H</kbd>/<kbd>←</kbd> hire · <kbd>F</kbd>/<kbd>→</kbd> fire · <kbd>P</kbd> pause · <kbd>R</kbd> restart</div>
+    </div>
+    <div class="overlay hidden" id="overOverlay">
+      <h2 id="overTitle">HR QUIT. 💼💥</h2>
+      <p id="finalScore">Score: 0</p>
+      <div><button class="btn" id="againBtn">↻ Rehire everyone</button><button class="btn ghost" id="shareBtn">Copy result</button></div>
+      <div class="keys" id="overJoke">The weirdos unionized.</div>
+    </div>
+  </div>
+  <div class="judgebar">
+    <button class="jbtn" id="hireBtn" disabled>✅ HIRE<small id="hireHint">the weird ones</small></button>
+    <button class="jbtn" id="fireBtn" disabled>❌ FIRE<small id="fireHint">the normals</small></button>
+  </div>
+  <footer><span>Built &amp; published automatically — a new mini-game every day.</span><a href="../index.html">← All daily games</a></footer>
+</div>
+<script>
+(() => {
+  const cvs = document.getElementById('game'), ctx = cvs.getContext('2d');
+  const W = cvs.width, H = cvs.height;
+  const scoreEl = document.getElementById('score'), comboEl = document.getElementById('combo'),
+    strikesEl = document.getElementById('strikes'), rankEl = document.getElementById('rank'), bestEl = document.getElementById('best');
+  const startOverlay = document.getElementById('startOverlay'), overOverlay = document.getElementById('overOverlay');
+  const hireBtn = document.getElementById('hireBtn'), fireBtn = document.getElementById('fireBtn');
+  const hireHint = document.getElementById('hireHint'), fireHint = document.getElementById('fireHint');
+  const KEY = 'hire-weirdos-best', CK = 'hire-weirdos-crown';
+  let best = +(localStorage.getItem(KEY) || 0); bestEl.textContent = best;
+  let crown = localStorage.getItem(CK) === '1';
+
+  let AC = null;
+  function beep(f, d, t, v, s) { try { AC = AC || new (window.AudioContext || window.webkitAudioContext)(); const o = AC.createOscillator(), g = AC.createGain(); o.type = t || 'sine'; o.frequency.setValueAtTime(f, AC.currentTime); if (s) o.frequency.exponentialRampToValueAtTime(s, AC.currentTime + d); g.gain.setValueAtTime(v || 0.06, AC.currentTime); g.gain.exponentialRampToValueAtTime(0.001, AC.currentTime + d); o.connect(g); g.connect(AC.destination); o.start(); o.stop(AC.currentTime + d); } catch (e) {} }
+  const sHire = () => { beep(523, 0.1, 'triangle', 0.08); setTimeout(() => beep(784, 0.14, 'triangle', 0.08), 80); };
+  const sFire = () => beep(220, 0.25, 'sawtooth', 0.08, 90);
+  const sWrong = () => { beep(160, 0.2, 'square', 0.09, 80); setTimeout(() => beep(120, 0.3, 'square', 0.09, 60), 120); };
+  const sGold = () => [523, 659, 784, 1047, 1319].forEach((f, i) => setTimeout(() => beep(f, 0.1, 'triangle', 0.07), i * 55));
+  const sAlarm = () => { for (let i = 0; i < 3; i++) setTimeout(() => beep(660, 0.12, 'square', 0.07, 440), i * 150); };
+  const sKaren = () => { for (let i = 0; i < 5; i++) setTimeout(() => beep(300 + i * 60, 0.09, 'sawtooth', 0.06), i * 100); };
+  const sTick = () => beep(880, 0.05, 'sine', 0.05);
+
+  const R = (a, b) => a + Math.random() * (b - a);
+  const RI = (a, b) => Math.floor(R(a, b + 1));
+  const pick = arr => arr[Math.floor(Math.random() * arr.length)];
+
+  const OVER_JOKES = [
+    'The weirdos unionized.',
+    'Corporate sends thoughts & prayers.',
+    'Your startup is now a WeWork.',
+    'HR filed a restraining order.',
+    'The normals took over. Boring!',
+    'Karen is now CEO.',
+    'Your LinkedIn just got awkward.'
+  ];
+
+  const RANKS = [
+    [0, 'Intern'], [150, 'Coffee Runner'], [350, 'Shift Lead'],
+    [600, 'Karen\u2019s Nightmare'], [950, 'Vibe CEO'], [1500, 'Weirdness Overlord']
+  ];
+  const rankOf = s => { let r = RANKS[0][1]; for (const [th, name] of RANKS) if (s >= th) r = name; return r; };
+
+  // ---- candidate visuals ----
+  const WEIRD_KINDS = ['giraffe', 'cone', 'baguette', 'vampire', 'robocock', 'cyclops', 'toast', 'alien', 'shark', 'mushroom'];
+  const SKIN = ['#f1c27d', '#e0ac69', '#c68642', '#8d5524', '#ffdbac'];
+  const HAIR = ['#2d2a32', '#6b4f2a', '#b5651d', '#d6d6d6', '#1a1a1a'];
+  const TIE = ['#e11d48', '#2563eb', '#7c3aed', '#059669', '#f59e0b'];
+
+  function makeCandidate(weird, golden, disguised) {
+    const kind = weird ? pick(WEIRD_KINDS) : 'normal';
+    return {
+      weird, golden, disguised: disguised && weird, revealed: false, peelT: 0,
+      kind,
+      skin: pick(SKIN), hair: pick(HAIR), tie: pick(TIE),
+      x: W + 70, judged: false, mood: 'walk', animT: R(0, 6),
+      deadline: 0, spawnT: 0,
+      hop: null, drag: null, wallSlot: -1, judgedAt: 0, correct: false,
+      karen: false
+    };
+  }
+
+  function makeKaren() {
+    const c = makeCandidate(false, false, false);
+    c.karen = true; c.mood = 'rant'; c.x = W + 70;
+    return c;
+  }
+
+  // ---- game state ----
+  let phase = 'start', paused = false, t = 0, last = 0;
+  let score = 0, combo = 0, strikes = 0, hired = 0, fired = 0;
+  let rule = 'weird'; // 'weird' = hire weird; 'normal' = hire normal
+  let nextFlipAt = 15, nextSpawnAt = 0.5, nextKarenAt = 30;
+  let ruleFlipAnim = 0;
+  let candidates = [], portraits = [], particles = [], popups = [], hooks = [];
+  let lastHireRef = null, lastHireT = -99;
+
+  const FLOOR = H - 110, LINE_X = 300;
+
+  function popup(text, x, y, color, big) {
+    popups.push({ text, x, y, color: color || '#fff', life: 1.4, big: !!big });
+  }
+  function burst(x, y, color, n, spd) {
+    for (let i = 0; i < n; i++) particles.push({ x, y, vx: R(-spd, spd), vy: R(-spd, spd * 0.7), r: R(2, 5), color, life: R(0.5, 1) });
+  }
+  function confetti(x, y) {
+    const cols = ['#a3e635', '#22d3ee', '#f472b6', '#fbbf24', '#fff'];
+    for (let i = 0; i < 26; i++) particles.push({ x: x + R(-20, 20), y: y + R(-10, 10), vx: R(-140, 140), vy: R(-260, -40), r: R(3, 6), color: pick(cols), life: R(0.8, 1.4), grav: 420 });
+  }
+
+  function spawnCandidate() {
+    const weirdRule = rule === 'weird';
+    const weirdBias = weirdRule ? 0.68 : 0.42;
+    const golden = Math.random() < 0.07;
+    // golden bonus always matches the active rule, so it is unambiguously a HIRE
+    const weird = golden ? weirdRule : (Math.random() < weirdBias);
+    const disguised = weird && t > 20 && Math.random() < Math.min(0.45, 0.12 + t * 0.004);
+    const c = makeCandidate(weird, golden, disguised);
+    const dur = Math.max(1.8, 3.2 - t * 0.016);
+    c.spawnT = t; c.deadline = t + dur;
+    c.vx = (LINE_X - c.x) / dur; // px per sec toward line
+    candidates.push(c);
+  }
+
+  function frontCandidate() {
+    let bestC = null;
+    for (const c of candidates) if (!c.judged && !c.karen && (!bestC || c.x < bestC.x)) bestC = c;
+    return bestC;
+  }
+
+  function awardPoints(c, nearMiss) {
+    const base = c.golden ? 100 : 10;
+    const mult = 1 + combo * 0.15;
+    const pts = Math.round(base * mult * (nearMiss ? 1.5 : 1));
+    score += pts;
+    return pts;
+  }
+
+  function judge(hire) {
+    if (phase !== 'play' || paused) return;
+    const c = frontCandidate();
+    if (!c) return;
+    const isWeird = c.weird; // disguised peels before deadline, so judged by true nature
+    const shouldHire = rule === 'weird' ? isWeird : !isWeird;
+    const correct = (hire === shouldHire);
+    c.judged = true; c.judgedAt = t; c.correct = correct;
+    const timeLeft = c.deadline - t;
+    if (correct) {
+      combo++;
+      hired++;
+      const nearMiss = timeLeft < 0.45;
+      const pts = awardPoints(c, nearMiss);
+      c.mood = hire ? 'happy' : 'dead';
+      if (c.golden) { sGold(); popup('GOLDEN! +' + pts, c.x, 150, '#fde047', true); burst(c.x, 220, '#fde047', 18, 160); }
+      else if (nearMiss) { sHire(); popup('SO CLOSE! +' + pts, c.x, 150, '#a3e635', true); }
+      else { if (hire) sHire(); else sFire(); popup((hire ? 'HIRED! +' : 'FIRED! +') + pts, c.x, 150, hire ? '#a3e635' : '#fda4af'); }
+      if (hire) { sendToWall(c); lastHireRef = c; lastHireT = t; }
+      else { fired++; hookDrag(c); }
+    } else {
+      combo = 0; strikes++;
+      fired += hire ? 0 : 1;
+      sWrong();
+      popup('WRONG!', c.x, 150, '#f87171', true);
+      c.mood = 'dead';
+      hookDrag(c);
+      if (strikes >= 3) gameOver();
+    }
+    updateHUD();
+  }
+
+  function sendToWall(c) {
+    const slot = portraits.length % 14;
+    const px = 60 + (slot % 7) * 64, py = 118 + Math.floor(slot / 7) * 62;
+    c.hop = { sx: c.x, sy: FLOOR - 40, ex: px, ey: py, t: 0, dur: 0.6 };
+    c.wallSlot = slot;
+    portraits.push(c);
+  }
+
+  function hookDrag(c) {
+    hooks.push({ x: c.x, y: -60, targetY: FLOOR - 110, state: 'down', c });
+    burst(c.x, FLOOR - 90, '#94a3b8', 8, 90);
+  }
+
+  function timeoutStrike(c) {
+    c.judged = true; c.correct = false;
+    combo = 0; strikes++;
+    sWrong();
+    popup('F FOR EFFORT', c.x, 150, '#f87171', true);
+    c.mood = 'point';
+    setTimeout(() => { if (phase === 'play') hookDrag(c); }, 700);
+    if (strikes >= 3) setTimeout(gameOver, 800);
+    updateHUD();
+  }
+
+  function karenArrives() {
+    const k = makeKaren();
+    const dur = 2.6;
+    k.spawnT = t; k.deadline = t + dur; k.vx = (W / 2 - k.x) / dur;
+    k.isKaren = true;
+    candidates.push(k);
+    sKaren();
+  }
+
+  function karenRant(k) {
+    k.judged = true; k.rantT = 0;
+    if (lastHireRef && t - lastHireT < 12 && portraits.includes(lastHireRef)) {
+      portraits = portraits.filter(p => p !== lastHireRef);
+      lastHireRef.hop = null; lastHireRef.seated = false;
+      lastHireRef.mood = 'dead'; lastHireRef.x = Math.max(lastHireRef.x, LINE_X + 60);
+      hookDrag(lastHireRef); // candidate stays in candidates[]; hook grabs it
+      score = Math.max(0, score - 50);
+      popup('KAREN VETO! -50', k.x, 170, '#fb7185', true);
+      lastHireRef = null;
+    } else {
+      popup('KAREN MAD!', k.x, 170, '#fb7185', true);
+    }
+    updateHUD();
+  }
+
+  function flipRule() {
+    rule = rule === 'weird' ? 'normal' : 'weird';
+    ruleFlipAnim = 1;
+    sAlarm();
+    popup('RULE CHANGE!', W / 2, 210, '#fde047', true);
+    const hw = rule === 'weird';
+    hireHint.textContent = hw ? 'the weird ones' : 'the normals';
+    fireHint.textContent = hw ? 'the normals' : 'the weird ones';
+    nextFlipAt = t + R(18, 24);
+  }
+
+  function gameOver() {
+    if (phase !== 'play') return;
+    phase = 'over';
+    hireBtn.disabled = fireBtn.disabled = true;
+    if (score > best) { best = score; localStorage.setItem(KEY, best); }
+    if (best >= 500 && !crown) { crown = true; localStorage.setItem(CK, '1'); }
+    document.getElementById('overTitle').textContent = pick(['HR QUIT. 💼💥', 'YOU\u2019RE FIRED. 💼', 'MEETING OVER. 💼']);
+    document.getElementById('finalScore').textContent = `Score: ${score} · Hired: ${hired} · Rank: ${rankOf(score)}${crown ? ' 👑' : ''}`;
+    document.getElementById('overJoke').textContent = pick(OVER_JOKES);
+    overOverlay.classList.remove('hidden');
+    updateHUD();
+  }
+
+  function reset() {
+    t = 0; score = 0; combo = 0; strikes = 0; hired = 0; fired = 0;
+    rule = 'weird'; nextFlipAt = 15; nextSpawnAt = 0.5; nextKarenAt = 30;
+    ruleFlipAnim = 0;
+    candidates = []; portraits = []; particles = []; popups = []; hooks = [];
+    lastHireRef = null; lastHireT = -99;
+    hireHint.textContent = 'the weird ones'; fireHint.textContent = 'the normals';
+    hireBtn.disabled = fireBtn.disabled = false;
+    startOverlay.classList.add('hidden'); overOverlay.classList.add('hidden');
+    paused = false; phase = 'play';
+    updateHUD();
+  }
+
+  function updateHUD() {
+    scoreEl.textContent = score;
+    comboEl.textContent = '×' + (1 + combo * 0.15).toFixed(2).replace(/\.?0+$/, '');
+    strikesEl.textContent = strikes === 0 ? '—' : '⚠'.repeat(strikes);
+    rankEl.textContent = rankOf(score) + (crown ? ' 👑' : '');
+    bestEl.textContent = best;
+  }
+
+  // ---- input ----
+  hireBtn.addEventListener('click', () => judge(true));
+  fireBtn.addEventListener('click', () => judge(false));
+  document.getElementById('startBtn').addEventListener('click', reset);
+  document.getElementById('againBtn').addEventListener('click', reset);
+  document.getElementById('shareBtn').addEventListener('click', () => {
+    const txt = `I got fired from my own company 💼 Hired ${hired} weirdos, score ${score} (${rankOf(score)}). Beat me: ${location.href}`;
+    try { navigator.clipboard.writeText(txt).then(() => alert('Copied! Go flex. 💼')); } catch (e) { alert(txt); }
+  });
+  window.addEventListener('keydown', e => {
+    if (e.key === 'h' || e.key === 'H' || e.key === 'ArrowLeft') judge(true);
+    else if (e.key === 'f' || e.key === 'F' || e.key === 'ArrowRight') judge(false);
+    else if (e.key === 'p' || e.key === 'P') { if (phase === 'play') { paused = !paused; } }
+    else if (e.key === 'r' || e.key === 'R') { if (phase !== 'start') reset(); }
+  });
+
+  // ---- drawing ----
+  function face(x, y, mood, s, dead) {
+    s = s || 1;
+    ctx.save(); ctx.translate(x, y); ctx.scale(s, s);
+    if (dead) { // X eyes
+      ctx.strokeStyle = '#1e293b'; ctx.lineWidth = 3;
+      ctx.beginPath(); ctx.moveTo(-14, -4); ctx.lineTo(-4, 6); ctx.moveTo(-4, -4); ctx.lineTo(-14, 6); ctx.stroke();
+      ctx.beginPath(); ctx.moveTo(4, -4); ctx.lineTo(14, 6); ctx.moveTo(14, -4); ctx.lineTo(4, 6); ctx.stroke();
+      ctx.beginPath(); ctx.arc(0, 18, 5, Math.PI, 0); ctx.stroke(); // frown
+    } else if (mood === 'happy') {
+      ctx.fillStyle = '#fff'; ctx.beginPath(); ctx.arc(-9, 0, 6, 0, 7); ctx.arc(9, 0, 6, 0, 7); ctx.fill();
+      ctx.fillStyle = '#1e293b'; ctx.beginPath(); ctx.arc(-9, 1, 2.6, 0, 7); ctx.arc(9, 1, 2.6, 0, 7); ctx.fill();
+      ctx.strokeStyle = '#1e293b'; ctx.lineWidth = 3; ctx.beginPath(); ctx.arc(0, 10, 9, 0.2, Math.PI - 0.2); ctx.stroke();
+    } else if (mood === 'point') {
+      ctx.fillStyle = '#fff'; ctx.beginPath(); ctx.arc(-9, 0, 6, 0, 7); ctx.arc(9, 0, 6, 0, 7); ctx.fill();
+      ctx.fillStyle = '#1e293b'; ctx.beginPath(); ctx.arc(-11, 1, 2.6, 0, 7); ctx.arc(7, 1, 2.6, 0, 7); ctx.fill();
+      ctx.strokeStyle = '#1e293b'; ctx.lineWidth = 3; ctx.beginPath(); ctx.moveTo(-8, 18); ctx.lineTo(8, 18); ctx.stroke();
+    } else { // walk: nervous side-eyes toward desk
+      ctx.fillStyle = '#fff'; ctx.beginPath(); ctx.arc(-9, 0, 6.5, 0, 7); ctx.arc(9, 0, 6.5, 0, 7); ctx.fill();
+      ctx.fillStyle = '#1e293b'; ctx.beginPath(); ctx.arc(-11.5, 1.5, 3, 0, 7); ctx.arc(6.5, 1.5, 3, 0, 7); ctx.fill();
+      ctx.strokeStyle = '#1e293b'; ctx.lineWidth = 2.5; ctx.beginPath(); ctx.arc(0, 16, 6, 0.4, Math.PI - 0.4); ctx.stroke();
+    }
+    ctx.restore();
+  }
+
+  function drawHead(c, x, y, tAnim) {
+    ctx.save(); ctx.translate(x, y);
+    const golden = c.golden;
+    if (golden) { ctx.shadowColor = '#fde047'; ctx.shadowBlur = 24; }
+    switch (c.kind) {
+      case 'giraffe': {
+        ctx.fillStyle = golden ? '#eab308' : '#eab308';
+        ctx.fillRect(-9, -46, 18, 52); // neck
+        ctx.beginPath(); ctx.arc(0, -52, 16, 0, 7); ctx.fill(); // head
+        ctx.fillStyle = '#a16207';
+        ctx.fillRect(-12, -72, 6, 12); ctx.fillRect(6, -72, 6, 12); // ossicones
+        ctx.beginPath(); ctx.arc(-12, -72, 4, 0, 7); ctx.arc(12, -72, 4, 0, 7); ctx.fill();
+        face(0, -52, c.mood, 0.8, c.mood === 'dead');
+        break;
+      }
+      case 'cone': {
+        ctx.fillStyle = golden ? '#eab308' : '#f97316';
+        ctx.beginPath(); ctx.moveTo(-20, 0); ctx.lineTo(20, 0); ctx.lineTo(0, -64); ctx.closePath(); ctx.fill();
+        ctx.fillStyle = '#fff'; ctx.fillRect(-13, -28, 26, 9);
+        face(0, -16, c.mood, 0.75, c.mood === 'dead');
+        break;
+      }
+      case 'baguette': {
+        ctx.fillStyle = golden ? '#eab308' : '#d9a05b';
+        ctx.beginPath(); ctx.ellipse(0, -22, 16, 34, 0.12, 0, 7); ctx.fill();
+        ctx.strokeStyle = '#a16207'; ctx.lineWidth = 2;
+        for (let i = 0; i < 3; i++) { ctx.beginPath(); ctx.moveTo(-8, -40 + i * 14); ctx.lineTo(4, -34 + i * 14); ctx.stroke(); }
+        ctx.fillStyle = '#1d4ed8'; ctx.beginPath(); ctx.ellipse(2, -52, 14, 5, 0.2, 0, 7); ctx.fill(); // beret
+        face(0, -20, c.mood, 0.7, c.mood === 'dead');
+        ctx.strokeStyle = '#1e293b'; ctx.lineWidth = 2.5; // mustache
+        ctx.beginPath(); ctx.moveTo(-12, -8); ctx.quadraticCurveTo(-4, -4, 0, -8); ctx.quadraticCurveTo(4, -4, 12, -8); ctx.stroke();
+        break;
+      }
+      case 'vampire': {
+        ctx.fillStyle = golden ? '#eab308' : '#e8e4da';
+        ctx.beginPath(); ctx.arc(0, -18, 17, 0, 7); ctx.fill();
+        ctx.fillStyle = golden ? '#ca8a04' : '#7f1d1d'; // cape
+        ctx.beginPath(); ctx.moveTo(-20, -26); ctx.lineTo(20, -26); ctx.lineTo(14, 8); ctx.lineTo(-14, 8); ctx.closePath(); ctx.fill();
+        if (c.mood !== 'dead') { ctx.fillStyle = '#ef4444'; ctx.beginPath(); ctx.arc(-8, -20, 4, 0, 7); ctx.arc(8, -20, 4, 0, 7); ctx.fill(); }
+        else face(0, -18, c.mood, 0.8, true);
+        ctx.fillStyle = '#fff'; // fangs
+        ctx.beginPath(); ctx.moveTo(-6, -8); ctx.lineTo(-3, -1); ctx.lineTo(0, -8); ctx.moveTo(6, -8); ctx.lineTo(3, -1); ctx.lineTo(0, -8); ctx.fill();
+        break;
+      }
+      case 'robocock': {
+        ctx.fillStyle = golden ? '#eab308' : '#94a3b8';
+        ctx.beginPath(); ctx.ellipse(0, -18, 15, 18, 0, 0, 7); ctx.fill();
+        ctx.fillStyle = '#f59e0b'; ctx.beginPath(); ctx.moveTo(-6, -30); ctx.lineTo(6, -30); ctx.lineTo(0, -20); ctx.closePath(); ctx.fill(); // beak
+        ctx.strokeStyle = '#64748b'; ctx.lineWidth = 3;
+        ctx.beginPath(); ctx.moveTo(0, -36); ctx.lineTo(0, -50); ctx.stroke(); // antenna
+        const blink = Math.sin(tAnim * 6) > 0 ? '#ef4444' : '#7f1d1d';
+        ctx.fillStyle = blink; ctx.beginPath(); ctx.arc(0, -52, 4, 0, 7); ctx.fill();
+        face(0, -16, c.mood, 0.7, c.mood === 'dead');
+        break;
+      }
+      case 'cyclops': {
+        ctx.fillStyle = golden ? '#eab308' : '#65a30d';
+        ctx.beginPath(); ctx.ellipse(0, -16, 20, 22, 0, 0, 7); ctx.fill();
+        if (c.mood === 'dead') { ctx.strokeStyle = '#1e293b'; ctx.lineWidth = 3; ctx.beginPath(); ctx.moveTo(-12, -26); ctx.lineTo(4, -10); ctx.moveTo(4, -26); ctx.lineTo(-12, -10); ctx.stroke(); }
+        else { ctx.fillStyle = '#fff'; ctx.beginPath(); ctx.arc(-2, -18, 9, 0, 7); ctx.fill(); ctx.fillStyle = '#1e293b'; ctx.beginPath(); ctx.arc(-4, -17, 4.5, 0, 7); ctx.fill(); }
+        break;
+      }
+      case 'toast': {
+        ctx.fillStyle = golden ? '#eab308' : '#c98a4b';
+        ctx.beginPath(); ctx.roundRect(-18, -44, 36, 44, 8); ctx.fill();
+        ctx.fillStyle = golden ? '#fef08a' : '#fde68a'; // butter
+        ctx.save(); ctx.translate(0, -38); ctx.rotate(Math.sin(tAnim * 3) * 0.15); ctx.fillRect(-8, -4, 16, 8); ctx.restore();
+        face(0, -20, c.mood, 0.75, c.mood === 'dead');
+        break;
+      }
+      case 'alien': {
+        ctx.fillStyle = golden ? '#eab308' : '#4ade80';
+        ctx.beginPath(); ctx.ellipse(0, -20, 16, 20, 0, 0, 7); ctx.fill();
+        ctx.strokeStyle = '#4ade80'; ctx.lineWidth = 3;
+        ctx.beginPath(); ctx.moveTo(-8, -38); ctx.lineTo(-14, -50); ctx.moveTo(8, -38); ctx.lineTo(14, -50); ctx.stroke();
+        if (c.mood === 'dead') face(0, -20, c.mood, 0.75, true);
+        else { ctx.fillStyle = '#111827'; ctx.beginPath(); ctx.ellipse(-7, -22, 5, 8, -0.2, 0, 7); ctx.ellipse(7, -22, 5, 8, 0.2, 0, 7); ctx.fill(); }
+        break;
+      }
+      case 'shark': {
+        ctx.fillStyle = golden ? '#eab308' : '#64748b';
+        ctx.beginPath(); ctx.ellipse(0, -18, 18, 15, 0, 0, 7); ctx.fill();
+        ctx.beginPath(); ctx.moveTo(-14, -26); ctx.lineTo(-6, -40); ctx.lineTo(2, -28); ctx.closePath(); ctx.fill(); // dorsal
+        ctx.fillStyle = '#fff'; // teeth grin
+        for (let i = 0; i < 4; i++) { ctx.beginPath(); ctx.moveTo(-12 + i * 7, -8); ctx.lineTo(-9 + i * 7, -2); ctx.lineTo(-5 + i * 7, -8); ctx.fill(); }
+        face(0, -16, c.mood, 0.65, c.mood === 'dead');
+        break;
+      }
+      case 'mushroom': {
+        ctx.fillStyle = golden ? '#eab308' : '#f8fafc';
+        ctx.fillRect(-10, -26, 20, 26); // stem
+        ctx.fillStyle = golden ? '#ca8a04' : '#dc2626';
+        ctx.beginPath(); ctx.arc(0, -28, 22, Math.PI, 0); ctx.fill(); // cap
+        ctx.fillStyle = '#fff';
+        ctx.beginPath(); ctx.arc(-10, -38, 4, 0, 7); ctx.arc(6, -34, 3, 0, 7); ctx.arc(12, -44, 2.5, 0, 7); ctx.fill();
+        face(0, -14, c.mood, 0.7, c.mood === 'dead');
+        break;
+      }
+      default: { // normal: boring human
+        ctx.fillStyle = c.skin; ctx.beginPath(); ctx.arc(0, -20, 15, 0, 7); ctx.fill();
+        ctx.fillStyle = c.hair; ctx.beginPath(); ctx.arc(0, -26, 15, Math.PI * 1.05, Math.PI * 1.95); ctx.fill();
+        face(0, -20, c.mood, 0.8, c.mood === 'dead');
+      }
+    }
+    // disguise: obvious costume over weird head (peels off near desk)
+    if (c.disguised && !c.revealed) {
+      const a = c.peelT > 0 ? Math.max(0, 1 - c.peelT / 0.6) : 1;
+      ctx.save(); ctx.globalAlpha = a;
+      ctx.strokeStyle = '#111827'; ctx.lineWidth = 3;
+      ctx.beginPath(); ctx.arc(-9, -20, 8, 0, 7); ctx.arc(9, -20, 8, 0, 7); ctx.stroke();
+      ctx.beginPath(); ctx.moveTo(-1, -20); ctx.lineTo(1, -20); ctx.stroke();
+      ctx.fillStyle = '#111827'; ctx.fillRect(-13, -6, 26, 6); // mustache
+      ctx.restore();
+    }
+    ctx.restore();
+  }
+
+  function drawBody(c, x, y, tAnim, walking) {
+    const bob = walking ? Math.abs(Math.sin(tAnim * 10)) * 5 : 0;
+    const legSwing = walking ? Math.sin(tAnim * 10) * 8 : 0;
+    ctx.save(); ctx.translate(x, y - bob);
+    if (c.golden) { ctx.shadowColor = '#fde047'; ctx.shadowBlur = 18; }
+    if (c.karen) {
+      // bob haircut + red face
+      ctx.fillStyle = '#92400e'; ctx.beginPath(); ctx.arc(0, -86, 20, Math.PI * 0.95, Math.PI * 2.05); ctx.fill();
+      ctx.fillRect(-20, -86, 40, 8);
+      ctx.fillStyle = '#f87171'; ctx.beginPath(); ctx.arc(0, -80, 15, 0, 7); ctx.fill();
+      ctx.fillStyle = '#111827'; ctx.fillRect(-14, -86, 28, 5); // glasses
+      const rant = c.rantT !== undefined && Math.sin(c.rantT * 30) > 0;
+      ctx.fillStyle = '#7f1d1d'; ctx.beginPath(); ctx.ellipse(0, -72, rant ? 7 : 4, rant ? 9 : 3, 0, 0, 7); ctx.fill(); // yelling mouth
+      ctx.strokeStyle = '#f87171'; ctx.lineWidth = 3; // steam
+      for (let i = 0; i < 3; i++) { const sx = -12 + i * 12; ctx.beginPath(); ctx.moveTo(sx, -102); ctx.quadraticCurveTo(sx + 4, -112, sx, -122); ctx.stroke(); }
+      ctx.fillStyle = '#be123c'; ctx.fillRect(-16, -60, 32, 34); // red blazer
+    } else if (c.kind === 'normal' || c.kind === 'karen') {
+      ctx.fillStyle = '#334155'; ctx.fillRect(-16, -60, 32, 40); // suit
+      ctx.fillStyle = c.tie; ctx.beginPath(); ctx.moveTo(-3, -60); ctx.lineTo(3, -60); ctx.lineTo(0, -34); ctx.closePath(); ctx.fill();
+      ctx.fillStyle = '#1e293b'; ctx.fillRect(-30, -46, 12, 22); // briefcase
+    } else {
+      const cols = { giraffe: '#eab308', cone: '#fb923c', baguette: '#d9a05b', vampire: '#1e1b2e', robocock: '#94a3b8', cyclops: '#65a30d', toast: '#c98a4b', alien: '#4ade80', shark: '#64748b', mushroom: '#f8fafc' };
+      ctx.fillStyle = c.golden ? '#eab308' : (cols[c.kind] || '#888');
+      ctx.fillRect(-15, -58, 30, 38); // body
+    }
+    { // legs
+      ctx.fillStyle = c.karen ? '#1e1b2e' : '#1e293b';
+      ctx.fillRect(-12 + (walking ? legSwing : 0), -20, 9, 20);
+      ctx.fillRect(3 - (walking ? legSwing : 0), -20, 9, 20);
+    }
+    ctx.restore();
+    // arms for pointing candidate (timeout)
+    if (c.mood === 'point' && !c.karen) {
+      ctx.save(); ctx.translate(x, y - 40);
+      ctx.strokeStyle = c.skin; ctx.lineWidth = 8; ctx.lineCap = 'round';
+      ctx.beginPath(); ctx.moveTo(0, 0); ctx.lineTo(-46, -18); ctx.stroke(); // accusing arm toward boss
+      ctx.restore();
+    }
+  }
+
+  function drawCandidate(c, tAnim) {
+    if (c.hop) {
+      const k = Math.min(1, c.hop.t / c.hop.dur);
+      const e = 1 - Math.pow(1 - k, 3);
+      const x = c.hop.sx + (c.hop.ex - c.hop.sx) * e;
+      const y = c.hop.sy + (c.hop.ey - c.hop.sy) * e - Math.sin(k * Math.PI) * 60;
+      const s = 1 - k * 0.55;
+      ctx.save(); ctx.translate(x, y); ctx.scale(s, s);
+      drawBody(c, 0, 0, tAnim, false);
+      drawHead(c, 0, -60, tAnim);
+      ctx.restore();
+      return;
+    }
+    if (c.drag) return; // drawn by hook
+    if (c.seated) return; // on team wall, drawn by drawOffice
+    const walking = !c.judged;
+    drawBody(c, c.x, FLOOR, tAnim, walking);
+    if (!c.karen) drawHead(c, c.x, FLOOR - 60, tAnim);
+    if (c.golden) { // sparkles
+      if (Math.random() < 0.3) particles.push({ x: c.x + R(-26, 26), y: FLOOR - R(20, 120), vx: 0, vy: -40, r: R(2, 4), color: '#fde047', life: 0.6 });
+    }
+    // judge deadline bar
+    if (!c.judged && !c.karen && phase === 'play') {
+      const frac = Math.max(0, (c.deadline - t) / (c.deadline - c.spawnT));
+      const bw = 64;
+      ctx.fillStyle = 'rgba(0,0,0,.5)'; ctx.fillRect(c.x - bw / 2, FLOOR - 150, bw, 7);
+      ctx.fillStyle = frac < 0.22 ? '#ef4444' : '#a3e635';
+      ctx.fillRect(c.x - bw / 2, FLOOR - 150, bw * frac, 7);
+    }
+    // disguise flash on peel
+    if (c.peelT > 0 && !c.revealed) {
+      ctx.save(); ctx.globalAlpha = c.peelT / 0.6 * 0.7; ctx.fillStyle = '#fff';
+      ctx.beginPath(); ctx.arc(c.x, FLOOR - 80, 40, 0, 7); ctx.fill(); ctx.restore();
+    }
+  }
+
+  function drawOffice(tAnim) {
+    // wall
+    const g = ctx.createLinearGradient(0, 0, 0, FLOOR);
+    g.addColorStop(0, '#101a12'); g.addColorStop(1, '#18241a');
+    ctx.fillStyle = g; ctx.fillRect(0, 0, W, FLOOR);
+    // window with drifting clouds
+    ctx.fillStyle = '#0e2a3a'; ctx.fillRect(W - 220, 60, 180, 120);
+    ctx.fillStyle = '#164e63'; ctx.fillRect(W - 214, 66, 168, 108);
+    ctx.fillStyle = 'rgba(255,255,255,.75)';
+    const cx = ((tAnim * 12) % 260) - 40;
+    ctx.beginPath(); ctx.ellipse(W - 214 + cx, 100, 26, 10, 0, 0, 7); ctx.fill();
+    ctx.beginPath(); ctx.ellipse(W - 160 + cx, 130, 20, 8, 0, 0, 7); ctx.fill();
+    // team wall (hired portraits)
+    ctx.fillStyle = 'rgba(163,230,53,.08)'; ctx.fillRect(30, 80, 460, 130);
+    ctx.strokeStyle = 'rgba(163,230,53,.35)'; ctx.lineWidth = 2; ctx.strokeRect(30, 80, 460, 130);
+    ctx.fillStyle = '#a3e635'; ctx.font = '700 15px system-ui'; ctx.textAlign = 'left';
+    ctx.fillText('TEAM WALL', 44, 104);
+    for (const p of portraits) {
+      if (p.hop) continue;
+      const slot = p.wallSlot;
+      const px = 66 + (slot % 7) * 64, py = 158 + Math.floor(slot / 7) * 62;
+      ctx.save(); ctx.translate(px, py);
+      ctx.fillStyle = '#0a0f0a'; ctx.strokeStyle = '#a3e635'; ctx.lineWidth = 2;
+      ctx.beginPath(); ctx.roundRect(-24, -24, 48, 48, 8); ctx.fill(); ctx.stroke();
+      ctx.scale(0.5, 0.5);
+      drawHead(p, 0, 6, tAnim + slot);
+      ctx.restore();
+    }
+    // plant (swaying)
+    const sway = Math.sin(tAnim * 1.6) * 6;
+    ctx.strokeStyle = '#166534'; ctx.lineWidth = 6;
+    ctx.beginPath(); ctx.moveTo(560, FLOOR); ctx.quadraticCurveTo(560 + sway, FLOOR - 50, 560 + sway * 1.6, FLOOR - 80); ctx.stroke();
+    ctx.fillStyle = '#22c55e';
+    for (let i = 0; i < 5; i++) { const a = -0.9 + i * 0.45; ctx.beginPath(); ctx.ellipse(560 + sway * 1.6 + Math.cos(a) * 26, FLOOR - 84 + Math.sin(a) * 18, 16, 7, a, 0, 7); ctx.fill(); }
+    ctx.fillStyle = '#b45309'; ctx.fillRect(544, FLOOR - 26, 32, 26);
+    // ceiling light flicker
+    const flick = Math.random() < 0.03 ? 0.4 : 1;
+    ctx.fillStyle = `rgba(253,224,71,${0.10 * flick})`; ctx.fillRect(0, 0, W, FLOOR);
+    ctx.fillStyle = '#3f3f46'; ctx.fillRect(W / 2 - 40, 0, 80, 12);
+    // floor
+    ctx.fillStyle = '#141b14'; ctx.fillRect(0, FLOOR, W, H - FLOOR);
+    ctx.fillStyle = 'rgba(163,230,53,.15)'; ctx.fillRect(0, FLOOR, W, 4);
+    // decision line
+    ctx.save();
+    ctx.strokeStyle = '#22d3ee'; ctx.lineWidth = 3; ctx.setLineDash([10, 8]);
+    ctx.globalAlpha = 0.7 + Math.sin(tAnim * 5) * 0.3;
+    ctx.beginPath(); ctx.moveTo(LINE_X, 60); ctx.lineTo(LINE_X, FLOOR); ctx.stroke();
+    ctx.restore(); ctx.setLineDash([]);
+    ctx.fillStyle = '#22d3ee'; ctx.font = '700 14px system-ui'; ctx.textAlign = 'center';
+    ctx.fillText('▼ JUDGE', LINE_X, 52);
+    // boss desk (you)
+    ctx.fillStyle = '#3f2d1c'; ctx.fillRect(60, FLOOR - 96, 170, 96);
+    ctx.fillStyle = '#573d24'; ctx.fillRect(60, FLOOR - 96, 170, 14);
+    ctx.fillStyle = '#0a0f0a'; ctx.font = '700 15px system-ui';
+    ctx.fillText('YOU (BOSS)', 145, FLOOR - 106);
+    // boss chair + coffee
+    ctx.fillStyle = '#7c3aed'; ctx.beginPath(); ctx.roundRect(96, FLOOR - 170, 96, 66, 12); ctx.fill();
+    ctx.fillStyle = '#5b21b6'; ctx.fillRect(88, FLOOR - 178, 112, 14);
+    if (crown) { ctx.font = '30px system-ui'; ctx.fillText('👑', 144, FLOOR - 182); }
+    ctx.fillStyle = '#fff'; ctx.fillRect(196, FLOOR - 122, 18, 20); // coffee cup
+    ctx.strokeStyle = 'rgba(255,255,255,.5)'; ctx.lineWidth = 2;
+    const steam = Math.sin(tAnim * 3) * 3;
+    ctx.beginPath(); ctx.moveTo(202 + steam, FLOOR - 124); ctx.quadraticCurveTo(206 + steam, FLOOR - 136, 202 + steam, FLOOR - 146); ctx.stroke();
+    // handbook rule plaque
+    ctx.save();
+    if (ruleFlipAnim > 0) { ctx.translate(W / 2, 92); ctx.rotate(Math.sin(ruleFlipAnim * Math.PI * 4) * 0.12); ctx.translate(-W / 2, -92); }
+    ctx.fillStyle = rule === 'weird' ? '#14532d' : '#1e3a8a';
+    ctx.strokeStyle = rule === 'weird' ? '#a3e635' : '#60a5fa'; ctx.lineWidth = 3;
+    ctx.beginPath(); ctx.roundRect(W / 2 - 150, 66, 300, 52, 10); ctx.fill(); ctx.stroke();
+    ctx.fillStyle = '#fff'; ctx.font = '800 20px system-ui';
+    ctx.fillText(rule === 'weird' ? '📗 HIRE: WEIRD ONLY' : '📘 HIRE: NORMALS ONLY', W / 2, 99);
+    ctx.restore();
+  }
+
+  function drawHooks(dt) {
+    for (const h of hooks) {
+      if (h.state === 'down') {
+        h.y += 700 * dt;
+        if (h.y >= h.targetY) { h.y = h.targetY; h.state = 'grab'; h.t = 0; if (h.c) { h.c.drag = h; } }
+      } else if (h.state === 'grab') {
+        h.t = (h.t || 0) + dt;
+        if (h.t > 0.25) h.state = 'up';
+      } else if (h.state === 'up') {
+        h.y -= 900 * dt;
+        if (h.y < -120) h.done = true;
+      }
+      const c = h.c;
+      ctx.strokeStyle = '#94a3b8'; ctx.lineWidth = 5;
+      ctx.beginPath(); ctx.moveTo(h.x, -10); ctx.lineTo(h.x, h.y); ctx.stroke();
+      ctx.strokeStyle = '#cbd5e1'; ctx.lineWidth = 7;
+      ctx.beginPath(); ctx.arc(h.x, h.y + 12, 12, 0.3, Math.PI - 0.3); ctx.stroke();
+      if (c && c.drag === h && h.state !== 'down') {
+        c.x = h.x;
+        const dy = h.y - 10;
+        const sq = h.state === 'up' ? 1 + Math.sin(t * 40) * 0.08 : 1;
+        ctx.save(); ctx.translate(c.x, dy); ctx.scale(sq, 2 - sq);
+        drawBody(c, 0, 60, t, false);
+        drawHead(c, 0, 0, t);
+        ctx.restore();
+        if (h.state === 'up' && Math.random() < 0.25) popup(pick(['NOOO!', 'WHY?!', 'MOMMY!']), c.x + R(-20, 20), dy - 40, '#fda4af');
+        if (h.done) { const i = candidates.indexOf(c); if (i >= 0) candidates.splice(i, 1); }
+      }
+    }
+    hooks = hooks.filter(h => !h.done);
+  }
+
+  function draw() {
+    ctx.clearRect(0, 0, W, H);
+    ctx.textAlign = 'left';
+    drawOffice(t);
+    for (const c of candidates) drawCandidate(c, t + c.animT);
+    drawHooks(1 / 60);
+    // particles
+    for (const p of particles) {
+      ctx.globalAlpha = Math.max(0, Math.min(1, p.life));
+      ctx.fillStyle = p.color;
+      ctx.beginPath(); ctx.arc(p.x, p.y, p.r, 0, 7); ctx.fill();
+    }
+    ctx.globalAlpha = 1;
+    // karen rant timer visuals
+    for (const c of candidates) {
+      if (c.karen && c.judged && c.rantT !== undefined && c.rantT < 1.4) {
+        ctx.fillStyle = '#fb7185'; ctx.font = '800 22px system-ui'; ctx.textAlign = 'center';
+        ctx.fillText(pick(['BLAH!', 'RUDE!', 'MANAGER!']), c.x, FLOOR - 160 - c.rantT * 30);
+      }
+    }
+    // in-canvas text: hook + rule + popups
+    ctx.textAlign = 'center';
+    if (t < 6 && phase === 'play') {
+      ctx.fillStyle = '#fde68a'; ctx.font = '800 24px system-ui';
+      ctx.fillText('HIRE THE WEIRD ONES.', W / 2, 140);
+    }
+    ctx.font = '800 22px system-ui';
+    for (const p of popups) {
+      ctx.globalAlpha = Math.max(0, Math.min(1, p.life * 1.4));
+      ctx.fillStyle = p.color;
+      ctx.font = p.big ? '800 30px system-ui' : '800 22px system-ui';
+      ctx.fillText(p.text, p.x, p.y);
+    }
+    ctx.globalAlpha = 1; ctx.textAlign = 'left';
+    if (paused && phase === 'play') {
+      ctx.fillStyle = 'rgba(0,0,0,.6)'; ctx.fillRect(0, 0, W, H);
+      ctx.fillStyle = '#fff'; ctx.font = '800 44px system-ui'; ctx.textAlign = 'center';
+      ctx.fillText('PAUSED', W / 2, H / 2);
+    }
+    ctx.textAlign = 'left';
+  }
+
+  function update(dt) {
+    t += dt;
+    if (ruleFlipAnim > 0) ruleFlipAnim = Math.max(0, ruleFlipAnim - dt * 1.4);
+    // spawn
+    if (t >= nextSpawnAt) {
+      spawnCandidate();
+      const interval = Math.max(1.05, 2.3 - t * 0.013);
+      nextSpawnAt = t + interval * R(0.8, 1.2);
+    }
+    if (t >= nextFlipAt) flipRule();
+    if (t >= nextKarenAt) { karenArrives(); nextKarenAt = t + R(26, 40); }
+    // candidates
+    for (const c of candidates) {
+      if (c.hop) {
+        c.hop.t += dt;
+        if (c.hop.t >= c.hop.dur) { const sx = c.hop.sx; c.hop = null; c.seated = true; confetti(sx, FLOOR - 60); }
+        continue;
+      }
+      if (c.drag) continue;
+      if (!c.judged) {
+        c.x += c.vx * dt;
+        // disguise peel near desk
+        if (c.disguised && !c.revealed && c.peelT <= 0 && (c.deadline - t) < 0.9) {
+          c.peelT = 0.6; burst(c.x, FLOOR - 80, '#fff', 10, 120); sTick();
+        }
+        if (c.peelT > 0) {
+          c.peelT -= dt;
+          if (c.peelT <= 0) { c.revealed = true; c.disguised = false; }
+        }
+        if (c.isKaren) {
+          if (c.x <= W / 2) { karenRant(c); }
+        } else if (c.x <= LINE_X) {
+          timeoutStrike(c);
+        }
+      } else if (c.karen && c.rantT !== undefined) {
+        c.rantT += dt;
+        c.x -= 60 * dt; // storm off
+        if (c.rantT > 1.6) { const i = candidates.indexOf(c); if (i >= 0) candidates.splice(i, 1); }
+      }
+    }
+    // particles
+    for (const p of particles) {
+      p.x += p.vx * dt; p.y += p.vy * dt;
+      if (p.grav) p.vy += p.grav * dt;
+      p.life -= dt;
+    }
+    particles = particles.filter(p => p.life > 0);
+    for (const p of popups) { p.y -= 34 * dt; p.life -= dt; }
+    popups = popups.filter(p => p.life > 0);
+  }
+
+  function loop(ts) {
+    requestAnimationFrame(loop);
+    const now = ts / 1000;
+    let dt = Math.min(0.05, now - (last || now));
+    last = now;
+    if (phase === 'play' && !paused) update(dt);
+    draw();
+  }
+  updateHUD();
+  requestAnimationFrame(loop);
+})();
+</script>
+</body>
+</html>
