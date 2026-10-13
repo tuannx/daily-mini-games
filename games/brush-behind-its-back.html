@@ -1,0 +1,697 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<title>Brush Behind Its Back — Daily Mini-Game #13</title>
+<style>
+  :root{--neon:#fb923c;--pink:#f472b6;--bg:#0d0906}
+  *{margin:0;padding:0;box-sizing:border-box}
+  html,body{background:var(--bg);color:#e2e8f0;font-family:ui-rounded,system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;min-height:100%}
+  .wrap{max-width:960px;margin:0 auto;padding:16px 14px 28px}
+  header{display:flex;align-items:baseline;justify-content:space-between;gap:12px;flex-wrap:wrap;margin-bottom:10px}
+  h1{font-size:clamp(24px,5vw,38px);background:linear-gradient(90deg,#fb923c,#f472b6);-webkit-background-clip:text;background-clip:text;color:transparent}
+  .badge{font-size:12px;border:1px solid rgba(251,146,60,.5);color:#fb923c;padding:4px 10px;border-radius:999px;white-space:nowrap}
+  .hud{display:flex;gap:10px;flex-wrap:wrap;margin:10px 0}
+  .chip{flex:1;min-width:80px;background:rgba(255,255,255,.04);border:1px solid rgba(255,255,255,.08);border-radius:12px;padding:8px 12px}
+  .chip b{display:block;font-size:20px;color:#fff}
+  .chip span{font-size:11px;text-transform:uppercase;letter-spacing:.12em;color:#94a3b8}
+  .susbar{height:8px;border-radius:99px;background:rgba(255,255,255,.07);overflow:hidden;margin:2px 0 10px}
+  .susbar i{display:block;height:100%;width:0%;border-radius:99px;background:linear-gradient(90deg,#4ade80,#facc15,#ef4444);transition:width .15s}
+  .stage{position:relative;border-radius:16px;overflow:hidden;border:1px solid rgba(251,146,60,.25);box-shadow:0 0 40px rgba(251,146,60,.12);background:#14100b}
+  canvas{display:block;width:100%;height:auto;touch-action:none;cursor:crosshair}
+  .overlay{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;text-align:center;background:rgba(6,4,2,.88);padding:20px;z-index:5}
+  .overlay.hidden{display:none}
+  .overlay .big{font-size:64px;margin-bottom:8px}
+  .overlay h2{font-size:clamp(26px,6vw,40px);color:#fff;margin-bottom:6px}
+  .overlay .hook{font-size:clamp(15px,3.6vw,20px);color:#fdba74;font-weight:700;margin-bottom:10px}
+  .overlay .sub{color:#94a3b8;font-size:14px;line-height:1.6;max-width:420px}
+  .overlay .line{color:#fda4af;font-size:16px;font-style:italic;margin:8px 0;min-height:24px}
+  .btn{cursor:pointer;border:0;border-radius:16px;padding:16px 34px;font-size:20px;font-weight:800;color:#1c0e02;background:linear-gradient(180deg,#fdba74,#f97316);box-shadow:0 6px 0 #9a3412,0 0 28px rgba(251,146,60,.45);margin-top:14px;touch-action:manipulation;user-select:none;-webkit-user-select:none}
+  .btn:active{transform:translateY(4px);box-shadow:0 2px 0 #9a3412}
+  .btn.ghost{background:rgba(255,255,255,.08);color:#e2e8f0;box-shadow:none;border:1px solid rgba(255,255,255,.2);font-size:15px;padding:12px 22px}
+  .row{display:flex;gap:10px;margin-top:6px;flex-wrap:wrap;justify-content:center}
+  .tip{margin-top:14px;font-size:12px;color:#64748b}
+  .footer{margin-top:14px;display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap}
+  .footer a{color:#fb923c;text-decoration:none;font-size:14px}
+  .keys{font-size:12px;color:#64748b}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <h1>🐱 Brush Behind Its Back</h1>
+    <span class="badge">DAY 13 · tap = brush</span>
+  </header>
+  <div class="hud">
+    <div class="chip"><b id="hScore">0</b><span>brushes</span></div>
+    <div class="chip"><b id="hBest">0</b><span>best</span></div>
+    <div class="chip"><b id="hRank">Couch Guest</b><span>rank</span></div>
+  </div>
+  <div class="susbar"><i id="susFill"></i></div>
+  <div class="stage">
+    <canvas id="cv" width="480" height="720"></canvas>
+    <div class="overlay" id="ovTitle">
+      <div class="big">🐱</div>
+      <h2>Brush Behind Its Back</h2>
+      <div class="hook">Brush the cat. Don't get caught.</div>
+      <div class="sub">The tail is the lie detector — the faster it wags, the closer you are to death.<br>When it turns around: <b style="color:#fda4af">FREEZE.</b> One stroke while it looks = pounced.</div>
+      <button class="btn" id="btnStart">Start brushing</button>
+      <div class="tip">tap / click / space = brush · P = pause · golden brush = free strokes</div>
+    </div>
+    <div class="overlay hidden" id="ovOver">
+      <div class="big">🐱💥</div>
+      <h2>POUNCED!</h2>
+      <div class="line" id="overLine"></div>
+      <div class="sub" id="overStats"></div>
+      <div class="row">
+        <button class="btn" id="btnRetry">Brush again</button>
+        <button class="btn ghost" id="btnShare">Copy result</button>
+      </div>
+      <div class="tip" id="shareTip"></div>
+    </div>
+    <div class="overlay hidden" id="ovPause">
+      <h2>Paused</h2>
+      <div class="sub">The cat is still judging you.</div>
+      <button class="btn" id="btnResume">Resume</button>
+    </div>
+  </div>
+  <div class="footer">
+    <a href="../index.html">← all daily games</a>
+    <span class="keys">Day 13 · suspicion-tap brusher</span>
+  </div>
+</div>
+<script>
+(() => {
+'use strict';
+// ---------- helpers ----------
+const $ = id => document.getElementById(id);
+const clamp = (v,a,b) => v<a?a:(v>b?b:v);
+const rand = (a,b) => a + Math.random()*(b-a);
+const lerp = (a,b,t) => a+(b-a)*t;
+
+// ---------- audio (WebAudio, self-generated) ----------
+let AC = null;
+function ac(){ if(!AC){ try{ AC = new (window.AudioContext||window.webkitAudioContext)(); }catch(e){} } return AC; }
+function tone(f0,f1,dur,type,vol){
+  const c = ac(); if(!c) return;
+  const o = c.createOscillator(), g = c.createGain();
+  o.type = type||'sine'; o.frequency.setValueAtTime(f0, c.currentTime);
+  o.frequency.exponentialRampToValueAtTime(Math.max(1,f1), c.currentTime+dur);
+  g.gain.setValueAtTime(vol||0.12, c.currentTime);
+  g.gain.exponentialRampToValueAtTime(0.0001, c.currentTime+dur);
+  o.connect(g); g.connect(c.destination); o.start(); o.stop(c.currentTime+dur);
+}
+const sBrush  = () => tone(900, 300, 0.09, 'triangle', 0.10);
+const sWarn   = () => { tone(660, 660, 0.12, 'square', 0.08); setTimeout(()=>tone(880,880,0.12,'square',0.08),130); };
+const sNear   = () => { tone(300, 1200, 0.25, 'sine', 0.14); };
+const sGold   = () => { tone(523,523,0.1,'sine',0.12); setTimeout(()=>tone(659,659,0.1,'sine',0.12),90); setTimeout(()=>tone(784,784,0.16,'sine',0.12),180); };
+const sPounce = () => { tone(500, 60, 0.7, 'sawtooth', 0.18); setTimeout(()=>tone(120,40,0.4,'square',0.14),80); };
+const sClick  = () => tone(440, 660, 0.07, 'sine', 0.08);
+const sTurn   = () => tone(220, 180, 0.2, 'triangle', 0.10);
+
+// ---------- storage ----------
+const store = {
+  get best(){ try{ return +localStorage.getItem('bbb_best')||0; }catch(e){ return 0; } },
+  set best(v){ try{ localStorage.setItem('bbb_best', v); }catch(e){} },
+};
+
+// ---------- config ----------
+const W = 480, H = 720;
+const LINES = [
+  'The cat filed a complaint.',
+  'You are now the furniture.',
+  'HR has been notified.',
+  'The cat remembers. Forever.',
+  'Brushing privileges: revoked.',
+  'It saw your intentions.',
+  '9 lives. You owe it 8.',
+  'Groomer? More like doomer.',
+];
+const RANKS = [
+  [0,'Couch Guest'],[10,'Amateur Groomer'],[25,'Certified Brusher'],
+  [50,'Cat Whisker... er, Whisperer'],[100,'Reckless Barber'],
+  [200,'Nine-Lives Gambler'],[350,'Legend of the Brush'],
+];
+const SKINS = [
+  {need:0,  name:'plastic brush', c1:'#cbd5e1', c2:'#64748b', glow:null},
+  {need:25, name:'golden brush',  c1:'#fde68a', c2:'#d97706', glow:'#fbbf24'},
+  {need:75, name:'neon laser brush', c1:'#a5f3fc', c2:'#0891b2', glow:'#22d3ee'},
+];
+const GAME_URL = 'https://tuannx.github.io/daily-mini-games/games/brush-behind-its-back.html';
+
+// ---------- state ----------
+let phase = 'title';           // title | play | over
+let paused = false;
+let elapsed = 0, score = 0, best = store.best;
+let suspicion = 0;             // 0..100
+let catState = 'calm';         // calm | warn | turned | return
+let catT = 0, turnTimer = 5.5, warnDur = 0.9, holdDur = 1.3;
+let rot = 0;                   // 0 = back of head, 1 = full face
+let lastBrushT = -9, brushAnim = 0;
+let timeScale = 1, slowT = 0, shakeT = 0, pounceT = 0;
+let golden = null, goldenTimer = rand(9, 14);
+let fakeDone = false, doubleDone = false;
+let particles = [], popups = [], motes = [];
+let brushX = W/2, brushY = H/2, pointerIn = false;
+let newUnlock = null;
+let twitchT = 0, twitchOn = false;
+let fakeFlash = null;
+
+const skin = () => { let s = SKINS[0]; for (const k of SKINS) if (best >= k.need) s = k; return s; };
+const rank = () => { let r = RANKS[0][1]; for (const t of RANKS) if (score >= t[0]) r = t[1]; return r; };
+const escGain = () => Math.min(13, 6 + elapsed*0.075);          // suspicion per brush
+const escInterval = () => Math.max(3.1, 6.8 - elapsed*0.045 - suspicion*0.012);
+const escWarn = () => Math.max(0.45, 0.95 - elapsed*0.006);
+
+// background motes
+for (let i=0;i<26;i++) motes.push({x:rand(0,W), y:rand(0,H), r:rand(1,2.6), s:rand(4,14), a:rand(0.05,0.22)});
+
+// ---------- DOM ----------
+const cv = $('cv'), ctx = cv.getContext('2d');
+const hScore=$('hScore'), hBest=$('hBest'), hRank=$('hRank'), susFill=$('susFill');
+const ovTitle=$('ovTitle'), ovOver=$('ovOver'), ovPause=$('ovPause');
+
+function updateHUD(){
+  hScore.textContent = score;
+  hBest.textContent = best;
+  hRank.textContent = rank();
+  susFill.style.width = clamp(suspicion,0,100).toFixed(0)+'%';
+}
+
+// ---------- fx ----------
+function burst(x,y,color,n,spd,grav){
+  for(let i=0;i<n;i++){
+    const a = rand(0,Math.PI*2), s = rand(spd*0.3,spd);
+    particles.push({x,y,vx:Math.cos(a)*s,vy:Math.sin(a)*s-spd*0.35,life:rand(0.4,0.9),max:0.9,color,r:rand(2,5),grav:grav||420,shape:'c'});
+  }
+}
+function confetti(x,y,n){
+  const cols=['#f472b6','#22d3ee','#a3e635','#fbbf24','#c084fc'];
+  for(let i=0;i<n;i++){
+    const a=rand(0,Math.PI*2), s=rand(60,260);
+    particles.push({x,y,vx:Math.cos(a)*s,vy:Math.sin(a)*s-140,life:rand(0.7,1.4),max:1.4,color:cols[i%cols.length],r:rand(3,6),grav:380,shape:'r',rot:rand(0,6),vr:rand(-8,8)});
+  }
+}
+function popup(x,y,text,color,big){
+  popups.push({x,y,text,color:color||'#fff',life:1.1,max:1.1,big:!!big});
+}
+
+// ---------- game flow ----------
+function startGame(){
+  phase='play'; paused=false;
+  elapsed=0; score=0; suspicion=0; catState='calm'; rot=0;
+  turnTimer=5.5; lastBrushT=-9; timeScale=1; slowT=0; shakeT=0; pounceT=0;
+  golden=null; goldenTimer=rand(9,14); fakeDone=false; doubleDone=false;
+  particles=[]; popups=[]; newUnlock=null; fakeFlash=null; twitchOn=false;
+  ovTitle.classList.add('hidden'); ovOver.classList.add('hidden'); ovPause.classList.add('hidden');
+  sClick(); updateHUD();
+}
+function die(){
+  if (phase!=='play') return;
+  phase='over'; pounceT=0.9; shakeT=0.55; sPounce();
+  burst(240,380,'#fb923c',26,260); burst(240,380,'#fde68a',14,200);
+  const oldBest = best;
+  if (score > best){ best = score; store.best = best; }
+  const sk = skin();
+  newUnlock = null;
+  for (const k of SKINS){ if (k.need>0 && oldBest<k.need && best>=k.need) newUnlock = k.name; }
+  $('overLine').textContent = LINES[(Math.random()*LINES.length)|0];
+  $('overStats').innerHTML =
+    `You survived <b style="color:#fff">${score} brushes</b> (${elapsed.toFixed(1)}s) · rank <b style="color:#fdba74">${rank()}</b><br>`+
+    `best <b style="color:#fff">${best}</b> · brush: <b style="color:#fdba74">${sk.name}</b>`+
+    (newUnlock?`<br>🎉 unlocked <b style="color:#fde68a">${newUnlock}</b>!`:'');
+  $('shareTip').textContent='';
+  setTimeout(()=>{ if(phase==='over') ovOver.classList.remove('hidden'); }, 650);
+  updateHUD();
+}
+function share(){
+  const txt = `I brushed the cat ${score} times before it looked 🐱 (${rank()}). Beat me: ${GAME_URL}`;
+  const done = ()=>{ $('shareTip').textContent='Copied! Go flex.'; };
+  if (navigator.clipboard && navigator.clipboard.writeText){
+    navigator.clipboard.writeText(txt).then(done, ()=>{ $('shareTip').textContent=txt; });
+  } else { $('shareTip').textContent=txt; }
+  sClick();
+}
+
+// ---------- brushing ----------
+function catHit(x,y){
+  // back-view cat hit region (body + head)
+  const dx=x-240, dyb=y-500, dyh=y-300;
+  return (dx*dx)/(150*150)+(dyb*dyb)/(135*135) <= 1 || (dx*dx+dyh*dyh) <= 92*92;
+}
+function doBrush(x,y){
+  if (phase!=='play' || paused) return;
+  brushX=x; brushY=y; pointerIn=true; brushAnim=0.22;
+  // golden brush pickup (any state, safe)
+  if (golden && Math.hypot(x-golden.x,y-golden.y) < 52){
+    score += 8; suspicion = Math.max(0, suspicion-22);
+    confetti(golden.x, golden.y, 26); popup(golden.x, golden.y-24, '+8 FREE', '#fde68a', true);
+    sGold(); golden=null; goldenTimer = rand(13,22);
+    updateHUD(); return;
+  }
+  if (catHit(x,y)){
+    if (catState==='turned' || pounceT>0){ die(); return; }
+    // safe brush
+    const now = elapsed;
+    score++; lastBrushT = now;
+    suspicion = clamp(suspicion + escGain(), 0, 100);
+    burst(x, y, '#fb923c', 7, 130, 500);
+    burst(x, y, '#fde68a', 3, 90, 300);
+    sBrush();
+    if (catState==='calm' && suspicion>45 && !twitchOn && Math.random()<0.5){ twitchOn=true; twitchT=0.28; }
+    updateHUD();
+  }
+}
+
+// ---------- turn machine ----------
+function startWarn(){
+  catState='warn'; catT=warnDur=escWarn(); sWarn();
+  // near-miss: brushed a hair before it started turning
+  if (elapsed - lastBrushT < 0.35 && lastBrushT > 0){
+    suspicion = Math.max(0, suspicion-15);
+    slowT=0.45; timeScale=0.35;
+    popup(240, 180, 'SO CLOSE!', '#4ade80', true);
+    burst(240, 240, '#4ade80', 10, 140, 200);
+    sNear();
+  } else {
+    popup(240, 170, '!', '#ef4444', true);
+  }
+}
+function update(dt){
+  elapsed += dt;
+  // slow-mo
+  if (slowT>0){ slowT-=dt; if(slowT<=0) timeScale=1; }
+  if (shakeT>0) shakeT-=dt;
+  if (pounceT>0) pounceT-=dt;
+  if (brushAnim>0) brushAnim-=dt;
+  if (twitchT>0){ twitchT-=dt; if(twitchT<=0) twitchOn=false; }
+
+  // suspicion decay (cat calms when untouched)
+  suspicion = Math.max(0, suspicion - 3.2*dt);
+
+  // turn state machine
+  if (catState==='calm'){
+    rot = Math.max(0, rot - dt*3);
+    turnTimer -= dt;
+    if (turnTimer<=0) startWarn();
+  } else if (catState==='warn'){
+    rot = Math.min(1, rot + dt*(1/warnDur)*1.0);
+    catT -= dt;
+    if (catT<=0){ catState='turned'; catT=holdDur; rot=1; sTurn(); }
+  } else if (catState==='turned'){
+    rot = 1;
+    catT -= dt;
+    if (catT<=0){
+      catState='return'; catT=0.5;
+      suspicion = Math.max(0, suspicion-22);
+      popup(240, 200, 'phew.', '#a3e635');
+    }
+  } else if (catState==='return'){
+    rot = Math.max(0, rot - dt*2);
+    catT -= dt;
+    if (catT<=0){
+      catState='calm';
+      turnTimer = escInterval() * (doubleDone&&elapsed<55 ? 0.45 : 1);
+      if (!doubleDone && elapsed>22){ doubleDone=true; turnTimer=1.2; popup(240,170,'AGAIN?!','#ef4444',true); }
+    }
+  }
+
+  // scripted fake-out at ~45s
+  if (!fakeDone && elapsed>45){
+    fakeDone=true;
+    fakeFlash = {t:0, phase:1};
+    suspicion = Math.min(100, suspicion+12);
+  }
+  if (fakeFlash){
+    fakeFlash.t += dt;
+    if (fakeFlash.t>1.6 && fakeFlash.phase===1){ fakeFlash.phase=2; fakeFlash.t=0; }
+    else if (fakeFlash.t>1.6 && fakeFlash.phase===2){ fakeFlash=null; }
+  }
+
+  // golden brush event
+  if (!golden){
+    goldenTimer -= dt;
+    if (goldenTimer<=0){ golden={x:rand(90,390), y:rand(150,560), t:3.4, ph:rand(0,6)}; }
+  } else {
+    golden.t -= dt; golden.ph += dt*3;
+    if (golden.t<=0){ golden=null; goldenTimer=rand(13,22); }
+  }
+
+  // particles / popups / motes
+  for (const p of particles){
+    p.x+=p.vx*dt; p.y+=p.vy*dt; p.vy+=(p.grav||0)*dt;
+    if(p.vr) p.rot+=p.vr*dt;
+    p.life-=dt;
+  }
+  particles = particles.filter(p=>p.life>0);
+  for (const p of popups){ p.y-=36*dt; p.life-=dt; }
+  popups = popups.filter(p=>p.life>0);
+  for (const m of motes){ m.y-=m.s*dt; m.x+=Math.sin(elapsed+m.y*0.02)*0.2; if(m.y<-4){m.y=H+4;m.x=rand(0,W);} }
+}
+
+// ---------- drawing ----------
+function rr(x,y,w,h,r){ ctx.beginPath(); ctx.roundRect(x,y,w,h,r); }
+function drawRoom(t){
+  // wall
+  const g = ctx.createLinearGradient(0,0,0,H);
+  g.addColorStop(0,'#1a130c'); g.addColorStop(0.62,'#14100b'); g.addColorStop(1,'#0d0a07');
+  ctx.fillStyle=g; ctx.fillRect(0,0,W,H);
+  // window
+  ctx.save();
+  ctx.fillStyle='#0e1a26'; rr(300,60,150,130,10); ctx.fill();
+  ctx.strokeStyle='#3b2f23'; ctx.lineWidth=8; rr(300,60,150,130,10); ctx.stroke();
+  ctx.strokeStyle='#3b2f23'; ctx.lineWidth=4;
+  ctx.beginPath(); ctx.moveTo(375,60); ctx.lineTo(375,190); ctx.moveTo(300,125); ctx.lineTo(450,125); ctx.stroke();
+  // sun + drifting clouds in window
+  ctx.fillStyle='#fde68a'; ctx.beginPath(); ctx.arc(415,95,14+Math.sin(t*0.8)*1.5,0,7); ctx.fill();
+  ctx.fillStyle='rgba(226,232,240,.5)';
+  const cx = 330 + ((t*9)%180);
+  for(const ox of [-70,0,70]){
+    const x = 310+((cx+ox)%170);
+    ctx.beginPath(); ctx.ellipse(x,150,20,9,0,0,7); ctx.fill();
+  }
+  ctx.restore();
+  // plant (swaying)
+  const sw = Math.sin(t*1.3)*6;
+  ctx.strokeStyle='#166534'; ctx.lineWidth=10; ctx.lineCap='round';
+  ctx.beginPath(); ctx.moveTo(60,640); ctx.quadraticCurveTo(60+sw,560,58+sw*1.6,500); ctx.stroke();
+  ctx.fillStyle='#22c55e';
+  for(let i=0;i<5;i++){
+    const a=-Math.PI/2 + (i-2)*0.42 + Math.sin(t*1.3+i)*0.06;
+    ctx.save(); ctx.translate(58+sw*1.6,500); ctx.rotate(a);
+    ctx.beginPath(); ctx.ellipse(0,-34,11,34,0,0,7); ctx.fill(); ctx.restore();
+  }
+  ctx.fillStyle='#7c2d12'; rr(34,636,52,44,8); ctx.fill();
+  // rug
+  ctx.fillStyle='#2b1a12'; ctx.beginPath(); ctx.ellipse(240,660,215,52,0,0,7); ctx.fill();
+  ctx.strokeStyle='#7c2d12'; ctx.lineWidth=5; ctx.beginPath(); ctx.ellipse(240,660,190,42,0,0,7); ctx.stroke();
+  // lamp glow
+  const lg = ctx.createRadialGradient(70,180,10,70,180,190);
+  lg.addColorStop(0,'rgba(253,186,116,.20)'); lg.addColorStop(1,'rgba(253,186,116,0)');
+  ctx.fillStyle=lg; ctx.fillRect(0,0,W,H);
+  // dust motes
+  for(const m of motes){ ctx.fillStyle=`rgba(253,224,171,${m.a})`; ctx.beginPath(); ctx.arc(m.x,m.y,m.r,0,7); ctx.fill(); }
+}
+
+function drawTail(t){
+  const wagSpd = 2 + (suspicion/100)*9;
+  const amp = 0.28 + (suspicion/100)*0.55;
+  const wdt = 24 + (suspicion/100)*20;
+  const a = Math.sin(t*wagSpd)*amp;
+  const bx=352, by=545;
+  const tipX = bx + Math.cos(-0.5+a)*120, tipY = by + Math.sin(-0.5+a)*120 - 30;
+  const c1x = bx+55, c1y = by-55;
+  ctx.save();
+  ctx.lineCap='round';
+  // tail body
+  ctx.strokeStyle='#f59e0b'; ctx.lineWidth=wdt;
+  ctx.beginPath(); ctx.moveTo(bx,by); ctx.quadraticCurveTo(c1x,c1y,tipX,tipY); ctx.stroke();
+  // stripes on tail
+  ctx.strokeStyle='#b45309'; ctx.lineWidth=wdt*0.42;
+  for(const f of [0.3,0.55,0.8]){
+    const px = lerp(lerp(bx,c1x,f), lerp(c1x,tipX,f), f);
+    const py = lerp(lerp(by,c1y,f), lerp(c1y,tipY,f), f);
+    const nx = -(tipY-by), ny=(tipX-bx);
+    const nl = Math.hypot(nx,ny)||1;
+    ctx.beginPath(); ctx.moveTo(px-nx/nl*wdt*0.4, py-ny/nl*wdt*0.4); ctx.lineTo(px+nx/nl*wdt*0.4, py+ny/nl*wdt*0.4); ctx.stroke();
+  }
+  // fluffy tip
+  ctx.fillStyle='#fde68a';
+  ctx.beginPath(); ctx.arc(tipX,tipY,wdt*0.52+Math.sin(t*7)*1.5,0,7); ctx.fill();
+  // suspicion blush on tail when high
+  if (suspicion>70){
+    ctx.strokeStyle=`rgba(239,68,68,${(suspicion-70)/30*0.5})`; ctx.lineWidth=wdt*0.8;
+    ctx.beginPath(); ctx.moveTo(bx,by); ctx.quadraticCurveTo(c1x,c1y,tipX,tipY); ctx.stroke();
+  }
+  ctx.restore();
+}
+
+function drawCat(t){
+  const squash = brushAnim>0 ? 1 - Math.sin((brushAnim/0.22)*Math.PI)*0.06 : 1;
+  const bob = Math.sin(t*6)*3;
+  ctx.save();
+  ctx.translate(240, 0);
+  ctx.scale(1, squash);
+
+  // body
+  const bg = ctx.createRadialGradient(-40,430,40, 0,500,190);
+  bg.addColorStop(0,'#fbbf24'); bg.addColorStop(1,'#d97706');
+  ctx.fillStyle=bg;
+  ctx.beginPath(); ctx.ellipse(0,500+bob,150,135,0,0,7); ctx.fill();
+  // body stripes
+  ctx.strokeStyle='rgba(180,83,9,.55)'; ctx.lineWidth=9; ctx.lineCap='round';
+  for(const sx of [-90,-45,0,45,90]){
+    ctx.beginPath(); ctx.moveTo(sx, 500+bob-105); ctx.quadraticCurveTo(sx+8, 500+bob, sx, 500+bob+105); ctx.stroke();
+  }
+  // suspicion heat shimmer on back
+  if (suspicion>55){
+    ctx.fillStyle=`rgba(239,68,68,${(suspicion-55)/45*0.22})`;
+    ctx.beginPath(); ctx.ellipse(0,500+bob,150,135,0,0,7); ctx.fill();
+  }
+
+  drawTail(t);
+
+  // head (back of head, rotates to face)
+  const hy = 300+bob*1.4;
+  ctx.save();
+  ctx.translate(0, hy);
+  const tilt = Math.sin(rot*Math.PI/2)*0.35 + (twitchOn? Math.sin(t*60)*0.12 : 0);
+  ctx.rotate(tilt);
+  const hg = ctx.createRadialGradient(-25,-25,20, 0,0,95);
+  hg.addColorStop(0,'#fcd34d'); hg.addColorStop(1,'#d97706');
+  ctx.fillStyle=hg;
+  ctx.beginPath(); ctx.arc(0,0,84,0,7); ctx.fill();
+  // ears
+  const earTwitch = twitchOn ? -0.35 : 0;
+  for(const s of [-1,1]){
+    ctx.save(); ctx.translate(s*58,-58); ctx.rotate(s*0.5 + (s<0?earTwitch:0));
+    ctx.fillStyle='#d97706';
+    ctx.beginPath(); ctx.moveTo(0,-26); ctx.lineTo(-22,14); ctx.lineTo(22,14); ctx.closePath(); ctx.fill();
+    ctx.fillStyle='#fda4af';
+    ctx.beginPath(); ctx.moveTo(0,-12); ctx.lineTo(-11,8); ctx.lineTo(11,8); ctx.closePath(); ctx.fill();
+    ctx.restore();
+  }
+  // back-of-head shading fades as it turns
+  if (rot<1){
+    ctx.fillStyle=`rgba(120,53,15,${(1-rot)*0.35})`;
+    ctx.beginPath(); ctx.arc(0,0,84,0,7); ctx.fill();
+  }
+  // face fades in with rot
+  if (rot>0.15){
+    const fa = clamp((rot-0.15)/0.85,0,1);
+    ctx.globalAlpha=fa;
+    // angry eyes
+    ctx.strokeStyle='#1c0a00'; ctx.lineWidth=7; ctx.lineCap='round';
+    for(const s of [-1,1]){
+      const ex=s*32, ey=-12;
+      ctx.beginPath(); ctx.moveTo(ex-s*20, ey-16); ctx.lineTo(ex+s*16, ey+2); ctx.stroke(); // brow
+      ctx.fillStyle='#1c0a00';
+      ctx.beginPath(); ctx.arc(ex, ey+10, 9, 0, 7); ctx.fill();
+      ctx.fillStyle='#fff';
+      ctx.beginPath(); ctx.arc(ex+3, ey+7, 3, 0, 7); ctx.fill();
+      ctx.fillStyle='#1c0a00';
+    }
+    // mouth: open snarl when fully turned
+    const mo = rot>0.85 ? 1 : 0.3;
+    ctx.fillStyle='#7f1d1d';
+    ctx.beginPath(); ctx.ellipse(0, 38, 16*mo+6, 12*mo+4, 0, 0, 7); ctx.fill();
+    ctx.fillStyle='#fff';
+    for(const s of [-1,1]){ ctx.beginPath(); ctx.moveTo(s*8,30); ctx.lineTo(s*14,44); ctx.lineTo(s*2,44); ctx.closePath(); ctx.fill(); }
+    // whiskers
+    ctx.strokeStyle='rgba(255,255,255,.85)'; ctx.lineWidth=2.5;
+    for(const s of [-1,1]) for(let i=0;i<3;i++){
+      ctx.beginPath(); ctx.moveTo(s*40, 26+i*10); ctx.lineTo(s*72, 20+i*12); ctx.stroke();
+    }
+    ctx.globalAlpha=1;
+  }
+  ctx.restore();
+
+  // paws (front, resting)
+  ctx.fillStyle='#fbbf24';
+  for(const s of [-1,1]){
+    ctx.beginPath(); ctx.ellipse(s*72, 618+bob*0.5, 34, 22, s*0.2, 0, 7); ctx.fill();
+  }
+  ctx.restore();
+}
+
+function drawBrush(t){
+  if (!pointerIn && phase!=='play') return;
+  const sk = skin();
+  ctx.save();
+  ctx.translate(brushX, brushY);
+  ctx.rotate(-0.5 + (brushAnim>0? Math.sin((0.22-brushAnim)/0.22*Math.PI)*0.35 : 0));
+  if (sk.glow){ ctx.shadowColor=sk.glow; ctx.shadowBlur=18; }
+  // handle
+  const hg2 = ctx.createLinearGradient(0,-90,0,0);
+  hg2.addColorStop(0,sk.c2); hg2.addColorStop(1,sk.c1);
+  ctx.fillStyle=hg2; rr(-9,-95,18,95,9); ctx.fill();
+  ctx.shadowBlur=0;
+  // bristles
+  const sq = brushAnim>0 ? 1+Math.sin((brushAnim/0.22)*Math.PI)*0.5 : 1;
+  ctx.fillStyle= sk.need>0 ? '#fff7ed' : '#e7c78a';
+  ctx.beginPath(); ctx.ellipse(0, 8, 20, 16*sq, 0, 0, 7); ctx.fill();
+  ctx.strokeStyle='rgba(120,53,15,.5)'; ctx.lineWidth=2;
+  for(let i=-2;i<=2;i++){ ctx.beginPath(); ctx.moveTo(i*7,-2); ctx.lineTo(i*7, 14*sq); ctx.stroke(); }
+  ctx.restore();
+}
+
+function drawGolden(t){
+  if(!golden) return;
+  const blink = golden.t<1 ? (Math.sin(t*20)>0?1:0.25) : 1;
+  ctx.save();
+  ctx.globalAlpha=blink;
+  ctx.translate(golden.x, golden.y+Math.sin(golden.ph)*8);
+  ctx.shadowColor='#fbbf24'; ctx.shadowBlur=26;
+  const hg = ctx.createLinearGradient(0,-70,0,0);
+  hg.addColorStop(0,'#f59e0b'); hg.addColorStop(1,'#fde68a');
+  ctx.fillStyle=hg;
+  ctx.rotate(-0.5+Math.sin(golden.ph*0.7)*0.15);
+  rr(-10,-72,20,72,10); ctx.fill();
+  ctx.fillStyle='#fff7ed';
+  ctx.beginPath(); ctx.ellipse(0,8,22,17,0,0,7); ctx.fill();
+  ctx.shadowBlur=0;
+  // sparkles
+  ctx.fillStyle='#fef3c7';
+  for(let i=0;i<4;i++){
+    const a=golden.ph+i*1.7, r2=44;
+    ctx.beginPath(); ctx.arc(Math.cos(a)*r2, Math.sin(a)*r2*0.7, 3, 0, 7); ctx.fill();
+  }
+  ctx.restore();
+  // timer ring
+  ctx.save();
+  ctx.strokeStyle='rgba(251,191,36,.7)'; ctx.lineWidth=3;
+  ctx.beginPath(); ctx.arc(golden.x, golden.y+Math.sin(golden.ph)*8, 52, -Math.PI/2, -Math.PI/2+Math.PI*2*(golden.t/3.4)); ctx.stroke();
+  ctx.restore();
+}
+
+function draw(t){
+  ctx.save();
+  if (shakeT>0){ ctx.translate(rand(-1,1)*shakeT*22, rand(-1,1)*shakeT*22); }
+  // pounce zoom
+  if (pounceT>0){
+    const k = 1 + (0.9-pounceT)*2.2;
+    ctx.translate(W/2,H/2); ctx.scale(k,k); ctx.translate(-W/2,-H/2);
+  }
+  drawRoom(t);
+
+  // warning vignette
+  if (catState==='warn' || catState==='turned'){
+    const vg = ctx.createRadialGradient(240,360,120, 240,360,420);
+    vg.addColorStop(0,'rgba(239,68,68,0)');
+    vg.addColorStop(1, catState==='turned' ? 'rgba(239,68,68,.5)' : 'rgba(239,68,68,.3)');
+    ctx.fillStyle=vg; ctx.fillRect(0,0,W,H);
+  }
+  // slow-mo tint
+  if (timeScale<1){ ctx.fillStyle='rgba(34,211,238,.08)'; ctx.fillRect(0,0,W,H); }
+
+  drawCat(t);
+  drawGolden(t);
+
+  // "!" bubble
+  if (catState==='warn'){
+    const pop = 1 + Math.sin(t*18)*0.08;
+    ctx.save(); ctx.translate(240, 150); ctx.scale(pop,pop);
+    ctx.fillStyle='#ef4444';
+    ctx.beginPath(); ctx.arc(0,0,30,0,7); ctx.fill();
+    ctx.beginPath(); ctx.moveTo(-8,24); ctx.lineTo(8,24); ctx.lineTo(0,40); ctx.closePath(); ctx.fill();
+    ctx.fillStyle='#fff'; ctx.font='900 38px system-ui'; ctx.textAlign='center'; ctx.textBaseline='middle';
+    ctx.fillText('!',0,2);
+    ctx.restore();
+  }
+
+  // brush cursor
+  if (phase==='play') drawBrush(t);
+
+  // particles
+  for(const p of particles){
+    ctx.globalAlpha=clamp(p.life/p.max,0,1);
+    ctx.fillStyle=p.color;
+    if(p.shape==='r'){ ctx.save(); ctx.translate(p.x,p.y); ctx.rotate(p.rot||0); ctx.fillRect(-p.r,-p.r*0.6,p.r*2,p.r*1.2); ctx.restore(); }
+    else { ctx.beginPath(); ctx.arc(p.x,p.y,p.r,0,7); ctx.fill(); }
+  }
+  ctx.globalAlpha=1;
+
+  // popups
+  ctx.textAlign='center'; ctx.textBaseline='middle';
+  for(const p of popups){
+    ctx.globalAlpha=clamp(p.life/p.max,0,1);
+    ctx.font=`900 ${p.big?34:22}px system-ui`;
+    ctx.lineWidth=5; ctx.strokeStyle='rgba(0,0,0,.7)';
+    ctx.strokeText(p.text,p.x,p.y); ctx.fillStyle=p.color; ctx.fillText(p.text,p.x,p.y);
+  }
+  ctx.globalAlpha=1;
+
+  // fake-out flash
+  if (fakeFlash){
+    ctx.fillStyle = fakeFlash.phase===1 ? 'rgba(163,230,53,.16)' : 'rgba(239,68,68,.10)';
+    ctx.fillRect(0,0,W,H);
+    ctx.font='900 30px system-ui'; ctx.textAlign='center';
+    ctx.lineWidth=6; ctx.strokeStyle='rgba(0,0,0,.75)';
+    const msg = fakeFlash.phase===1 ? 'THE CAT FORGIVES YOU' : 'jk. still watching.';
+    ctx.strokeText(msg,240,300); ctx.fillStyle= fakeFlash.phase===1?'#a3e635':'#fda4af';
+    ctx.fillText(msg,240,300);
+  }
+
+  // pounce face flash
+  if (pounceT>0){
+    ctx.fillStyle=`rgba(127,29,29,${(0.9-pounceT)*0.5})`;
+    ctx.fillRect(0,0,W,H);
+  }
+  ctx.restore();
+}
+
+// ---------- loop ----------
+let last = 0;
+function loop(ts){
+  requestAnimationFrame(loop);
+  const now = ts/1000;
+  let dt = Math.min(0.05, now-(last||now));
+  last = now;
+  if (phase==='play' && !paused) update(dt*timeScale);
+  draw(now);
+}
+
+// ---------- input ----------
+function toGame(e){
+  const r = cv.getBoundingClientRect();
+  return { x:(e.clientX-r.left)*(W/r.width), y:(e.clientY-r.top)*(H/r.height) };
+}
+cv.addEventListener('pointerdown', e=>{
+  e.preventDefault();
+  const p = toGame(e);
+  brushX=p.x; brushY=p.y; pointerIn=true;
+  if (phase==='play') doBrush(p.x,p.y);
+  else if (phase==='title') startGame();
+});
+cv.addEventListener('pointermove', e=>{
+  const p=toGame(e); brushX=p.x; brushY=p.y; pointerIn=true;
+});
+window.addEventListener('keydown', e=>{
+  if (e.code==='Space'){ e.preventDefault(); if(phase==='play') doBrush(brushX,brushY); else if(phase==='title') startGame(); }
+  if (e.code==='KeyP' && phase==='play'){ paused=!paused; ovPause.classList.toggle('hidden',!paused); }
+  if (e.code==='KeyR' && phase==='over') startGame();
+  if (e.code==='Enter' && phase==='over') startGame();
+});
+$('btnStart').addEventListener('click', startGame);
+$('btnRetry').addEventListener('click', startGame);
+$('btnResume').addEventListener('click', ()=>{ paused=false; ovPause.classList.add('hidden'); });
+$('btnShare').addEventListener('click', share);
+document.addEventListener('visibilitychange', ()=>{
+  if (document.hidden && phase==='play' && !paused){ paused=true; ovPause.classList.remove('hidden'); }
+});
+
+updateHUD();
+requestAnimationFrame(loop);
+
+// debug hook for headless self-test
+window.__game13 = {
+  get phase(){ return phase; }, get score(){ return score; }, get suspicion(){ return suspicion; },
+  get catState(){ return catState; }, get elapsed(){ return elapsed; },
+  start:startGame, brush:(x,y)=>doBrush(x==null?240:x, y==null?500:y),
+  setElapsed:v=>{elapsed=v;}, forceWarn:startWarn, get best(){ return best; },
+};
+})();
+</script>
+</body>
+</html>

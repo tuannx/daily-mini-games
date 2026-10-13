@@ -106,5 +106,13 @@
     "mechanic": "HR sorting panic",
     "tagline": "You're the boss. Hire the weirdos — until corporate flips the rules. Karen vetoes.",
     "title": "Hire the Weirdos"
+  },
+  {
+    "date": "2026-10-13",
+    "day": 13,
+    "emoji": "🐱",
+    "file": "games/brush-behind-its-back.html",
+    "mechanic": "Suspicion-tap brusher",
+    "tagline": "Brush the cat. Stop when it turns. It always turns."
   }
 ]
