@@ -114,5 +114,14 @@
     "file": "games/brush-behind-its-back.html",
     "mechanic": "Suspicion-tap brusher",
     "tagline": "Brush the cat. Stop when it turns. It always turns."
+  },
+  {
+    "date": "2026-10-14",
+    "day": 14,
+    "emoji": "🕹️",
+    "file": "games/game-hopper.html",
+    "mechanic": "Genre-swap arcade (whack→catch→dodge)",
+    "tagline": "Every 15 seconds it becomes a NEW game. Glowing = good. Angry red = death. Keep up.",
+    "title": "Game Hopper"
   }
 ]
