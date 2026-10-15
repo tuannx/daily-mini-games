@@ -123,5 +123,14 @@
     "mechanic": "Genre-swap arcade (whack→catch→dodge)",
     "tagline": "Every 15 seconds it becomes a NEW game. Glowing = good. Angry red = death. Keep up.",
     "title": "Game Hopper"
+  },
+  {
+    "date": "2026-10-15",
+    "day": 15,
+    "emoji": "📎",
+    "file": "games/the-tutorial-is-possessed.html",
+    "mechanic": "Lying-tutorial tap chaos",
+    "tagline": "Skippy the tutorial helps you pop stars. At 15 seconds he starts lying. TRUST ME!",
+    "title": "The Tutorial Is Possessed"
   }
 ]

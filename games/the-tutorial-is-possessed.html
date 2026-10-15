@@ -1,0 +1,653 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<title>The Tutorial Is Possessed — Daily Mini-Game #15</title>
+<style>
+  :root{--neon:#a78bfa;--pink:#f472b6;--bg:#0b0714}
+  *{margin:0;padding:0;box-sizing:border-box}
+  html,body{background:var(--bg);color:#e2e8f0;font-family:ui-rounded,system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;min-height:100%}
+  .wrap{max-width:960px;margin:0 auto;padding:16px 14px 28px}
+  header{display:flex;align-items:baseline;justify-content:space-between;gap:12px;flex-wrap:wrap;margin-bottom:10px}
+  h1{font-size:clamp(24px,5vw,38px);background:linear-gradient(90deg,#a78bfa,#f472b6);-webkit-background-clip:text;background-clip:text;color:transparent}
+  .badge{font-size:12px;border:1px solid rgba(167,139,250,.5);color:#a78bfa;padding:4px 10px;border-radius:999px;white-space:nowrap}
+  .hud{display:flex;gap:10px;flex-wrap:wrap;margin:10px 0}
+  .chip{flex:1;min-width:80px;background:rgba(255,255,255,.04);border:1px solid rgba(255,255,255,.08);border-radius:12px;padding:8px 12px}
+  .chip b{display:block;font-size:20px;color:#fff}
+  .chip span{font-size:11px;text-transform:uppercase;letter-spacing:.12em;color:#94a3b8}
+  .lifebar{display:flex;gap:6px;align-items:center;margin:2px 0 10px;font-size:20px}
+  .stage{position:relative;border-radius:16px;overflow:hidden;border:1px solid rgba(167,139,250,.25);box-shadow:0 0 40px rgba(167,139,250,.12);background:#100b1c}
+  canvas{display:block;width:100%;height:auto;touch-action:none;cursor:crosshair}
+  .overlay{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;text-align:center;background:rgba(6,3,12,.9);padding:20px;z-index:5}
+  .overlay.hidden{display:none}
+  .overlay .big{font-size:64px;margin-bottom:8px}
+  .overlay h2{font-size:clamp(26px,6vw,40px);color:#fff;margin-bottom:6px}
+  .overlay .hook{font-size:clamp(15px,3.6vw,20px);color:#c4b5fd;font-weight:700;margin-bottom:10px}
+  .overlay .sub{color:#94a3b8;font-size:14px;line-height:1.6;max-width:420px}
+  .overlay .line{color:#fda4af;font-size:16px;font-style:italic;margin:8px 0;min-height:24px}
+  .btn{cursor:pointer;border:0;border-radius:16px;padding:16px 34px;font-size:20px;font-weight:800;color:#160a2e;background:linear-gradient(180deg,#c4b5fd,#8b5cf6);box-shadow:0 6px 0 #5b21b6,0 0 28px rgba(167,139,250,.45);margin-top:14px;touch-action:manipulation;user-select:none;-webkit-user-select:none}
+  .btn:active{transform:translateY(4px);box-shadow:0 2px 0 #5b21b6}
+  .btn.ghost{background:rgba(255,255,255,.08);color:#e2e8f0;box-shadow:none;border:1px solid rgba(255,255,255,.2);font-size:15px;padding:12px 22px}
+  .row{display:flex;gap:10px;margin-top:6px;flex-wrap:wrap;justify-content:center}
+  .tip{margin-top:14px;font-size:12px;color:#64748b}
+  .footer{margin-top:14px;display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap}
+  .footer a{color:#a78bfa;text-decoration:none;font-size:14px}
+  .keys{font-size:12px;color:#64748b}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <h1>📎 The Tutorial Is Possessed</h1>
+    <span class="badge">DAY 15 · tap = pop</span>
+  </header>
+  <div class="hud">
+    <div class="chip"><b id="hScore">0</b><span>score</span></div>
+    <div class="chip"><b id="hCombo">×1</b><span>combo</span></div>
+    <div class="chip"><b id="hTime">60</b><span>sec</span></div>
+    <div class="chip"><b id="hBest">0</b><span>best</span></div>
+    <div class="chip"><b id="hRank">Junior Intern</b><span>rank</span></div>
+  </div>
+  <div class="lifebar" id="lifeBar">❤️❤️❤️ <span style="font-size:12px;color:#64748b">lives</span></div>
+  <div class="stage">
+    <canvas id="cv" width="480" height="720"></canvas>
+    <div class="overlay" id="ovTitle">
+      <div class="big">📎😇</div>
+      <h2>The Tutorial Is Possessed</h2>
+      <div class="hook">Tap the glowing stars. Trust Skippy.</div>
+      <div class="sub">Skippy the tutorial is very helpful. Skippy would never lie to you.<br><span style="color:#c4b5fd">He says.</span></div>
+      <button class="btn" id="btnStart">Start tutorial</button>
+      <div class="tip">tap / click / space = pop · P = pause · golden star = hat for Skippy</div>
+    </div>
+    <div class="overlay hidden" id="ovOver">
+      <div class="big">📎🎉</div>
+      <h2>TUTORIAL COMPLETE!</h2>
+      <div class="line" id="overLine"></div>
+      <div class="sub" id="overStats"></div>
+      <div class="row">
+        <button class="btn" id="btnRetry">Trust again</button>
+        <button class="btn ghost" id="btnShare">Copy result</button>
+      </div>
+      <div class="tip" id="shareTip"></div>
+    </div>
+    <div class="overlay hidden" id="ovPause">
+      <h2>Paused</h2>
+      <div class="sub">Skippy is still talking. He never stops.</div>
+      <button class="btn" id="btnResume">Resume</button>
+    </div>
+  </div>
+  <div class="footer">
+    <a href="../index.html">← all daily games</a>
+    <span class="keys">tap / click / space · arrows move cursor · P pause</span>
+  </div>
+</div>
+<script>
+"use strict";
+// ===== The Tutorial Is Possessed — Day 15 =====
+// Tap glowing stars, avoid angry bombs. Skippy the tutorial mascot
+// is helpful for 15 seconds, then starts lying (arrows point at bombs).
+// One family = one role: stars GLOW (eat), bombs ANGRY RED (avoid).
+// Skippy's arrows are tutorial-family objects, never collectibles.
+
+const cv = document.getElementById('cv');
+const ctx = cv.getContext('2d');
+const W = cv.width, H = cv.height;
+
+// ---------- audio (WebAudio, self-generated) ----------
+let AC = null;
+function beep(freq, dur, type, vol){
+  try{
+    AC = AC || new (window.AudioContext || window.webkitAudioContext)();
+    const o = AC.createOscillator(), g = AC.createGain();
+    o.type = type || 'sine'; o.frequency.value = freq;
+    g.gain.setValueAtTime(vol || 0.12, AC.currentTime);
+    g.gain.exponentialRampToValueAtTime(0.001, AC.currentTime + dur);
+    o.connect(g); g.connect(AC.destination);
+    o.start(); o.stop(AC.currentTime + dur);
+  }catch(e){}
+}
+const sfx = {
+  pop:   () => { beep(880, .12, 'square', .10); setTimeout(()=>beep(1320,.1,'square',.08), 40); },
+  gold:  () => { [660,880,1320,1760].forEach((f,i)=>setTimeout(()=>beep(f,.15,'sine',.12), i*70)); },
+  boom:  () => { beep(90, .5, 'sawtooth', .18); setTimeout(()=>beep(45,.6,'square',.12), 60); },
+  miss:  () => { beep(300, .2, 'triangle', .10); },
+  lie:   () => { beep(500, .12, 'triangle', .10); setTimeout(()=>beep(350,.18,'triangle',.10), 110); },
+  party: () => { [523,659,784,1046].forEach((f,i)=>setTimeout(()=>beep(f,.2,'square',.10), i*120)); }
+};
+
+// ---------- state ----------
+const S = {
+  mode: 'title', // title | play | over | pause
+  t: 0, timeLeft: 60,
+  score: 0, combo: 1, comboTimer: 0,
+  lives: 3,
+  items: [], parts: [], popups: [], arrows: [], toasts: [],
+  spawnT: 0, goldT: 8, twistT: 15, toastT: 12,
+  skippy: { x: W/2, y: 150, vx: 40, mood: 'happy', speakT: 0, say: 'HI!', blink: 0 },
+  cursor: { x: W/2, y: H/2, kx: 0, ky: 0 },
+  stars: 0, bombs: 0, lies: 0, nearMiss: 0,
+  hatUnlocked: localStorage.getItem('skippyHat') === '1',
+  shake: 0, muted: false
+};
+const BEST = parseInt(localStorage.getItem('possessedBest') || '0', 10);
+
+const OVERLINES = [
+  "YOU DIED. PROUD OF YOU.",
+  "HAVE YOU TRIED NOT DYING?",
+  "OBJECTIVE COMPLETE: DEATH.",
+  "RESPAWN IS DISABLED. LMAO.",
+  "SKIPPY SAW NOTHING.",
+  "TUTORIAL SUCCESS: YOU DIDN'T."
+];
+const RANKS = [
+  [0, "Junior Intern"], [80, "Senior Tapper"], [200, "VP of Stars"],
+  [380, "Director of Trust"], [600, "CEO of Dying"], [900, "Legend"]
+];
+const HELPFUL = ["TAP THAT!", "GOOD JOB!", "LIKE THAT!", "SO EASY!", "STAR! STAR!"];
+const LIES = ["TRUST ME!", "SO SAFE!", "DO IT!", "FREE HUGS!", "NOT A BOMB!", "EAT IT!"];
+const TOASTS = [
+  "ACHIEVEMENT: BREATHING", "OBJECTIVE: EXIST", "NEW LORE UNLOCKED",
+  "TIP: TAP = TAP", "LOADING FUN... 3%", "YOU ARE SO BRAVE",
+  "SIDE QUEST: STAY ALIVE", "PATCH NOTES: TRUST++"
+];
+
+// ---------- helpers ----------
+function rand(a, b){ return a + Math.random() * (b - a); }
+function pick(arr){ return arr[(Math.random() * arr.length) | 0]; }
+function popup(x, y, text, color){
+  S.popups.push({ x, y, text, color: color || '#fff', t: 0, life: 1.1 });
+}
+function burst(x, y, color, n, spd){
+  for(let i=0;i<n;i++){
+    const a = rand(0, Math.PI*2), v = rand(spd*0.3, spd);
+    S.parts.push({ x, y, vx: Math.cos(a)*v, vy: Math.sin(a)*v - 60, t: 0, life: rand(.4,.9), color, r: rand(2,5) });
+  }
+}
+function star(x, y, r, glow, rot){
+  ctx.save();
+  ctx.translate(x, y); ctx.rotate(rot || 0);
+  ctx.shadowBlur = glow; ctx.shadowColor = '#facc15';
+  ctx.fillStyle = '#fde047';
+  ctx.beginPath();
+  for(let i=0;i<10;i++){
+    const rr = i % 2 === 0 ? r : r*0.45, a = -Math.PI/2 + i * Math.PI/5;
+    ctx[i===0?'moveTo':'lineTo'](Math.cos(a)*rr, Math.sin(a)*rr);
+  }
+  ctx.closePath(); ctx.fill();
+  ctx.shadowBlur = 0;
+  // sparkle face
+  ctx.fillStyle = '#78350f';
+  ctx.beginPath(); ctx.arc(-r*0.28, -r*0.08, r*0.12, 0, 7); ctx.arc(r*0.28, -r*0.08, r*0.12, 0, 7); ctx.fill();
+  ctx.strokeStyle = '#78350f'; ctx.lineWidth = 2;
+  ctx.beginPath(); ctx.arc(0, r*0.12, r*0.22, 0.2, Math.PI-0.2); ctx.stroke();
+  ctx.restore();
+}
+function bomb(x, y, r, t){
+  const squash = 1 + 0.12 * Math.sin(t * 14);
+  ctx.save();
+  ctx.translate(x, y); ctx.scale(1/squash, squash);
+  const g = ctx.createRadialGradient(-r*0.3, -r*0.3, r*0.2, 0, 0, r);
+  g.addColorStop(0, '#f87171'); g.addColorStop(1, '#7f1d1d');
+  ctx.fillStyle = g;
+  ctx.beginPath(); ctx.arc(0, 0, r, 0, 7); ctx.fill();
+  // angry face
+  ctx.strokeStyle = '#fff'; ctx.lineWidth = 3;
+  ctx.beginPath(); ctx.moveTo(-r*0.55, -r*0.45); ctx.lineTo(-r*0.15, -r*0.25); ctx.stroke();
+  ctx.beginPath(); ctx.moveTo(r*0.55, -r*0.45); ctx.lineTo(r*0.15, -r*0.25); ctx.stroke();
+  ctx.fillStyle = '#fff';
+  ctx.beginPath(); ctx.arc(-r*0.3, r*0.05, r*0.11, 0, 7); ctx.arc(r*0.3, r*0.05, r*0.11, 0, 7); ctx.fill();
+  ctx.fillStyle = '#000';
+  ctx.beginPath(); ctx.arc(-r*0.3, r*0.08, r*0.05, 0, 7); ctx.arc(r*0.3, r*0.08, r*0.05, 0, 7); ctx.fill();
+  // fuse spark
+  ctx.strokeStyle = '#a16207'; ctx.lineWidth = 3;
+  ctx.beginPath(); ctx.moveTo(0, -r); ctx.quadraticCurveTo(r*0.3, -r*1.5, 0, -r*1.8); ctx.stroke();
+  const sp = 3 + 3 * Math.sin(t * 30);
+  ctx.fillStyle = '#fbbf24';
+  ctx.beginPath(); ctx.arc(0, -r*1.85, sp, 0, 7); ctx.fill();
+  ctx.restore();
+}
+function drawSkippy(){
+  const k = S.skippy;
+  const bobY = k.y + Math.sin(S.t * 4) * 10;
+  ctx.save();
+  ctx.translate(k.x, bobY);
+  // body: paperclip blob
+  const bodyG = ctx.createLinearGradient(0, -46, 0, 46);
+  bodyG.addColorStop(0, '#ddd6fe'); bodyG.addColorStop(1, '#8b5cf6');
+  ctx.fillStyle = bodyG;
+  ctx.beginPath();
+  ctx.moveTo(0, -44);
+  ctx.bezierCurveTo(34, -44, 34, 20, 0, 20);
+  ctx.bezierCurveTo(-34, 20, -34, -44, 0, -44);
+  ctx.fill();
+  ctx.strokeStyle = '#c4b5fd'; ctx.lineWidth = 5;
+  ctx.beginPath();
+  ctx.moveTo(0, -30);
+  ctx.bezierCurveTo(20, -30, 20, 6, 0, 6);
+  ctx.bezierCurveTo(-20, 6, -20, -30, 0, -30);
+  ctx.stroke();
+  // eyes per mood
+  k.blink -= 1/60;
+  const blinking = k.blink > 0;
+  ctx.strokeStyle = '#1e1b4b'; ctx.lineWidth = 3.4;
+  if(blinking){
+    ctx.beginPath(); ctx.moveTo(-16, -8); ctx.lineTo(-4, -8); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(4, -8); ctx.lineTo(16, -8); ctx.stroke();
+  } else if(k.mood === 'evil'){
+    // side-eye
+    ctx.beginPath(); ctx.moveTo(-18, -12); ctx.lineTo(-2, -12); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(2, -12); ctx.lineTo(18, -12); ctx.stroke();
+    ctx.fillStyle = '#1e1b4b';
+    ctx.beginPath(); ctx.arc(-14, -6, 3.4, 0, 7); ctx.arc(14, -6, 3.4, 0, 7); ctx.fill();
+  } else if(k.mood === 'happy'){
+    ctx.beginPath(); ctx.arc(-11, -10, 5, 0, 7); ctx.arc(11, -10, 5, 0, 7); ctx.stroke();
+    ctx.fillStyle = '#1e1b4b';
+    ctx.beginPath(); ctx.arc(-11, -10, 2.2, 0, 7); ctx.arc(11, -10, 2.2, 0, 7); ctx.fill();
+  } else { // shocked
+    ctx.beginPath(); ctx.arc(-11, -10, 7, 0, 7); ctx.arc(11, -10, 7, 0, 7); ctx.stroke();
+  }
+  // mouth per mood
+  ctx.beginPath();
+  if(k.mood === 'happy'){ ctx.arc(0, 6, 12, 0.15, Math.PI - 0.15); }
+  else if(k.mood === 'evil'){ ctx.moveTo(-12, 12); ctx.quadraticCurveTo(0, 18, 12, 8); }
+  else { ctx.arc(0, 10, 7, 0, 7); }
+  ctx.stroke();
+  // hat (unlocked cosmetic)
+  if(S.hatUnlocked){
+    ctx.fillStyle = '#f472b6';
+    ctx.beginPath(); ctx.moveTo(-14, -42); ctx.lineTo(0, -66); ctx.lineTo(14, -42); ctx.closePath(); ctx.fill();
+    ctx.fillStyle = '#fff';
+    ctx.beginPath(); ctx.arc(0, -66, 5, 0, 7); ctx.fill();
+  }
+  // speech bubble
+  if(k.say){
+    ctx.font = 'bold 15px ui-rounded,system-ui';
+    const w = ctx.measureText(k.say).width + 26;
+    const bx = 44, by = -64;
+    ctx.fillStyle = 'rgba(10,6,20,.92)';
+    ctx.strokeStyle = k.mood === 'evil' ? '#ef4444' : '#a78bfa'; ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.roundRect(bx - 8, by - 22, w, 34, 10); ctx.fill(); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(bx + 2, by + 12); ctx.lineTo(bx - 6, by + 26); ctx.lineTo(bx + 14, by + 12); ctx.closePath();
+    ctx.fillStyle = 'rgba(10,6,20,.92)'; ctx.fill();
+    ctx.fillStyle = k.mood === 'evil' ? '#fca5a5' : '#ede9fe';
+    ctx.fillText(k.say, bx + 5, by + 2);
+  }
+  ctx.restore();
+}
+function drawArrow(a){
+  // tutorial-family: yellow/black hazard arrow — NEVER a collectible
+  ctx.save();
+  ctx.translate(a.x, a.y); ctx.rotate(a.ang);
+  ctx.globalAlpha = 0.55 + 0.45 * Math.sin(S.t * 10);
+  ctx.fillStyle = '#facc15';
+  ctx.strokeStyle = '#000'; ctx.lineWidth = 2;
+  ctx.beginPath();
+  ctx.moveTo(34, 0); ctx.lineTo(8, -13); ctx.lineTo(8, -6); ctx.lineTo(-26, -6);
+  ctx.lineTo(-26, 6); ctx.lineTo(8, 6); ctx.lineTo(8, 13); ctx.closePath();
+  ctx.fill(); ctx.stroke();
+  ctx.globalAlpha = 1;
+  ctx.restore();
+}
+
+// ---------- game flow ----------
+function startGame(){
+  S.mode = 'play'; S.t = 0; S.timeLeft = 60;
+  S.score = 0; S.combo = 1; S.comboTimer = 0; S.lives = 3;
+  S.items = []; S.parts = []; S.popups = []; S.arrows = []; S.toasts = [];
+  S.spawnT = 0.4; S.goldT = 9; S.twistT = 15; S.toastT = 10;
+  S.skippy = { x: W/2, y: 170, vx: 60, mood: 'happy', speakT: 0, say: 'HI!', blink: 0 };
+  S.stars = 0; S.bombs = 0; S.lies = 0; S.nearMiss = 0; S.shake = 0;
+  document.getElementById('ovTitle').classList.add('hidden');
+  document.getElementById('ovOver').classList.add('hidden');
+  document.getElementById('ovPause').classList.add('hidden');
+  hud();
+  if(Math.random() < 0.06) S.skippy.blink = 0.15;
+}
+function rankFor(s){
+  let r = RANKS[0][1];
+  for(const [th, name] of RANKS) if(s >= th) r = name;
+  return r;
+}
+function hud(){
+  document.getElementById('hScore').textContent = S.score;
+  document.getElementById('hCombo').textContent = '×' + S.combo;
+  document.getElementById('hTime').textContent = Math.ceil(S.timeLeft);
+  document.getElementById('hBest').textContent = Math.max(BEST, S.score);
+  document.getElementById('hRank').textContent = rankFor(S.score);
+  document.getElementById('lifeBar').innerHTML = '❤️'.repeat(S.lives) + '🖤'.repeat(Math.max(0, 3 - S.lives)) +
+    ' <span style="font-size:12px;color:#64748b">lives</span>';
+}
+function endGame(){
+  S.mode = 'over';
+  sfx.party();
+  // confetti party over your corpse
+  for(let i=0;i<70;i++) burst(rand(60, W-60), rand(120, H-200), pick(['#a78bfa','#f472b6','#facc15','#4ade80','#fff']), 1, 260);
+  S.skippy.mood = 'happy'; S.skippy.say = 'YAY!';
+  const line = pick(OVERLINES);
+  document.getElementById('overLine').textContent = '"' + line + '" — Skippy';
+  document.getElementById('overStats').innerHTML =
+    'Score <b style="color:#fff">' + S.score + '</b> · stars ' + S.stars + ' · bombs ' + S.bombs +
+    ' · lies survived ' + S.lies + ' · near-misses ' + S.nearMiss + '<br>Rank: <b style="color:#c4b5fd">' + rankFor(S.score) + '</b>';
+  if(S.score > BEST){ localStorage.setItem('possessedBest', String(S.score)); }
+  document.getElementById('ovOver').classList.remove('hidden');
+}
+function shareResult(){
+  const txt = 'I survived ' + Math.round(60 - S.timeLeft) + 's with a POSSESSED tutorial. Score: ' +
+    S.score + ' (' + rankFor(S.score) + '). It lied. It always lies. ' +
+    location.href.split('?')[0];
+  (navigator.clipboard ? navigator.clipboard.writeText(txt) : Promise.reject())
+    .then(() => document.getElementById('shareTip').textContent = 'Copied. Go shame him.')
+    .catch(() => document.getElementById('shareTip').textContent = txt);
+}
+
+// ---------- spawning ----------
+function spawnItem(kind){
+  const x = rand(50, W-50), y = rand(200, H-70);
+  const life = rand(2.0, 2.8) * (S.twistT <= 0 ? 0.75 : 1);
+  S.items.push({ kind, x, y, r: kind === 'gold' ? 26 : 24, t: 0, life,
+    phase: rand(0, 6), wob: rand(10, 26) });
+}
+function update(dt){
+  S.t += dt;
+  if(S.mode !== 'play') return;
+  S.timeLeft -= dt;
+  if(S.timeLeft <= 0){ S.timeLeft = 0; endGame(); return; }
+
+  // combo decay
+  S.comboTimer -= dt;
+  if(S.comboTimer <= 0 && S.combo > 1){ S.combo = 1; hud(); }
+
+  // twist clock
+  const twisted = S.twistT <= 0;
+  if(!twisted){
+    S.twistT -= dt;
+    if(S.twistT <= 0){ // THE TWIST
+      S.skippy.mood = 'evil';
+      S.skippy.say = 'TRUST ME!';
+      sfx.lie();
+      popup(S.skippy.x, S.skippy.y - 90, 'HE LIES NOW.', '#ef4444');
+      burst(S.skippy.x, S.skippy.y, '#ef4444', 14, 160);
+      S.arrows = [];
+    }
+  }
+
+  // spawn cadence, escalates every 15s
+  const stage = Math.min(3, Math.floor(S.t / 15));
+  S.spawnT -= dt;
+  if(S.spawnT <= 0){
+    S.spawnT = Math.max(0.35, 0.85 - stage * 0.16);
+    const bombOdds = twisted ? Math.min(0.55, 0.28 + stage * 0.08) : 0.28;
+    spawnItem(Math.random() < bombOdds ? 'bomb' : 'star');
+    // skippy narrates: helpful before twist, lying after
+    if(Math.random() < (twisted ? 0.65 : 0.85)){
+      if(!twisted){
+        S.skippy.say = pick(HELPFUL);
+        pointArrowAt('star');
+      } else {
+        S.skippy.say = pick(LIES);
+        S.lies++;
+        // 80%: lie — point at a bomb. 20%: rare honest arrow at golden star
+        const honest = Math.random() < 0.2;
+        pointArrowAt(honest ? 'star' : 'bomb');
+        sfx.lie();
+      }
+      S.skippy.speakT = 2.2;
+    }
+  }
+  // golden star (rare)
+  S.goldT -= dt;
+  if(S.goldT <= 0){
+    S.goldT = rand(14, 22);
+    spawnItem('gold');
+    popup(W/2, 300, 'GOLDEN!', '#facc15');
+    if(twisted && Math.random() < 0.5){ S.skippy.say = 'FORGET THAT!'; S.skippy.speakT = 1.8; }
+  }
+  // achievement toasts
+  S.toastT -= dt;
+  if(S.toastT <= 0){
+    S.toastT = rand(11, 16);
+    S.toasts.push({ text: pick(TOASTS), t: 0, life: 2.6 });
+  }
+  S.skippy.speakT -= dt;
+  if(S.skippy.speakT <= 0) S.skippy.say = twisted ? pick(['HEE HEE.', 'TRUST.', 'OBEY.']) : '';
+  if(Math.random() < 0.008) S.skippy.blink = 0.14;
+
+  // skippy drifts
+  S.skippy.x += S.skippy.vx * dt;
+  if(S.skippy.x < 90){ S.skippy.x = 90; S.skippy.vx = Math.abs(S.skippy.vx); }
+  if(S.skippy.x > W-90){ S.skippy.x = W-90; S.skippy.vx = -Math.abs(S.skippy.vx); }
+
+  // items age
+  for(const it of S.items) it.t += dt;
+  S.items = S.items.filter(it => it.t < it.life);
+  // arrows: follow their target, expire
+  for(const a of S.arrows){
+    a.t += dt;
+    if(a.target && a.target.t < a.target.life){
+      a.x += (a.target.x - 30 - a.x) * 0.2;
+      a.y += (a.target.y - a.y) * 0.2;
+      const dx = a.target.x - a.x, dy = a.target.y - a.y;
+      a.ang = Math.atan2(dy, dx);
+    }
+  }
+  S.arrows = S.arrows.filter(a => a.t < 3);
+  // particles
+  for(const p of S.parts){ p.t += dt; p.x += p.vx*dt; p.y += p.vy*dt; p.vy += 300*dt; }
+  S.parts = S.parts.filter(p => p.t < p.life);
+  // popups
+  for(const p of S.popups){ p.t += dt; p.y -= 30*dt; }
+  S.popups = S.popups.filter(p => p.t < p.life);
+  // toasts
+  for(const t2 of S.toasts) t2.t += dt;
+  S.toasts = S.toasts.filter(t2 => t2.t < t2.life);
+  // cursor drift
+  S.cursor.x += S.cursor.kx * 320 * dt;
+  S.cursor.y += S.cursor.ky * 320 * dt;
+  S.cursor.x = Math.max(10, Math.min(W-10, S.cursor.x));
+  S.cursor.y = Math.max(160, Math.min(H-10, S.cursor.y));
+  if(S.shake > 0) S.shake -= dt * 30;
+  hud();
+}
+function pointArrowAt(kind){
+  const cands = S.items.filter(it => it.kind === kind && it.t < it.life * 0.5);
+  if(!cands.length) return;
+  const tgt = cands[(Math.random() * cands.length) | 0];
+  S.arrows.push({ x: tgt.x - 130, y: tgt.y - 60, ang: 0, t: 0, target: tgt });
+}
+
+// ---------- tapping ----------
+function tap(x, y){
+  if(S.mode !== 'play') return;
+  // find topmost item
+  let hit = null, hd = 1e9;
+  for(const it of S.items){
+    const d = Math.hypot(it.x - x, it.y - y);
+    if(d < it.r + 14 && d < hd){ hd = d; hit = it; }
+  }
+  if(!hit){
+    // near-miss: tapped close to a bomb
+    let nb = 1e9;
+    for(const it of S.items) if(it.kind === 'bomb') nb = Math.min(nb, Math.hypot(it.x - x, it.y - y));
+    if(nb < 70){ S.nearMiss++; S.combo = Math.min(9, S.combo + 1); S.comboTimer = 3; popup(x, y - 24, 'SO CLOSE!', '#facc15'); sfx.miss(); }
+    return;
+  }
+  hit.t = 1e9; // remove
+  if(hit.kind === 'star'){
+    S.stars++;
+    const pts = 10 * S.combo;
+    S.score += pts;
+    S.combo = Math.min(9, S.combo + 1); S.comboTimer = 3;
+    popup(hit.x, hit.y - 30, '+' + pts, '#fde047');
+    if(S.combo >= 4) popup(hit.x, hit.y - 56, 'STREAK ×' + S.combo, '#f472b6');
+    burst(hit.x, hit.y, '#facc15', 12, 200);
+    sfx.pop();
+  } else if(hit.kind === 'gold'){
+    S.stars++;
+    S.score += 50 * S.combo;
+    S.combo = Math.min(9, S.combo + 2); S.comboTimer = 4;
+    popup(hit.x, hit.y - 30, 'GOLDEN +150', '#facc15');
+    burst(hit.x, hit.y, '#fde047', 26, 260);
+    sfx.gold();
+    if(!S.hatUnlocked){
+      S.hatUnlocked = true;
+      localStorage.setItem('skippyHat', '1');
+      popup(hit.x, hit.y - 60, 'HAT UNLOCKED!', '#f472b6');
+    }
+  } else { // bomb — the funny fail
+    S.bombs++;
+    S.lives--; S.combo = 1;
+    S.shake = 10;
+    burst(hit.x, hit.y, '#ef4444', 30, 320);
+    burst(hit.x, hit.y, '#f97316', 18, 220);
+    popup(hit.x, hit.y - 40, 'BOOM.', '#ef4444');
+    S.skippy.mood = 'shocked'; S.skippy.say = pick(['OOPSIE.', 'MY BAD.', 'WHOOPS.', 'SORRY?']);
+    S.skippy.speakT = 2.0;
+    sfx.boom();
+    if(S.lives <= 0){ endGame(); }
+  }
+}
+
+// ---------- render ----------
+function render(){
+  ctx.save();
+  if(S.shake > 0) ctx.translate(rand(-S.shake, S.shake), rand(-S.shake, S.shake));
+  // bg grid
+  ctx.fillStyle = '#0b0714'; ctx.fillRect(-20, -20, W+40, H+40);
+  ctx.strokeStyle = 'rgba(167,139,250,.08)'; ctx.lineWidth = 1;
+  for(let gx = 0; gx <= W; gx += 48){ ctx.beginPath(); ctx.moveTo(gx, 160); ctx.lineTo(gx, H); ctx.stroke(); }
+  for(let gy = 160; gy <= H; gy += 48){ ctx.beginPath(); ctx.moveTo(0, gy); ctx.lineTo(W, gy); ctx.stroke(); }
+  // header strip
+  ctx.fillStyle = 'rgba(167,139,250,.07)'; ctx.fillRect(0, 0, W, 120);
+  ctx.fillStyle = '#64748b'; ctx.font = 'bold 12px ui-rounded,system-ui';
+  ctx.fillText('◉ TUTORIAL.EXE — DO NOT SKIP', 12, 24);
+
+  drawSkippy();
+
+  for(const a of S.arrows) drawArrow(a);
+
+  for(const it of S.items){
+    const pulse = 1 + 0.1 * Math.sin(S.t * 6 + it.phase);
+    const wob = Math.sin(S.t * 3 + it.phase) * it.wob;
+    const fade = it.t > it.life - 0.5 ? 1 - (it.t - (it.life - 0.5)) * 2 : 1;
+    ctx.globalAlpha = Math.max(0, fade);
+    if(it.kind === 'star'){
+      ctx.save();
+      ctx.shadowBlur = 26; ctx.shadowColor = '#facc15';
+      ctx.fillStyle = 'rgba(250,204,21,.18)';
+      ctx.beginPath(); ctx.arc(it.x + wob, it.y, it.r * 1.9 * pulse, 0, 7); ctx.fill();
+      ctx.restore();
+      star(it.x + wob, it.y, it.r * pulse, 26, S.t * 0.8 + it.phase);
+    } else if(it.kind === 'gold'){
+      ctx.save();
+      ctx.shadowBlur = 40; ctx.shadowColor = '#fde047';
+      ctx.fillStyle = 'rgba(253,224,71,.22)';
+      ctx.beginPath(); ctx.arc(it.x, it.y, it.r * 2.4 * pulse, 0, 7); ctx.fill();
+      ctx.restore();
+      star(it.x, it.y, it.r * pulse, 40, -S.t * 1.4);
+    } else {
+      bomb(it.x, it.y, it.r * pulse, S.t + it.phase);
+    }
+    ctx.globalAlpha = 1;
+  }
+
+  for(const p of S.parts){
+    ctx.globalAlpha = 1 - p.t / p.life;
+    ctx.fillStyle = p.color;
+    ctx.beginPath(); ctx.arc(p.x, p.y, p.r, 0, 7); ctx.fill();
+  }
+  ctx.globalAlpha = 1;
+
+  // popups
+  ctx.textAlign = 'center';
+  for(const p of S.popups){
+    ctx.globalAlpha = 1 - p.t / p.life;
+    ctx.font = 'bold 20px ui-rounded,system-ui';
+    ctx.strokeStyle = '#000'; ctx.lineWidth = 4;
+    ctx.strokeText(p.text, p.x, p.y);
+    ctx.fillStyle = p.color;
+    ctx.fillText(p.text, p.x, p.y);
+  }
+  ctx.globalAlpha = 1;
+
+  // achievement toasts
+  ctx.textAlign = 'left';
+  S.toasts.forEach((t2, i) => {
+    const a = t2.t < 0.3 ? t2.t / 0.3 : (t2.t > t2.life - 0.4 ? Math.max(0, (t2.life - t2.t) / 0.4) : 1);
+    ctx.globalAlpha = a;
+    ctx.font = 'bold 13px ui-rounded,system-ui';
+    const w = ctx.measureText('🏆 ' + t2.text).width + 24;
+    const bx = W - w - 12, by = 130 + i * 40;
+    ctx.fillStyle = 'rgba(20,12,40,.92)';
+    ctx.strokeStyle = '#4ade80'; ctx.lineWidth = 2;
+    ctx.beginPath(); ctx.roundRect(bx, by, w, 30, 8); ctx.fill(); ctx.stroke();
+    ctx.fillStyle = '#bbf7d0';
+    ctx.fillText('🏆 ' + t2.text, bx + 12, by + 20);
+  });
+  ctx.globalAlpha = 1; ctx.textAlign = 'left';
+
+  // keyboard cursor
+  if(S.mode === 'play'){
+    ctx.strokeStyle = '#a78bfa'; ctx.lineWidth = 2;
+    ctx.beginPath(); ctx.arc(S.cursor.x, S.cursor.y, 14, 0, 7); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(S.cursor.x - 20, S.cursor.y); ctx.lineTo(S.cursor.x - 8, S.cursor.y);
+    ctx.moveTo(S.cursor.x + 8, S.cursor.y); ctx.lineTo(S.cursor.x + 20, S.cursor.y);
+    ctx.moveTo(S.cursor.x, S.cursor.y - 20); ctx.lineTo(S.cursor.x, S.cursor.y - 8);
+    ctx.moveTo(S.cursor.x, S.cursor.y + 8); ctx.lineTo(S.cursor.x, S.cursor.y + 20); ctx.stroke();
+  }
+
+  // timer bar
+  ctx.fillStyle = 'rgba(255,255,255,.08)'; ctx.fillRect(0, H - 8, W, 8);
+  ctx.fillStyle = S.timeLeft < 10 ? '#ef4444' : '#a78bfa';
+  ctx.fillRect(0, H - 8, W * (S.timeLeft / 60), 8);
+  ctx.restore();
+}
+
+// ---------- loop ----------
+let last = 0;
+function frame(ts){
+  const dt = Math.min(0.05, (ts - last) / 1000 || 0.016);
+  last = ts;
+  update(dt);
+  render();
+  requestAnimationFrame(frame);
+}
+
+// ---------- input ----------
+function pos(e){
+  const r = cv.getBoundingClientRect();
+  const p = e.touches ? e.touches[0] : (e.changedTouches ? e.changedTouches[0] : e);
+  return { x: (p.clientX - r.left) * W / r.width, y: (p.clientY - r.top) * H / r.height };
+}
+cv.addEventListener('pointerdown', e => {
+  e.preventDefault();
+  const p = pos(e);
+  S.cursor.x = p.x; S.cursor.y = p.y;
+  tap(p.x, p.y);
+});
+window.addEventListener('keydown', e => {
+  if(e.key === ' '){ e.preventDefault(); tap(S.cursor.x, S.cursor.y); }
+  else if(e.key === 'ArrowLeft') S.cursor.kx = -1;
+  else if(e.key === 'ArrowRight') S.cursor.kx = 1;
+  else if(e.key === 'ArrowUp') S.cursor.ky = -1;
+  else if(e.key === 'ArrowDown') S.cursor.ky = 1;
+  else if(e.key === 'p' || e.key === 'P'){
+    if(S.mode === 'play'){ S.mode = 'pause'; document.getElementById('ovPause').classList.remove('hidden'); }
+    else if(S.mode === 'pause'){ S.mode = 'play'; document.getElementById('ovPause').classList.add('hidden'); }
+  }
+});
+window.addEventListener('keyup', e => {
+  if(e.key === 'ArrowLeft' || e.key === 'ArrowRight') S.cursor.kx = 0;
+  if(e.key === 'ArrowUp' || e.key === 'ArrowDown') S.cursor.ky = 0;
+});
+document.getElementById('btnStart').addEventListener('click', startGame);
+document.getElementById('btnRetry').addEventListener('click', startGame);
+document.getElementById('btnShare').addEventListener('click', shareResult);
+document.getElementById('btnResume').addEventListener('click', () => {
+  S.mode = 'play'; document.getElementById('ovPause').classList.add('hidden');
+});
+requestAnimationFrame(frame);
+</script>
+</body>
+</html>
