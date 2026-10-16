@@ -132,5 +132,14 @@
     "mechanic": "Lying-tutorial tap chaos",
     "tagline": "Skippy the tutorial helps you pop stars. At 15 seconds he starts lying. TRUST ME!",
     "title": "The Tutorial Is Possessed"
+  },
+  {
+    "date": "2026-10-16",
+    "day": 16,
+    "emoji": "💨",
+    "file": "games/speed-per-step-no-brakes.html",
+    "mechanic": "Faster-every-step runner",
+    "tagline": "Every step makes you faster. Coffee is the only brake. Run, fool, RUN.",
+    "title": "NO BRAKES"
   }
 ]
