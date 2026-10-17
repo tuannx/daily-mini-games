@@ -141,5 +141,14 @@
     "mechanic": "Faster-every-step runner",
     "tagline": "Every step makes you faster. Coffee is the only brake. Run, fool, RUN.",
     "title": "NO BRAKES"
+  },
+  {
+    "date": "2026-10-17",
+    "day": 17,
+    "emoji": "😴",
+    "file": "games/snooze-heist.html",
+    "mechanic": "Swat-the-hazard nap defense",
+    "tagline": "Nap through your shift. Sheep are gold, the boss is awake. And when the eye sweeps: DO NOTHING.",
+    "title": "Snooze Heist"
   }
 ]
