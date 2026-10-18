@@ -150,5 +150,14 @@
     "mechanic": "Swat-the-hazard nap defense",
     "tagline": "Nap through your shift. Sheep are gold, the boss is awake. And when the eye sweeps: DO NOTHING.",
     "title": "Snooze Heist"
+  },
+  {
+    "date": "2026-10-18",
+    "day": 18,
+    "emoji": "🔨",
+    "file": "games/the-rules-were-made-up.html",
+    "mechanic": "Arbitrary-elimination Q&A (rules invented after you answer)",
+    "tagline": "Tap YES or NO. Rules invented AFTER. Survive the gavel.",
+    "title": "The Rules Were Made Up"
   }
 ]
