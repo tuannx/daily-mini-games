@@ -1,0 +1,673 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+<title>FLAT OUT — drop blocks, squish bots</title>
+<style>
+  * { margin:0; padding:0; box-sizing:border-box; -webkit-tap-highlight-color:transparent; }
+  html,body { height:100%; background:#0a0a14; overflow:hidden; touch-action:none;
+    font-family:"Arial Black",Arial,sans-serif; user-select:none; -webkit-user-select:none; }
+  #wrap { position:fixed; inset:0; display:flex; flex-direction:column; align-items:center; justify-content:center; }
+  #stage { position:relative; }
+  canvas { display:block; border-radius:12px; box-shadow:0 0 40px #7b2ff755, 0 0 120px #00e5ff22; }
+  #pad { display:flex; gap:10px; margin-top:10px; }
+  .btn { width:64px; height:64px; border-radius:50%; border:2px solid #00e5ff; background:#141428ee;
+    color:#00e5ff; font-size:26px; display:flex; align-items:center; justify-content:center;
+    box-shadow:0 0 12px #00e5ff66; cursor:pointer; }
+  .btn:active { transform:scale(.92); background:#00e5ff33; }
+  #rot { border-color:#ff2fd6; color:#ff2fd6; box-shadow:0 0 12px #ff2fd655; }
+  #drop { border-color:#ffe14d; color:#ffe14d; box-shadow:0 0 12px #ffe14d55; }
+  #mute { position:absolute; top:10px; right:10px; z-index:5; width:40px; height:40px; font-size:18px;
+    border-radius:50%; border:2px solid #888; background:#141428ee; color:#ccc; }
+</style>
+</head>
+<body>
+<div id="wrap">
+  <div id="stage">
+    <canvas id="c"></canvas>
+    <button class="btn" id="mute">🔊</button>
+  </div>
+  <div id="pad">
+    <div class="btn" id="left">◀</div>
+    <div class="btn" id="right">▶</div>
+    <div class="btn" id="rot">⟳</div>
+    <div class="btn" id="drop">⬇</div>
+  </div>
+</div>
+<script>
+"use strict";
+/* FLAT OUT — Day 19. Squish-the-bots Tetris dropper.
+   Drop tetrominoes. The stickmen DODGE. Flatten them. They unionized. */
+
+// ---------- setup ----------
+const COLS = 10, ROWS = 16, CELL = 40;
+const GW = COLS * CELL, GH = ROWS * CELL, HUD = 84;
+const W = GW, H = HUD + GH;
+const cvs = document.getElementById('c'), ctx = cvs.getContext('2d');
+cvs.width = W; cvs.height = H;
+function fit(){
+  const s = Math.min(innerWidth / W, (innerHeight - 96) / H, 1.35);
+  cvs.style.width = (W*s)+'px'; cvs.style.height = (H*s)+'px';
+}
+addEventListener('resize', fit); fit();
+
+const LIVE = 'https://tuannx.github.io/daily-mini-games/games/flat-out.html';
+
+// ---------- audio ----------
+let AC = null, muted = false;
+function audio(){ if(!AC){ try{ AC = new (window.AudioContext||window.webkitAudioContext)(); }catch(e){} } return AC; }
+function beep(f0,f1,dur,type,vol){
+  if(muted) return; const ac = audio(); if(!ac) return;
+  const o = ac.createOscillator(), g = ac.createGain();
+  o.type = type||'square'; o.frequency.setValueAtTime(f0, ac.currentTime);
+  o.frequency.exponentialRampToValueAtTime(Math.max(30,f1), ac.currentTime+dur);
+  g.gain.setValueAtTime(vol||.12, ac.currentTime);
+  g.gain.exponentialRampToValueAtTime(.001, ac.currentTime+dur);
+  o.connect(g); g.connect(ac.destination); o.start(); o.stop(ac.currentTime+dur);
+}
+const S = {
+  squish(){ beep(400,60,.18,'sawtooth',.16); beep(900,200,.1,'square',.08); },
+  golden(){ [660,880,1320].forEach((f,i)=>setTimeout(()=>beep(f,f*1.2,.12,'square',.1),i*70)); },
+  lock(){ beep(140,90,.08,'triangle',.1); },
+  boss(){ beep(200,800,.25,'sawtooth',.14); },
+  rude(){ beep(800,150,.3,'sawtooth',.14); },
+  near(){ beep(1200,1600,.09,'sine',.08); },
+  over(){ [300,250,200,140].forEach((f,i)=>setTimeout(()=>beep(f,f*.9,.22,'sawtooth',.12),i*160)); },
+  start(){ beep(300,900,.2,'square',.1); }
+};
+document.getElementById('mute').onclick = e => {
+  e.stopPropagation(); muted = !muted;
+  document.getElementById('mute').textContent = muted ? '🔇' : '🔊';
+};
+
+// ---------- shapes ----------
+const SHAPES = {
+  I:[[0,0,0,0],[1,1,1,1],[0,0,0,0],[0,0,0,0]],
+  O:[[1,1],[1,1]],
+  T:[[0,1,0],[1,1,1],[0,0,0]],
+  S:[[0,1,1],[1,1,0],[0,0,0]],
+  Z:[[1,1,0],[0,1,1],[0,0,0]],
+  J:[[1,0,0],[1,1,1],[0,0,0]],
+  L:[[0,0,1],[1,1,1],[0,0,0]]
+};
+const COLORS = { I:'#00e5ff', O:'#ffe14d', T:'#c44dff', S:'#39ff6e', Z:'#ff3b5c', J:'#4d7cff', L:'#ff9b2f' };
+const KEYS = Object.keys(SHAPES);
+function rot(m){
+  const n = m.length, r = [];
+  for(let i=0;i<n;i++){ r.push([]); for(let j=0;j<n;j++) r[i][j] = m[n-1-j][i]; }
+  return r;
+}
+function cellsOf(type, r){
+  let m = SHAPES[type];
+  for(let i=0;i<r;i++) m = rot(m);
+  const out = [];
+  for(let y=0;y<m.length;y++) for(let x=0;x<m[y].length;x++) if(m[y][x]) out.push([x,y]);
+  return out;
+}
+
+// ---------- state ----------
+const grid = Array.from({length:ROWS}, ()=>Array(COLS).fill(null));
+let piece = null, pieceState = 'fall', thrownV = 0;
+let bots = [], pancakes = [], parts = [], popups = [], dust = [];
+let score = 0, combo = 0, comboT = 0, high = 0;
+let timeLeft = 60, elapsed = 0, running = false, over = false, paused = false;
+let overLine = '', newHigh = false;
+let missStreak = 0, danceT = 0, bossSpawned = false, goldT = 0;
+let nextType = KEYS[(Math.random()*KEYS.length)|0];
+let fallAcc = 0, shake = 0, flashT = 0;
+let copyMsg = '', startT = 0;
+try{ high = parseInt(localStorage.getItem('flatout_high')||'0',10)||0; }catch(e){}
+
+const OVER_LINES = [
+  "The bots filed a union complaint.",
+  "HR has been notified.",
+  "They're pressing charges.",
+  "The tower stands. You don't.",
+  "Somewhere, a stickman is laughing.",
+  "Outsquished by professionals.",
+  "Your blocks need therapy now."
+];
+function rankFor(s){
+  if(s>=30) return "GOVERNMENT WEAPON";
+  if(s>=20) return "STICKMAN HR DIRECTOR";
+  if(s>=12) return "SQUISH SPECIALIST";
+  if(s>=5)  return "PANCAKE CHEF";
+  return "CERTIFIED AMATEUR";
+}
+
+// ---------- helpers ----------
+function stackTop(col){
+  for(let r=0;r<ROWS;r++) if(grid[r][col]) return r;
+  return ROWS;
+}
+function pieceCells(p){
+  return cellsOf(p.type, p.rot).map(([dx,dy]) => [p.x+dx, Math.floor(p.y)+dy]);
+}
+function collides(px, pyRow, type, rotV){
+  const cs = cellsOf(type, rotV);
+  for(const [dx,dy] of cs){
+    const x = px+dx, y = pyRow+dy;
+    if(x<0||x>=COLS||y>=ROWS) return true;
+    if(y>=0 && grid[y][x]) return true;
+  }
+  return false;
+}
+function spawnPiece(){
+  const type = nextType;
+  nextType = KEYS[(Math.random()*KEYS.length)|0];
+  const p = { type, rot:0, x:3, y:0, color:COLORS[type] };
+  if(collides(p.x, 0, p.type, p.rot)){ endGame("OUT-BUILT!"); return; }
+  piece = p; pieceState = 'fall';
+}
+function popup(txt, x, y, color, big){
+  popups.push({txt, x, y, t:0, color:color||'#fff', big:!!big});
+}
+function burst(x, y, color, n, spd){
+  for(let i=0;i<n;i++){
+    const a = Math.random()*Math.PI*2, s = (spd||3)*(0.4+Math.random());
+    parts.push({x, y, vx:Math.cos(a)*s, vy:Math.sin(a)*s-2, t:0, life:.5+Math.random()*.5, color, sz:2+Math.random()*4});
+  }
+}
+
+// ---------- bots ----------
+function makeBot(kind){
+  const x = 1 + Math.random()*(COLS-2);
+  return { kind:kind||'run', x, dir:Math.random()<.5?-1:1, face:'😐', faceT:0,
+    dance:0, smugT:0, catchCd:0, tired:0, life: kind==='gold'?9:Infinity,
+    ph:Math.random()*6.28, dead:false };
+}
+function reset(){
+  for(let r=0;r<ROWS;r++) for(let c=0;c<COLS;c++) grid[r][c]=null;
+  bots = []; pancakes = []; parts = []; popups = []; dust = [];
+  for(let i=0;i<4;i++) bots.push(makeBot('run'));
+  score=0; combo=0; comboT=0; timeLeft=60; elapsed=0;
+  overLine=''; newHigh=false;
+  missStreak=0; danceT=0; bossSpawned=false; goldT=0;
+  nextType = KEYS[(Math.random()*KEYS.length)|0];
+  shake=0; flashT=0; over=false; paused=false; copyMsg='';
+  spawnPiece(); running=true; startT=performance.now();
+  S.start();
+}
+function botSurf(b){
+  const col = Math.max(0, Math.min(COLS-1, Math.floor(b.x)));
+  return stackTop(col);
+}
+function squishBot(b, idx){
+  const col = Math.max(0, Math.min(COLS-1, Math.floor(b.x)));
+  const surf = stackTop(col);
+  const px = b.x*CELL, py = HUD + surf*CELL;
+  const pts = (b.kind==='gold'?5 : b.kind==='boss'?3 : 1) * Math.max(1, Math.min(combo+1,5));
+  combo++; comboT = 3;
+  score += pts;
+  pancakes.push({x:b.x, t:0, face: b.kind==='boss'?'😵':'😵', gold:b.kind==='gold'});
+  burst(px, py, b.kind==='gold'?'#ffe14d':'#ff3b5c', b.kind==='gold'?26:14, 4);
+  if(combo>=2) popup('x'+Math.min(combo,5), px, py-46, '#ffe14d', true);
+  popup('+'+pts, px, py-24, '#39ff6e');
+  if(b.kind==='gold'){ S.golden(); popup('JACKPOT!', px, py-70, '#ffe14d', true); shake=8; }
+  else S.squish();
+  shake = Math.max(shake, 4);
+  bots.splice(idx,1);
+  setTimeout(()=>{ if(running && !over && bots.filter(z=>z.kind==='run').length<4) bots.push(makeBot('run')); }, 1200+Math.random()*1800);
+}
+
+// ---------- input ----------
+function movePiece(dx){
+  if(!piece || pieceState!=='fall' || !running || paused || over) return;
+  if(!collides(piece.x+dx, Math.floor(piece.y), piece.type, piece.rot)) piece.x += dx;
+}
+function rotatePiece(){
+  if(!piece || pieceState!=='fall' || !running || paused || over) return;
+  const nr = (piece.rot+1)%4;
+  for(const dx of [0,-1,1,-2,2]){
+    if(!collides(piece.x+dx, Math.floor(piece.y), piece.type, nr)){ piece.x+=dx; piece.rot=nr; return; }
+  }
+}
+function hardDrop(){
+  if(!piece || pieceState!=='fall' || !running || paused || over) return;
+  let r = Math.floor(piece.y);
+  while(!collides(piece.x, r+1, piece.type, piece.rot)) r++;
+  piece.y = r; lockPiece();
+}
+let soft = false;
+addEventListener('keydown', e=>{
+  audio();
+  if(e.key==='ArrowLeft'||e.key==='a'||e.key==='A'){ movePiece(-1); e.preventDefault(); }
+  else if(e.key==='ArrowRight'||e.key==='d'||e.key==='D'){ movePiece(1); e.preventDefault(); }
+  else if(e.key==='ArrowUp'||e.key==='w'||e.key==='W'||e.key==='z'||e.key==='Z'){ rotatePiece(); e.preventDefault(); }
+  else if(e.key==='ArrowDown'||e.key==='s'||e.key==='S'){ soft=true; e.preventDefault(); }
+  else if(e.key===' '){ hardDrop(); e.preventDefault(); }
+  else if(e.key==='p'||e.key==='P'){ togglePause(); }
+  else if(e.key==='Enter'){ if(!running||over) reset(); }
+});
+addEventListener('keyup', e=>{ if(e.key==='ArrowDown'||e.key==='s'||e.key==='S') soft=false; });
+function togglePause(){
+  if(!running||over) return;
+  paused = !paused;
+}
+let lastTouch = 0;
+function bindHold(id, fn){
+  const el = document.getElementById(id);
+  el.addEventListener('touchstart', e=>{ e.preventDefault(); lastTouch=performance.now(); audio(); fn(); }, {passive:false});
+  el.addEventListener('mousedown', e=>{ if(performance.now()-lastTouch<600) return; audio(); fn(); });
+}
+bindHold('left', ()=>movePiece(-1));
+bindHold('right', ()=>movePiece(1));
+bindHold('rot', rotatePiece);
+bindHold('drop', hardDrop);
+
+function doCopy(){
+  const txt = 'I flattened '+score+' stickmen in FLAT OUT as '+rankFor(score)+'. They dodged. I persisted. 🧱 '+LIVE;
+  const done=()=>{ copyMsg='COPIED! ✓'; setTimeout(()=>copyMsg='',1500); };
+  if(navigator.clipboard&&navigator.clipboard.writeText){ navigator.clipboard.writeText(txt).then(done).catch(done); }
+  else { const t=document.createElement('textarea'); t.value=txt; document.body.appendChild(t); t.select(); try{document.execCommand('copy');}catch(_){} t.remove(); done(); }
+}
+// single tap handler: start / pause / copy / restart
+cvs.addEventListener('pointerdown', e=>{
+  audio();
+  const r = cvs.getBoundingClientRect();
+  const sx = (e.clientX-r.left)/r.width*W, sy = (e.clientY-r.top)/r.height*H;
+  if(over){
+    if(sx>W/2-130&&sx<W/2+130&&sy>H/2+84&&sy<H/2+130){ doCopy(); return; }
+    reset(); return;
+  }
+  if(!running){ reset(); return; }
+  if(sx>W-52 && sy<52){ togglePause(); return; }
+  if(paused){ togglePause(); return; }
+});
+
+// ---------- lock ----------
+function lockPiece(){
+  const cs = pieceCells(piece);
+  for(const [cx,cy] of cs){
+    if(cy>=0 && cy<ROWS && cx>=0 && cx<COLS){
+      grid[cy][cx] = piece.color;
+      if(cy<=1){ endGame("OUT-BUILT!"); return; }
+    }
+  }
+  S.lock();
+  burst((piece.x+1)*CELL, HUD+(Math.floor(piece.y))*CELL, '#8899ff', 6, 2);
+  // near-miss check
+  const minX = Math.min(...cs.map(c=>c[0])), maxX = Math.max(...cs.map(c=>c[0]));
+  for(const b of bots){
+    const d = b.x < minX ? minX-b.x : b.x > maxX+1 ? b.x-(maxX+1) : 0;
+    if(d>0 && d<1.3 && !b.dead){
+      popup('SO CLOSE!', b.x*CELL, HUD+botSurf(b)*CELL-60, '#00e5ff');
+      S.near(); b.smugT = 1.2; b.face='😎';
+    }
+  }
+  // combo resets if this locked piece squished nobody (tracked via flag)
+  if(!piece.didSquish){
+    if(combo>0){ combo=0; }
+    missStreak++;
+    if(missStreak>=2){ danceT=2.2; popup('DANCE-OFF!', W/2, H/2-40, '#ff2fd6', true); missStreak=0; }
+  } else { missStreak=0; }
+  piece.didSquish = false;
+  spawnPiece();
+}
+
+// ---------- update ----------
+function update(dt){
+  if(paused) return;
+  elapsed += dt; timeLeft -= dt;
+  if(timeLeft<=0){ endGame(); return; }
+  // escalation events
+  if(elapsed>15 && !bossSpawned){
+    bossSpawned = true;
+    bots.push(makeBot('boss'));
+    popup('THE BOSS!', W/2, H/2-60, '#ff3b5c', true);
+    S.boss();
+  }
+  if(elapsed>25){
+    goldT -= dt;
+    if(goldT<=0){ goldT=22; bots.push(makeBot('gold')); popup('SHINY!', W/2, H/2-90, '#ffe14d', true); }
+  }
+  if(elapsed>40 && !update.f2){ update.f2=true; popup('THEY LEARNED!', W/2, H/2-60, '#ff9b2f', true); }
+  if(elapsed>20 && !update.f1){ update.f1=true; popup('FASTER!', W/2, H/2-60, '#ffe14d', true); }
+  const spdMul = (elapsed>20?1.35:1)*(elapsed>40?1.25:1);
+  const dodgeMul = elapsed>40?1.3:1;
+
+  // piece falling / thrown
+  if(piece && !over){
+    if(pieceState==='thrown'){
+      piece.y -= 14*dt;
+      if(piece.y < -4){ spawnPiece(); }
+    } else {
+      const fall = (soft?16:2.4*spdMul);
+      piece.y += fall*dt;
+      const row = Math.floor(piece.y);
+      if(collides(piece.x, row, piece.type, piece.rot)){
+        // land on top
+        let r = row;
+        while(r>0 && collides(piece.x, r, piece.type, piece.rot)) r--;
+        piece.y = r;
+        lockPiece();
+      } else {
+        // mid-air squish check
+        const cs = pieceCells(piece);
+        for(let i=bots.length-1;i>=0;i--){
+          const b = bots[i];
+          const surf = botSurf(b);
+          const bx0=(b.x-0.35)*CELL, bx1=(b.x+0.35)*CELL;
+          const by0=HUD+(surf-1)*CELL, by1=HUD+surf*CELL;
+          let hit=false;
+          for(const [cx,cy] of cs){
+            const px0=cx*CELL, py0=HUD+cy*CELL;
+            if(px0<bx1&&px0+CELL>bx0&&py0<by1&&py0+CELL>by0){ hit=true; break; }
+          }
+          if(hit){
+            if(b.kind==='boss' && b.catchCd<=0 && b.tired<=0){
+              // BOSS CATCHES IT — throws it back
+              b.catchCd=12; b.tired=3.5; b.face='😤';
+              pieceState='thrown';
+              popup('RUDE!', b.x*CELL, HUD+botSurf(b)*CELL-70, '#ff3b5c', true);
+              S.rude(); shake=7;
+              burst(b.x*CELL, HUD+botSurf(b)*CELL-40, '#ff3b5c', 12, 4);
+              break;
+            } else {
+              piece.didSquish = true;
+              squishBot(b,i);
+            }
+          }
+        }
+      }
+    }
+  }
+
+  // bots
+  const pcs = piece && pieceState==='fall' ? pieceCells(piece) : null;
+  const pMinX = pcs?Math.min(...pcs.map(c=>c[0])):0;
+  const pMaxX = pcs?Math.max(...pcs.map(c=>c[0]))+1:0;
+  const pBot = pcs?Math.max(...pcs.map(c=>c[1])):0;
+  const pCx = (pMinX+pMaxX)/2;
+  for(let i=bots.length-1;i>=0;i--){
+    const b = bots[i];
+    b.ph += dt*6;
+    if(b.faceT>0){ b.faceT-=dt; if(b.faceT<=0) b.face = b.kind==='boss'?'😠':'😐'; }
+    if(b.smugT>0){ b.smugT-=dt; if(b.smugT<=0&&b.face==='😎') b.face='😐'; }
+    if(b.catchCd>0) b.catchCd-=dt;
+    if(b.tired>0){ b.tired-=dt; b.face='😵'; if(b.tired<=0) b.face='😠'; }
+    if(b.kind==='gold'){ b.life-=dt; if(b.life<=0){ bots.splice(i,1); continue; } }
+    const surf = botSurf(b);
+    let mv = 0, sp = 0;
+    // dodge AI: shadow of falling piece
+    let scared = false;
+    if(pcs && pBot+1 >= surf-6 && b.x>pMinX-0.9 && b.x<pMaxX+0.9){
+      scared = true;
+      const away = b.x < pCx ? -1 : 1;
+      mv = away; sp = (b.kind==='boss'?1.6:3.4)*dodgeMul;
+      if(b.kind!=='boss' && b.face!=='😨'){ b.face='😨'; }
+    } else {
+      if(b.kind==='gold'){
+        mv = Math.sin(elapsed*3+b.ph)*1.2; sp = 5.5;
+      } else if(b.kind==='boss'){
+        if(Math.random()<dt*0.5) b.dir*=-1;
+        mv = b.dir; sp = 0.9;
+      } else {
+        if(Math.random()<dt*0.8) b.dir*=-1;
+        mv = b.dir; sp = 1.7;
+      }
+      if(b.face==='😨'){ b.face='😐'; }
+    }
+    if(danceT>0){ b.dance=1; } else b.dance=0;
+    b.x += mv*sp*dt;
+    if(b.x<0.5){ b.x=0.5; b.dir=1; }
+    if(b.x>COLS-0.5){ b.x=COLS-0.5; b.dir=-1; }
+    if(scared && b.kind==='run' && Math.random()<dt*0.15){ /* occasional jump handled in draw */ }
+  }
+  if(danceT>0) danceT-=dt;
+  if(comboT>0){ comboT-=dt; if(comboT<=0) combo=0; }
+
+  // pancakes
+  for(let i=pancakes.length-1;i>=0;i--){
+    const p=pancakes[i]; p.t+=dt;
+    p.x += (p.x<COLS/2?-1:1)*1.2*dt;
+    if(p.t>1.4) pancakes.splice(i,1);
+  }
+  // particles / popups / dust
+  for(let i=parts.length-1;i>=0;i--){
+    const p=parts[i]; p.t+=dt;
+    p.x+=p.vx*dt*60/60; p.y+=p.vy*dt*60/60; p.vy+=9*dt*60/60; p.vx*=0.99;
+    if(p.t>p.life) parts.splice(i,1);
+  }
+  for(let i=popups.length-1;i>=0;i--){
+    const p=popups[i]; p.t+=dt; p.y-=34*dt;
+    if(p.t>1.1) popups.splice(i,1);
+  }
+  if(shake>0) shake=Math.max(0,shake-dt*30);
+  if(flashT>0) flashT-=dt;
+  if(Math.random()<dt*3) dust.push({x:Math.random()*W, y:H-20-Math.random()*GH*0.4, t:0, s:1+Math.random()*2});
+  for(let i=dust.length-1;i>=0;i--){ const d=dust[i]; d.t+=dt; d.y-=8*dt; if(d.t>3) dust.splice(i,1); }
+}
+
+function endGame(why){
+  if(over) return;
+  over = true; running = false;
+  overLine = why || OVER_LINES[(Math.random()*OVER_LINES.length)|0];
+  if(score>high){ high=score; try{ localStorage.setItem('flatout_high',''+high); }catch(e){} newHigh=true; }
+  S.over();
+}
+
+// ---------- draw ----------
+function rr(x,y,w,h,r){
+  ctx.beginPath();
+  ctx.moveTo(x+r,y); ctx.arcTo(x+w,y,x+w,y+h,r); ctx.arcTo(x+w,y+h,x,y+h,r);
+  ctx.arcTo(x,y+h,x,y,r); ctx.arcTo(x,y,x+w,y,r); ctx.closePath();
+}
+function drawCell(x,y,color,squash){
+  const px=x*CELL, py=HUD+y*CELL;
+  ctx.save();
+  ctx.translate(px+CELL/2, py+CELL/2);
+  if(squash) ctx.scale(1.15,0.8);
+  ctx.fillStyle=color; ctx.globalAlpha=.92;
+  rr(-CELL/2+2,-CELL/2+2,CELL-4,CELL-4,7); ctx.fill();
+  ctx.globalAlpha=.35; ctx.fillStyle='#fff';
+  rr(-CELL/2+6,-CELL/2+6,CELL-12,10,5); ctx.fill();
+  ctx.restore();
+}
+function drawPieceShadow(){
+  if(!piece||pieceState!=='fall') return;
+  const cs = cellsOf(piece.type,piece.rot);
+  const minX=Math.min(...cs.map(c=>c[0]))+piece.x;
+  const maxX=Math.max(...cs.map(c=>c[0]))+piece.x;
+  // find landing row
+  let r=Math.floor(piece.y);
+  while(!collides(piece.x,r+1,piece.type,piece.rot)) r++;
+  ctx.fillStyle='rgba(255,59,92,.18)';
+  for(const [dx,dy] of cs){
+    ctx.fillRect((piece.x+dx)*CELL, HUD+(r+dy)*CELL, CELL, CELL);
+  }
+}
+function drawBot(b){
+  const surf = botSurf(b);
+  const bx = b.x*CELL;
+  let by = HUD + surf*CELL;
+  const bounce = Math.abs(Math.sin(b.ph))*(b.dance?10:4);
+  by -= bounce;
+  ctx.save();
+  ctx.translate(bx, by);
+  if(b.dance) ctx.rotate(Math.sin(b.ph*2)*0.35);
+  const big = b.kind==='boss';
+  const gold = b.kind==='gold';
+  // shadow
+  ctx.fillStyle='rgba(0,0,0,.35)';
+  ctx.beginPath(); ctx.ellipse(0, bounce, big?20:14, 5, 0, 0, 7); ctx.fill();
+  // gold halo (only glowing object)
+  if(gold){
+    ctx.strokeStyle='#ffe14d'; ctx.lineWidth=3; ctx.globalAlpha=.6+.4*Math.sin(b.ph*3);
+    ctx.beginPath(); ctx.arc(0,-(big?52:38), big?30:22, 0, 7); ctx.stroke();
+    ctx.globalAlpha=1;
+  }
+  // body: stickman
+  const s = big?1.35:1;
+  ctx.strokeStyle = gold?'#ffe14d':big?'#ff3b5c':'#4dd8ff';
+  ctx.lineWidth = 4*s; ctx.lineCap='round';
+  const run = Math.sin(b.ph*2)*(scaredRun(b)?8:4);
+  function scaredRun(bb){ return bb.face==='😨'; }
+  // legs
+  ctx.beginPath(); ctx.moveTo(0,-18*s); ctx.lineTo(-7*s+run*0.4,0); ctx.moveTo(0,-18*s); ctx.lineTo(7*s-run*0.4,0); ctx.stroke();
+  // arms
+  ctx.beginPath(); ctx.moveTo(0,-32*s);
+  ctx.lineTo(-10*s+run*0.5,-24*s+(b.face==='😨'?-8:0));
+  ctx.moveTo(0,-32*s); ctx.lineTo(10*s-run*0.5,-24*s+(b.face==='😨'?-8:0));
+  ctx.stroke();
+  // torso
+  ctx.beginPath(); ctx.moveTo(0,-18*s); ctx.lineTo(0,-36*s); ctx.stroke();
+  // head = emoji face
+  const face = b.tired>0?'😵': b.face;
+  ctx.font = (big?30:24)+'px serif';
+  ctx.textAlign='center'; ctx.textBaseline='middle';
+  ctx.fillText(face, 0, -44*s);
+  if(big && b.catchCd<=0 && b.tired<=0){
+    // boss ready-to-catch mitts
+    ctx.font='20px serif'; ctx.fillText('🧤', -16, -30); ctx.fillText('🧤', 16, -30);
+  }
+  ctx.restore();
+}
+function draw(){
+  ctx.save();
+  if(shake>0) ctx.translate((Math.random()-.5)*shake, (Math.random()-.5)*shake);
+  // bg
+  const g = ctx.createLinearGradient(0,0,0,H);
+  g.addColorStop(0,'#141428'); g.addColorStop(1,'#0a0a14');
+  ctx.fillStyle=g; ctx.fillRect(-20,-20,W+40,H+40);
+  // wall posters (flat faces of the fallen)
+  ctx.globalAlpha=.16; ctx.fillStyle='#fff'; ctx.font='11px Arial'; ctx.textAlign='center';
+  ctx.fillText('★ HALL OF THE FLAT ★', W/2, 24);
+  ctx.globalAlpha=1;
+  // HUD
+  ctx.fillStyle='#0d0d1acc'; ctx.fillRect(0,0,W,HUD);
+  ctx.textAlign='left'; ctx.textBaseline='alphabetic';
+  ctx.fillStyle='#ffe14d'; ctx.font='bold 22px "Arial Black",Arial';
+  ctx.fillText('SCORE '+score, 12, 30);
+  ctx.fillStyle='#4dd8ff'; ctx.font='bold 15px Arial';
+  ctx.fillText('BEST '+high, 12, 54);
+  ctx.textAlign='center';
+  ctx.fillStyle = timeLeft<10 ? '#ff3b5c' : '#fff';
+  ctx.font='bold 26px "Arial Black",Arial';
+  ctx.fillText(Math.ceil(timeLeft)+'s', W/2, 34);
+  if(combo>=2){ ctx.fillStyle='#ff2fd6'; ctx.font='bold 16px Arial'; ctx.fillText('COMBO x'+Math.min(combo,5), W/2, 58); }
+  ctx.textAlign='right'; ctx.fillStyle='#888'; ctx.font='13px Arial';
+  ctx.fillText(rankFor(score), W-56, 30);
+  ctx.fillStyle='#666'; ctx.font='18px serif'; ctx.fillText('⏸', W-24, 30);
+  ctx.textAlign='center';
+
+  // arena
+  const ay = HUD;
+  ctx.strokeStyle='#23233d'; ctx.lineWidth=1;
+  for(let x=0;x<=COLS;x++){ ctx.beginPath(); ctx.moveTo(x*CELL,ay); ctx.lineTo(x*CELL,ay+GH); ctx.stroke(); }
+  for(let y=0;y<=ROWS;y++){ ctx.beginPath(); ctx.moveTo(0,ay+y*CELL); ctx.lineTo(GW,ay+y*CELL); ctx.stroke(); }
+  // floor glow
+  ctx.fillStyle='rgba(0,229,255,.08)'; ctx.fillRect(0,ay+GH-8,GW,8);
+
+  drawPieceShadow();
+  // locked cells
+  for(let y=0;y<ROWS;y++) for(let x=0;x<COLS;x++) if(grid[y][x]) drawCell(x,y,grid[y][x]);
+  // falling piece
+  if(piece){
+    const cs = cellsOf(piece.type,piece.rot);
+    for(const [dx,dy] of cs){
+      const yy = dy + piece.y;
+      if(yy>=-1) drawCell(piece.x+dx, Math.floor(yy), piece.color, pieceState==='thrown');
+    }
+  }
+  // dust
+  for(const d of dust){ ctx.globalAlpha=Math.max(0,.4-d.t*.13); ctx.fillStyle='#8899ff'; ctx.beginPath(); ctx.arc(d.x,d.y,d.s,0,7); ctx.fill(); }
+  ctx.globalAlpha=1;
+  // pancakes
+  for(const p of pancakes){
+    const col=Math.max(0,Math.min(COLS-1,Math.floor(p.x)));
+    const surf=stackTop(col);
+    const a=Math.max(0,1-p.t/1.4);
+    ctx.save(); ctx.globalAlpha=a;
+    ctx.translate(p.x*CELL, HUD+surf*CELL-4);
+    ctx.scale(1.6,0.45);
+    ctx.fillStyle=p.gold?'#ffe14d':'#ffb3c0';
+    ctx.beginPath(); ctx.arc(0,0,14,0,7); ctx.fill();
+    ctx.restore();
+    ctx.save(); ctx.globalAlpha=a; ctx.font='16px serif'; ctx.textAlign='center';
+    ctx.fillText('😵', p.x*CELL, HUD+surf*CELL-12); ctx.restore();
+  }
+  // bots
+  for(const b of bots) drawBot(b);
+  // particles
+  for(const p of parts){
+    ctx.globalAlpha=Math.max(0,1-p.t/p.life);
+    ctx.fillStyle=p.color; ctx.fillRect(p.x-p.sz/2,p.y-p.sz/2,p.sz,p.sz);
+  }
+  ctx.globalAlpha=1;
+  // popups
+  for(const p of popups){
+    const a=Math.max(0,1-p.t/1.1);
+    ctx.save(); ctx.globalAlpha=a;
+    ctx.font='bold '+(p.big?30:19)+'px "Arial Black",Arial';
+    ctx.textAlign='center';
+    ctx.lineWidth=4; ctx.strokeStyle='#000'; ctx.strokeText(p.txt,p.x,p.y);
+    ctx.fillStyle=p.color; ctx.fillText(p.txt,p.x,p.y);
+    ctx.restore();
+  }
+  ctx.restore();
+
+  if(!running && !over) drawStart();
+  if(paused) drawPaused();
+  if(over) drawOver();
+}
+function drawStart(){
+  ctx.fillStyle='rgba(5,5,15,.82)'; ctx.fillRect(0,0,W,H);
+  ctx.textAlign='center';
+  ctx.fillStyle='#ff3b5c'; ctx.font='bold 64px "Arial Black",Arial';
+  ctx.fillText('FLAT OUT', W/2, H/2-110);
+  ctx.font='20px serif'; ctx.fillText('🧱😨🧱😨🧱', W/2, H/2-64);
+  ctx.fillStyle='#fff'; ctx.font='bold 19px Arial';
+  ctx.fillText('DROP BLOCKS. SQUISH BOTS.', W/2, H/2-20);
+  ctx.fillStyle='#ff2fd6'; ctx.fillText('THEY DODGE.', W/2, H/2+8);
+  ctx.fillStyle='#888'; ctx.font='15px Arial';
+  ctx.fillText('◀ ▶ move · ⟳ spin · ⬇ slam', W/2, H/2+44);
+  ctx.fillStyle='#ffe14d'; ctx.font='bold 17px Arial';
+  if(high>0) ctx.fillText('BEST: '+high, W/2, H/2+72);
+  ctx.fillStyle='#39ff6e'; ctx.font='bold 24px "Arial Black",Arial';
+  const bl = 0.6+0.4*Math.sin(performance.now()/300);
+  ctx.globalAlpha=bl; ctx.fillText('▶ TAP TO START', W/2, H/2+120); ctx.globalAlpha=1;
+}
+function drawPaused(){
+  ctx.fillStyle='rgba(5,5,15,.7)'; ctx.fillRect(0,0,W,H);
+  ctx.fillStyle='#fff'; ctx.font='bold 40px "Arial Black",Arial'; ctx.textAlign='center';
+  ctx.fillText('PAUSED', W/2, H/2);
+  ctx.font='16px Arial'; ctx.fillStyle='#888';
+  ctx.fillText('tap to resume', W/2, H/2+36);
+}
+function drawOver(){
+  ctx.fillStyle='rgba(5,5,15,.88)'; ctx.fillRect(0,0,W,H);
+  ctx.textAlign='center';
+  ctx.fillStyle='#ff3b5c'; ctx.font='bold 52px "Arial Black",Arial';
+  ctx.fillText("TIME'S UP!", W/2, H/2-120);
+  ctx.font='26px serif'; ctx.fillText('🧱😵', W/2, H/2-76);
+  ctx.fillStyle='#fff'; ctx.font='bold 20px Arial';
+  ctx.fillText(overLine, W/2, H/2-40);
+  ctx.fillStyle='#ffe14d'; ctx.font='bold 34px "Arial Black",Arial';
+  ctx.fillText(score+' SQUISHED', W/2, H/2+8);
+  ctx.fillStyle='#4dd8ff'; ctx.font='bold 18px Arial';
+  ctx.fillText('RANK: '+rankFor(score), W/2, H/2+40);
+  if(newHigh){ ctx.fillStyle='#ff2fd6'; ctx.fillText('★ NEW BEST! ★', W/2, H/2+66); }
+  // copy button
+  ctx.fillStyle='#141428'; ctx.strokeStyle='#00e5ff'; ctx.lineWidth=2;
+  rr(W/2-130, H/2+84, 260, 46, 10); ctx.fill(); ctx.stroke();
+  ctx.fillStyle='#00e5ff'; ctx.font='bold 16px Arial';
+  ctx.fillText(copyMsg||'📋 COPY BRAG', W/2, H/2+112);
+  ctx.fillStyle='#39ff6e'; ctx.font='bold 22px "Arial Black",Arial';
+  const bl = 0.6+0.4*Math.sin(performance.now()/300);
+  ctx.globalAlpha=bl; ctx.fillText('↻ TAP TO GO AGAIN', W/2, H/2+168); ctx.globalAlpha=1;
+}
+
+// ---------- loop ----------
+let last = performance.now();
+function frame(now){
+  let dt = Math.min(0.05,(now-last)/1000); last = now;
+  if(running && !over) update(dt);
+  draw();
+  requestAnimationFrame(frame);
+}
+requestAnimationFrame(frame);
+</script>
+</body>
+</html>

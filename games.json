@@ -159,5 +159,14 @@
     "mechanic": "Arbitrary-elimination Q&A (rules invented after you answer)",
     "tagline": "Tap YES or NO. Rules invented AFTER. Survive the gavel.",
     "title": "The Rules Were Made Up"
+  },
+  {
+    "date": "2026-10-19",
+    "day": 19,
+    "emoji": "🧱",
+    "file": "games/flat-out.html",
+    "mechanic": "Squish-the-bots Tetris dropper",
+    "tagline": "Tetris, but the stickmen dodge. Flatten them. They unionized.",
+    "title": "FLAT OUT"
   }
 ]
