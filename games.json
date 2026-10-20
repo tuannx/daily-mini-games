@@ -168,5 +168,14 @@
     "mechanic": "Squish-the-bots Tetris dropper",
     "tagline": "Tetris, but the stickmen dodge. Flatten them. They unionized.",
     "title": "FLAT OUT"
+  },
+  {
+    "date": "2026-10-20",
+    "day": 20,
+    "emoji": "🎬",
+    "file": "games/five-second-apocalypse.html",
+    "mechanic": "5-second AAA minesweeper-ish tap survival",
+    "tagline": "A $200M AAA epic in 5-second bursts. The tutorial NPC is no help at all.",
+    "title": "FIVE-SECOND APOCALYPSE"
   }
 ]
