@@ -177,5 +177,14 @@
     "mechanic": "5-second AAA minesweeper-ish tap survival",
     "tagline": "A $200M AAA epic in 5-second bursts. The tutorial NPC is no help at all.",
     "title": "FIVE-SECOND APOCALYPSE"
+  },
+  {
+    "date": "2026-10-21",
+    "day": 21,
+    "emoji": "🎂",
+    "file": "games/cake-run.html",
+    "mechanic": "Wobbly-cake balance delivery",
+    "tagline": "Balance the cake. Flawless streaks stack MORE layers. You did this to yourself.",
+    "title": "CAKE RUN"
   }
 ]

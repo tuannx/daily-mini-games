@@ -1,0 +1,389 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+<title>CAKE RUN 🎂 — Don't drop it.</title>
+<style>
+  * { margin:0; padding:0; box-sizing:border-box; -webkit-tap-highlight-color:transparent; }
+  html,body { height:100%; background:#0d0217; overflow:hidden; font-family:'Trebuchet MS','Segoe UI',sans-serif; }
+  #wrap { position:fixed; inset:0; display:flex; align-items:center; justify-content:center; }
+  canvas { background:#160a2e; border-radius:12px; touch-action:none; box-shadow:0 0 60px #ff5fa233; }
+  #hint { position:fixed; bottom:8px; width:100%; text-align:center; color:#ffffff55; font-size:11px; pointer-events:none; }
+</style>
+</head>
+<body>
+<div id="wrap"><canvas id="c" width="420" height="640"></canvas></div>
+<div id="hint">← → lean &nbsp;•&nbsp; drag on phone &nbsp;•&nbsp; R restart</div>
+<script>
+"use strict";
+/* CAKE RUN — Day 21. Balance the cake. Flawless streaks stack MORE layers. */
+const cv = document.getElementById('c'), ctx = cv.getContext('2d');
+const W = 420, H = 640;
+function fit(){ const s = Math.min(innerWidth/W, innerHeight/H); cv.style.width=(W*s)+'px'; cv.style.height=(H*s)+'px'; }
+addEventListener('resize', fit); fit();
+
+const HI = (()=>{ try{ return +localStorage.getItem('cakerun_hi')||0; }catch(e){ return 0; } })();
+function saveHi(v){ try{ localStorage.setItem('cakerun_hi', v); }catch(e){} }
+
+/* ---------- audio (WebAudio, self-generated) ---------- */
+let AC=null;
+function beep(f,d,type,g){ try{ AC=AC||new (window.AudioContext||window.webkitAudioContext)();
+  const o=AC.createOscillator(),gn=AC.createGain(); o.type=type||'square'; o.frequency.value=f;
+  gn.gain.setValueAtTime(g||.12,AC.currentTime); gn.gain.exponentialRampToValueAtTime(.0001,AC.currentTime+d);
+  o.connect(gn); gn.connect(AC.destination); o.start(); o.stop(AC.currentTime+d); }catch(e){} }
+function boing(){ beep(300,.18,'sine',.15); setTimeout(()=>beep(520,.22,'sine',.15),90); }
+function splatSnd(){ beep(140,.25,'sawtooth',.18); setTimeout(()=>beep(70,.35,'sawtooth',.15),80); }
+function whoosh(){ beep(900,.12,'sine',.07); }
+function winJingle(){ [523,659,784,1046].forEach((f,i)=>setTimeout(()=>beep(f,.25,'triangle',.14),i*130)); }
+
+/* ---------- game state ---------- */
+const G = {
+  mode:'title', dist:0, score:0, best:HI,
+  tilt:0, tiltV:0,           // cake tilt (radians), inverted pendulum
+  lean:0, leanKey:0,         // player lean input -1..1
+  layers:[], golden:0,
+  clean:0,                  // seconds since last danger
+  speed:110, spawnT:1.5,
+  cats:[], peels:[], gusts:[], parts:[], bgs:[],
+  wind:0, windT:0, slipT:0, invertT:0,
+  nearLatch:false, t:0, fallAnim:0, winShown:false, endless:false,
+  flashes:[], copyMsg:0, shake:0,
+};
+const CAKE_W=96, LAYER_H=34;
+const PALETTE=['#ff6fb5','#ffd166','#8affc1','#6fb5ff','#c99bff','#ff9f6f'];
+function newLayers(){ const a=[]; for(let i=0;i<3;i++) a.push({c:PALETTE[(Math.random()*PALETTE.length)|0], gold:false});
+  return a; }
+function reset(){
+  G.mode='play'; G.dist=0; G.score=0; G.tilt=0; G.tiltV=0; G.lean=0; G.leanKey=0;
+  G.layers=newLayers(); G.golden=0; G.clean=0; G.speed=110; G.spawnT=1.2;
+  G.cats=[]; G.peels=[]; G.gusts=[]; G.parts=[]; G.wind=0; G.windT=0; G.slipT=0;
+  G.invertT=0; G.nearLatch=false; G.t=0; G.fallAnim=0; G.winShown=false; G.endless=false;
+  G.flashes=[]; G.copyMsg=0; G.shake=0;
+  G.bgs=[]; for(let i=0;i<9;i++) G.bgs.push({x:Math.random()*W, y:60+Math.random()*220, s:.5+Math.random(), v:8+Math.random()*14});
+}
+const WAIT_X=W/2, GROUND=H-70, TRAY_Y=GROUND-120;
+
+/* ---------- entities ---------- */
+function spawnCat(){ const dir=Math.random()<.5?1:-1;
+  G.cats.push({x:dir>0?-40:W+40, dir, y:GROUND-14, t:0, hit:false, sp:180+Math.random()*80+G.dist*.25, ph:Math.random()*9}); }
+function spawnPeel(){ G.peels.push({x:WAIT_X+(Math.random()<.5?-1:1)*(140+Math.random()*120), y:GROUND-6, t:0}); }
+function spawnGust(){ const d=Math.random()<.5?-1:1; G.gusts.push({x:d>0?-60:W+60, d, t:0, sp:60+Math.random()*50}); }
+function addLayer(){ const gold=Math.random()<.12;
+  const L={c:PALETTE[(Math.random()*PALETTE.length)|0], gold};
+  G.layers.push(L); if(gold){ G.golden++; G.score+=300; flash("JACKPOT!", '#ffd700'); }
+  else flash("EXTRA LAYER!", '#8affc1');
+  confetti(WAIT_X, TRAY_Y-G.layers.length*LAYER_H, gold?'#ffd700':'#ffffff', 26);
+  boing(); }
+function flash(txt,color){ G.flashes.push({txt, color:color||'#fff', t:0}); }
+function confetti(x,y,c,n){ for(let i=0;i<n;i++) G.parts.push({x,y,vx:(Math.random()-.5)*380,vy:-120-Math.random()*260,g:900,c,
+  t:0,life:.8+Math.random()*.9,r:2+Math.random()*3}); }
+function splat(x,y){ for(let i=0;i<60;i++) G.parts.push({x:x+(Math.random()-.5)*120,y:y-Math.random()*140,
+  vx:(Math.random()-.5)*420,vy:-60-Math.random()*220,g:1100,c:['#ff6fb5','#ffd166','#fff','#c99bff'][(Math.random()*4)|0],
+  t:0,life:1+Math.random(),r:3+Math.random()*5}); }
+
+/* ---------- funny fail lines ---------- */
+const OVER=[
+  "The cake has unionized against you.",
+  "Frosting: everywhere. Dignity: none.",
+  "The floor says thanks for the cake.",
+  "Gravity: 1 — You: 0.",
+  "That layer was innocent.",
+  "Your insurance doesn't cover this.",
+  "The cat filed a complaint.",
+];
+let overIdx=(Math.random()*OVER.length)|0;
+function rank(d){ return d<40?"CRUMB":d<90?"WOBBLE ROOKIE":d<150?"LAYER LAD":d<250?"CAKE DADDY":d<400?"FROSTING BOSS":"CAKE GOD"; }
+
+/* ---------- update ---------- */
+function upd(dt){
+  G.t+=dt;
+  // background clouds
+  for(const b of G.bgs){ b.x+=b.v*dt; if(b.x>W+40) b.x=-40; }
+  // flashes
+  for(const f of G.flashes) f.t+=dt;
+  G.flashes=G.flashes.filter(f=>f.t<1.1);
+  if(G.copyMsg>0) G.copyMsg-=dt;
+  if(G.mode!=='play') {
+    if(G.mode==='over'&&G.fallAnim<1) G.fallAnim+=dt*1.6;
+    for(const p of G.parts){ p.t+=dt; p.x+=p.vx*dt; p.y+=p.vy*dt; p.vy+=p.g*dt; }
+    G.parts=G.parts.filter(p=>p.t<p.life);
+    return;
+  }
+  G.dist+=G.speed*dt/40; G.score+=G.speed*dt/40;
+  G.speed=Math.min(220, 110+G.dist*.9);
+  G.clean+=dt;
+  // flawless streak stacks a layer (the twist: success punishes you)
+  if(G.clean>8){ G.clean=0; addLayer(); }
+  // tippy physics: more layers = more unstable
+  const tippy = .9 + G.layers.length*.22;
+  G.tiltV += G.tilt*tippy*dt;              // inverted pendulum: tilt feeds itself
+  G.tiltV += G.wind*.5*dt;                  // wind pushes
+  const inv = G.invertT>0 ? -1 : 1;         // peel slip inverts controls briefly
+  G.lean += ((G.leanKey*inv)-G.lean)*Math.min(1,dt*10);
+  if(G.slipT>0){ G.slipT-=dt; if(G.slipT<=0) G.invertT=1.2; }
+  if(G.invertT>0) G.invertT-=dt;
+  G.tiltV -= G.lean*3.4*dt;                 // leaning counteracts
+  G.tiltV *= Math.pow(.55, dt);             // damping
+  G.tilt += G.tiltV*dt;
+  // near-miss latch
+  const a=Math.abs(G.tilt);
+  if(a>.62) G.nearLatch=true;
+  if(G.nearLatch && a<.3){ G.nearLatch=false; G.score+=50; flash("SO CLOSE!",'#7cffb2'); whoosh(); }
+  if(a>.95){ fail(); return; }
+  // wind gusts drift
+  G.windT-=dt;
+  if(G.windT<=0){ G.windT=2+Math.random()*3; G.wind=0; }
+  // spawners (escalate with distance)
+  G.spawnT-=dt;
+  if(G.spawnT<=0){ G.spawnT=Math.max(.55, 1.6-G.dist*.012);
+    const r=Math.random();
+    if(r<.42) spawnCat(); else if(r<.68) spawnPeel(); else spawnGust(); }
+  // cats run across; bump = tilt kick
+  for(const c of G.cats){ c.t+=dt; c.x+=c.dir*c.sp*dt;
+    if(!c.hit && Math.abs(c.x-WAIT_X)<26){ c.hit=true; c.dir*=-1;
+      const kick=(c.dir>0?1:-1)*(.55+Math.random()*.4);
+      G.tiltV+=kick; G.shake=.35; flash("BUMP!",'#ff5f5f'); beep(180,.2,'sawtooth',.15); G.clean=0; } }
+  G.cats=G.cats.filter(c=>c.x>-60&&c.x<W+60);
+  // peels slip you
+  for(const p of G.peels){ p.t+=dt;
+    if(Math.abs(p.x-WAIT_X)<30 && p.t<.3){ p.t=9; G.slipT=.5; G.tiltV+=(Math.random()<.5?-1:1)*.7;
+      flash("SLIP!",'#ffd166'); beep(220,.18,'sawtooth',.12); G.clean=0; } }
+  G.peels=G.peels.filter(p=>p.t<6);
+  // gusts blow through
+  for(const g of G.gusts){ g.t+=dt; g.x+=g.d*g.sp*dt;
+    if(Math.abs(g.x-WAIT_X)<130) G.wind=g.d*2.2; }
+  G.gusts=G.gusts.filter(g=>g.x>-90&&g.x<W+90);
+  if(G.gusts.every(g=>Math.abs(g.x-WAIT_X)>=130)) G.wind*=.9;
+  // particles
+  for(const p of G.parts){ p.t+=dt; p.x+=p.vx*dt; p.y+=p.vy*dt; p.vy+=p.g*dt; }
+  G.parts=G.parts.filter(p=>p.t<p.life);
+  if(G.shake>0) G.shake-=dt;
+  // delivery win at 150m
+  if(!G.winShown && G.dist>=150){ G.winShown=true; G.endless=true; winJingle(); flash("DELIVERED!",'#ffd700');
+    confetti(WAIT_X,200,'#ffd700',40); }
+}
+function fail(){
+  G.mode='over'; G.fallAnim=0; G.score=Math.floor(G.score)+G.layers.length*100;
+  overIdx=(overIdx+1+((Math.random()*(OVER.length-1))|0))%OVER.length;
+  splat(WAIT_X, TRAY_Y);
+  splatSnd();
+  if(G.score>G.best){ G.best=Math.floor(G.score); saveHi(G.best); }
+}
+
+/* ---------- drawing ---------- */
+function rr(x,y,w,h,r){ ctx.beginPath(); ctx.roundRect(x,y,w,h,r); ctx.fill(); }
+function drawBg(){
+  const g=ctx.createLinearGradient(0,0,0,H); g.addColorStop(0,'#1a0b33'); g.addColorStop(.7,'#160a2e'); g.addColorStop(1,'#0d0217');
+  ctx.fillStyle=g; ctx.fillRect(0,0,W,H);
+  // sun with face
+  ctx.fillStyle='#ffd166'; ctx.beginPath(); ctx.arc(352,86,34,0,9); ctx.fill();
+  ctx.fillStyle='#1a0b33'; ctx.fillRect(340,80,10,6); ctx.fillRect(356,80,10,6);
+  ctx.strokeStyle='#1a0b33'; ctx.lineWidth=3; ctx.beginPath(); ctx.arc(353,96,10,.3,Math.PI-.3); ctx.stroke();
+  for(const b of G.bgs){ ctx.fillStyle='#ffffff18'; ctx.beginPath(); ctx.ellipse(b.x,b.y,34*b.s,14*b.s,0,0,9); ctx.fill(); }
+  // skyline
+  ctx.fillStyle='#241245';
+  for(let x=0;x<W;x+=52){ const h=90+((x*37)%70); ctx.fillRect(x,H-230-h,46,h); }
+  ctx.fillStyle='#3a1f6e'; for(let x=8;x<W;x+=52){ for(let y=H-290;y<H-240;y+=22){ if((x+y)%5<2) ctx.fillRect(x,y,10,12);} }
+  // ground
+  ctx.fillStyle='#2a1660'; ctx.fillRect(0,GROUND,W,H-GROUND);
+  ctx.fillStyle='#ffffff22'; ctx.fillRect(0,GROUND,W,4);
+  // distance markers
+  ctx.fillStyle='#ffffff33'; ctx.font='11px Trebuchet MS';
+  for(let m=Math.floor(G.dist/25)*25; m<G.dist+400; m+=25){
+    const sx=W/2+(m-G.dist)*4; if(sx>-20&&sx<W+20) ctx.fillText(m+'m',sx-10,GROUND+22); }
+}
+function drawWaiter(){
+  const bob=Math.sin(G.t*10)*4, panic=Math.abs(G.tilt)>.6;
+  const x=WAIT_X, y=GROUND+bob;
+  ctx.save(); ctx.translate(x,y);
+  // legs
+  ctx.strokeStyle='#1b2a4a'; ctx.lineWidth=12; ctx.lineCap='round';
+  const lp=Math.sin(G.t*12)*14;
+  ctx.beginPath(); ctx.moveTo(-8,-52); ctx.lineTo(-8-lp,-4); ctx.moveTo(8,-52); ctx.lineTo(8+lp,-4); ctx.stroke();
+  // body (apron)
+  ctx.fillStyle='#fff'; rr(-24,-108,48,60,10);
+  ctx.fillStyle='#ff5fa2'; ctx.fillRect(-24,-108,48,14);
+  // head
+  ctx.fillStyle='#ffcf9e'; ctx.beginPath(); ctx.arc(0,-128,20,0,9); ctx.fill();
+  ctx.fillStyle='#3a2412'; ctx.beginPath(); ctx.arc(0,-136,20,Math.PI,0); ctx.fill(); // hair
+  // face: focused 😬 -> panic 😱
+  ctx.fillStyle='#1a0b33';
+  if(panic){ ctx.beginPath(); ctx.arc(-7,-130,3.4,0,9); ctx.arc(7,-130,3.4,0,9); ctx.fill();
+    ctx.beginPath(); ctx.ellipse(0,-118,6,8,0,0,9); ctx.fill(); }
+  else { ctx.fillRect(-10,-133,5,3); ctx.fillRect(5,-133,5,3);
+    ctx.strokeStyle='#1a0b33'; ctx.lineWidth=2.5; ctx.beginPath(); ctx.moveTo(-8,-119); ctx.lineTo(8,-119); ctx.stroke(); }
+  // arms holding tray up
+  ctx.strokeStyle='#ffcf9e'; ctx.lineWidth=10;
+  ctx.beginPath(); ctx.moveTo(-20,-96); ctx.lineTo(-44,-148); ctx.moveTo(20,-96); ctx.lineTo(44,-148); ctx.stroke();
+  ctx.restore();
+}
+function drawCake(){
+  const n=G.layers.length, hh=n*LAYER_H;
+  const fall = G.mode==='over' ? Math.min(1,G.fallAnim) : 0;
+  ctx.save();
+  ctx.translate(WAIT_X, TRAY_Y + fall*180);
+  ctx.rotate(G.tilt + fall*fall*(G.tilt>0?1.6:-1.6)); // topples over on fail
+  // glow: the cake is THE precious thing -> halo
+  ctx.save(); ctx.globalAlpha=.35+.15*Math.sin(G.t*6);
+  ctx.fillStyle='#ffd700'; ctx.beginPath(); ctx.ellipse(0,-hh/2,CAKE_W*.85,hh/2+26,0,0,9); ctx.fill(); ctx.restore();
+  // tray
+  ctx.fillStyle='#c9d4e3'; rr(-CAKE_W/2-16,-14,CAKE_W+32,16,7);
+  ctx.fillStyle='#8b95a8'; ctx.fillRect(-CAKE_W/2-16,-4,CAKE_W+32,3);
+  // layers bottom->top
+  for(let i=0;i<n;i++){ const L=G.layers[i], y=-14-(i+1)*LAYER_H;
+    ctx.fillStyle=L.c; rr(-CAKE_W/2+(L.gold?0:2),y,CAKE_W-(L.gold?0:4),LAYER_H-2,8);
+    ctx.fillStyle='#ffffff55'; ctx.fillRect(-CAKE_W/2+6,y+4,CAKE_W-12,5); // frosting line
+    if(L.gold){ ctx.strokeStyle='#ffd700'; ctx.lineWidth=4; ctx.strokeRect(-CAKE_W/2-2,y,CAKE_W+4,LAYER_H-2); } }
+  // candle
+  const cy=-14-n*LAYER_H;
+  ctx.fillStyle='#fff'; ctx.fillRect(-4,cy-26,8,26);
+  const fl=Math.sin(G.t*22)*3;
+  ctx.fillStyle='#ffb703'; ctx.beginPath(); ctx.ellipse(0,cy-32+fl,7,11,0,0,9); ctx.fill();
+  ctx.fillStyle='#fb8500'; ctx.beginPath(); ctx.ellipse(0,cy-30+fl,3.5,6,0,0,9); ctx.fill();
+  // cake face on top layer: worried -> screaming as tilt grows
+  const a=Math.abs(G.tilt), fy=-14-LAYER_H*.5;
+  ctx.fillStyle='#1a0b33';
+  if(a>.62){ ctx.beginPath(); ctx.arc(-14,fy-4,4,0,9); ctx.arc(14,fy-4,4,0,9); ctx.fill();
+    ctx.beginPath(); ctx.ellipse(0,fy+8,7,9,0,0,9); ctx.fill(); }
+  else if(a>.3){ ctx.fillRect(-17,fy-6,6,3); ctx.fillRect(11,fy-6,6,3);
+    ctx.beginPath(); ctx.ellipse(0,fy+7,6,4,0,0,9); ctx.stroke(); ctx.lineWidth=2.5; }
+  else { ctx.fillRect(-17,fy-6,6,3); ctx.fillRect(11,fy-6,6,3);
+    ctx.strokeStyle='#1a0b33'; ctx.lineWidth=2.5; ctx.beginPath(); ctx.arc(0,fy+3,7,.4,Math.PI-.4); ctx.stroke(); }
+  ctx.restore();
+}
+function drawCat(c){
+  ctx.save(); ctx.translate(c.x,c.y); ctx.scale(c.dir,1);
+  const run=Math.sin(c.ph+c.t*24)*4;
+  ctx.fillStyle='#e33'; rr(-22,-16+run*.3,44,26,12);       // body, angry red
+  ctx.beginPath(); ctx.moveTo(-20,-16); ctx.lineTo(-14,-30); ctx.lineTo(-8,-16); ctx.fill(); // ears
+  ctx.beginPath(); ctx.moveTo(8,-16); ctx.lineTo(14,-30); ctx.lineTo(20,-16); ctx.fill();
+  ctx.fillStyle='#fff'; ctx.beginPath(); ctx.arc(22,-6,10,0,9); ctx.fill(); // head
+  ctx.fillStyle='#e33'; ctx.beginPath(); ctx.moveTo(14,-12); ctx.lineTo(18,-22); ctx.lineTo(24,-12); ctx.fill();
+  ctx.beginPath(); ctx.moveTo(20,-12); ctx.lineTo(24,-22); ctx.lineTo(30,-12); ctx.fill();
+  // ANGRY face — only hazards get the angry face
+  ctx.strokeStyle='#7a0d0d'; ctx.lineWidth=3;
+  ctx.beginPath(); ctx.moveTo(14,-8); ctx.lineTo(22,-4); ctx.moveTo(30,-8); ctx.lineTo(22,-4); ctx.stroke();
+  ctx.fillStyle='#7a0d0d'; ctx.beginPath(); ctx.arc(18,2,2.4,0,9); ctx.arc(26,2,2.4,0,9); ctx.fill();
+  ctx.beginPath(); ctx.arc(22,8,4,0,Math.PI); ctx.fill();
+  // tail lash
+  ctx.strokeStyle='#e33'; ctx.lineWidth=6; ctx.beginPath();
+  ctx.moveTo(-22,-2); ctx.quadraticCurveTo(-34,-10+run,-30,-22+run); ctx.stroke();
+  ctx.restore();
+}
+function drawPeel(p){
+  ctx.save(); ctx.translate(p.x,p.y);
+  ctx.fillStyle='#ffe14d'; ctx.strokeStyle='#d9a900'; ctx.lineWidth=2;
+  for(let i=0;i<3;i++){ ctx.save(); ctx.rotate(i*2.1+p.t*.4);
+    ctx.beginPath(); ctx.ellipse(0,-12,7,14,0,0,9); ctx.fill(); ctx.stroke(); ctx.restore(); }
+  ctx.restore();
+}
+function drawGust(g){
+  ctx.save(); ctx.translate(g.x,120+Math.sin(G.t*3+g.t)*10); ctx.globalAlpha=.8;
+  ctx.fillStyle='#9adcff';
+  ctx.beginPath(); ctx.ellipse(0,0,30,16,0,0,9); ctx.ellipse(20,4,22,13,0,0,9); ctx.ellipse(-20,4,20,12,0,0,9); ctx.fill();
+  ctx.globalAlpha=1; ctx.fillStyle='#fff'; ctx.font='bold 20px Trebuchet MS'; ctx.textAlign='center';
+  ctx.fillText(g.d>0?'>>>':'<<<',0,8);
+  ctx.restore();
+}
+function drawParts(){
+  for(const p of G.parts){ ctx.globalAlpha=Math.max(0,1-p.t/p.life); ctx.fillStyle=p.c;
+    ctx.beginPath(); ctx.arc(p.x,p.y,p.r,0,9); ctx.fill(); }
+  ctx.globalAlpha=1;
+}
+function drawHud(){
+  ctx.textAlign='left'; ctx.fillStyle='#fff'; ctx.font='bold 22px Trebuchet MS';
+  ctx.fillText(Math.floor(G.dist)+'m',14,36);
+  ctx.fillStyle='#ffd166'; ctx.fillText('🎂×'+G.layers.length,14,64);
+  ctx.textAlign='right'; ctx.fillStyle='#ffffff88'; ctx.font='14px Trebuchet MS';
+  ctx.fillText('BEST '+G.best, W-14,34);
+  // wind indicator
+  if(Math.abs(G.wind)>.3){ ctx.textAlign='center'; ctx.fillStyle='#9adcff'; ctx.font='bold 18px Trebuchet MS';
+    ctx.fillText(G.wind>0?'WIND >>>':'<<< WIND', W/2, 96); }
+  if(G.invertT>0){ ctx.textAlign='center'; ctx.fillStyle='#ff5f5f'; ctx.font='bold 18px Trebuchet MS';
+    ctx.fillText('CONTROLS FLIPPED!', W/2, 122); }
+  // flashes
+  ctx.textAlign='center';
+  G.flashes.forEach((f,i)=>{ ctx.globalAlpha=Math.max(0,1-f.t/1.1);
+    ctx.font='bold 30px Trebuchet MS'; ctx.fillStyle=f.color;
+    ctx.fillText(f.txt, W/2, 180+i*40 - f.t*20); });
+  ctx.globalAlpha=1;
+}
+function center(txt,y,size,color){ ctx.textAlign='center'; ctx.font='bold '+size+'px Trebuchet MS';
+  ctx.fillStyle=color||'#fff'; ctx.fillText(txt,W/2,y); }
+function drawTitle(){
+  ctx.fillStyle='#0d021799'; ctx.fillRect(0,0,W,H);
+  center('🎂',190,90);
+  center('CAKE RUN',260,54,'#ffd166');
+  ctx.font='20px Trebuchet MS'; center("DON'T DROP THE CAKE.",300,20,'#fff');
+  ctx.font='15px Trebuchet MS'; center('LEAN  ←  →  OR DRAG',336,15,'#ffffffaa');
+  ctx.font='15px Trebuchet MS'; center('clean streaks stack MORE layers',360,15,'#8affc1');
+  center('TAP TO WALK',430,26,'#ff6fb5');
+  ctx.font='13px Trebuchet MS'; center('BEST '+G.best,470,13,'#ffffff66');
+}
+function drawOver(){
+  ctx.fillStyle='#0d0217cc'; ctx.fillRect(0,0,W,H);
+  center('💥',150,70);
+  center('CAKE DOWN',210,46,'#ff5f5f');
+  ctx.font='17px Trebuchet MS'; center(OVER[overIdx],252,17,'#ffffffcc');
+  center(Math.floor(G.dist)+'m  •  🎂×'+G.layers.length+'  •  '+rank(G.dist),292,22,'#ffd166');
+  if(G.copyMsg>0) center('COPIED!',440,18,'#8affc1');
+  else { center('📋 TAP TO COPY BRAG',440,17,'#8affc1'); }
+  center('TAP TO RETRY',486,24,'#ff6fb5');
+}
+function render(){
+  ctx.save();
+  if(G.shake>0) ctx.translate((Math.random()-.5)*10*G.shake,(Math.random()-.5)*10*G.shake);
+  drawBg();
+  for(const p of G.peels) drawPeel(p);
+  for(const g of G.gusts) drawGust(g);
+  drawWaiter(); drawCake();
+  for(const c of G.cats) drawCat(c);
+  drawParts(); drawHud();
+  if(G.mode==='title') drawTitle();
+  if(G.mode==='over') drawOver();
+  ctx.restore();
+}
+
+/* ---------- input ---------- */
+const keys={};
+addEventListener('keydown',e=>{
+  if(['ArrowLeft','ArrowRight',' '].includes(e.key)) e.preventDefault();
+  keys[e.key.toLowerCase()]=true;
+  if(e.key==='r'||e.key==='R'){ reset(); return; }
+  if(G.mode==='title'&&(e.key===' '||e.key==='Enter')) reset();
+  else if(G.mode==='over'&&(e.key===' '||e.key==='Enter')) reset();
+});
+addEventListener('keyup',e=>{ keys[e.key.toLowerCase()]=false; });
+let dragX=null;
+cv.addEventListener('pointerdown',e=>{ dragX=e.clientX; handleTap(); });
+cv.addEventListener('pointermove',e=>{ if(dragX!==null&&G.mode==='play'){ G.leanKey=Math.max(-1,Math.min(1,(e.clientX-dragX)/90)); } });
+addEventListener('pointerup',()=>{ dragX=null; if(G.mode==='play') G.leanKey=0; });
+function handleTap(){
+  if(G.mode==='title'){ reset(); return; }
+  if(G.mode==='over'){
+    // tap on copy zone -> copy brag, else retry
+    copyBrag(); setTimeout(()=>{ if(G.mode==='over') reset(); },450);
+  }
+}
+function copyBrag(){
+  const s='I walked '+Math.floor(G.dist)+'m with a '+G.layers.length+'-layer cake in CAKE RUN 🎂. Gravity won. Beat me: https://tuannx.github.io/daily-mini-games/games/cake-run.html';
+  const done=()=>{ G.copyMsg=1.6; };
+  if(navigator.clipboard&&navigator.clipboard.writeText) navigator.clipboard.writeText(s).then(done).catch(done);
+  else done();
+}
+
+/* ---------- main loop ---------- */
+let last=performance.now();
+function frame(now){
+  let dt=(now-last)/1000; last=now; if(dt>.05) dt=.05;
+  G.leanKey = (keys['arrowright']||keys['d']?1:0) - (keys['arrowleft']||keys['a']?1:0) || G.leanKey;
+  // keyboard wins over drag when held
+  if(keys['arrowright']||keys['d']||keys['arrowleft']||keys['a']) G.leanKey=(keys['arrowright']||keys['d']?1:0)-(keys['arrowleft']||keys['a']?1:0);
+  upd(dt); render();
+  requestAnimationFrame(frame);
+}
+requestAnimationFrame(frame);
+</script>
+</body>
+</html>
