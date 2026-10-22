@@ -186,5 +186,14 @@
     "mechanic": "Wobbly-cake balance delivery",
     "tagline": "Balance the cake. Flawless streaks stack MORE layers. You did this to yourself.",
     "title": "CAKE RUN"
+  },
+  {
+    "date": "2026-10-22",
+    "day": 22,
+    "emoji": "⛏️",
+    "file": "games/down-payment.html",
+    "mechanic": "Hold-to-drill digger",
+    "tagline": "Dig deep. Sell shinies. The lava pockets woke up — and they swim.",
+    "title": "DOWN PAYMENT"
   }
 ]
