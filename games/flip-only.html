@@ -1,0 +1,728 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<title>FLIP ONLY — Day 23</title>
+<style>
+  * { margin:0; padding:0; box-sizing:border-box; -webkit-tap-highlight-color:transparent; }
+  html,body { height:100%; background:#070714; overflow:hidden; font-family:'Courier New',monospace; }
+  #wrap { position:fixed; inset:0; display:flex; align-items:center; justify-content:center; background:radial-gradient(ellipse at 50% 30%, #141428 0%, #070714 70%); }
+  canvas { image-rendering:auto; touch-action:none; border:2px solid #ff2d95; border-radius:8px; box-shadow:0 0 24px #ff2d9566, 0 0 64px #00e5ff33; }
+</style>
+</head>
+<body>
+<div id="wrap"><canvas id="c"></canvas></div>
+<script>
+"use strict";
+/* ============================================================
+   FLIP ONLY — Day 23
+   This phone can't walk. It can only flip.
+   Tap where you want to go -> the brick phone flips there.
+   Trend: "Flipping Is Hard" (Steam, Oct 16 2026) — physics rage
+   game starring Flippy, an indestructible brick phone.
+   ============================================================ */
+
+const W = 420, H = 700;
+const GRAV = 1700;
+const PX_PER_M = 50;
+
+let canvas = null, ctx = null;
+if (typeof document !== 'undefined' && document.getElementById) {
+  const el = document.getElementById('c');
+  if (el){
+    canvas = el;
+    ctx = canvas.getContext('2d');
+    fitCanvas();
+    if (typeof window !== 'undefined' && window.addEventListener)
+      window.addEventListener('resize', fitCanvas);
+  }
+}
+function fitCanvas(){
+  const s = Math.min(window.innerWidth / W, window.innerHeight / H);
+  canvas.width = Math.floor(W * s); canvas.height = Math.floor(H * s);
+}
+
+/* ---------------- audio (WebAudio, self-generated) ---------------- */
+let AC = null;
+function beep(freq, dur, type, vol, slideTo){
+  try{
+    if (typeof AudioContext === 'undefined' && typeof webkitAudioContext === 'undefined') return;
+    if (!AC) AC = new (AudioContext || webkitAudioContext)();
+    const o = AC.createOscillator(), g = AC.createGain();
+    o.type = type || 'square'; o.frequency.setValueAtTime(freq, AC.currentTime);
+    if (slideTo) o.frequency.exponentialRampToValueAtTime(Math.max(20,slideTo), AC.currentTime + dur);
+    g.gain.setValueAtTime(vol || 0.08, AC.currentTime);
+    g.gain.exponentialRampToValueAtTime(0.0001, AC.currentTime + dur);
+    o.connect(g); g.connect(AC.destination);
+    o.start(); o.stop(AC.currentTime + dur);
+  }catch(e){}
+}
+const SFX = {
+  flip(){ beep(300,0.12,'square',0.07,700); },
+  nudge(){ beep(500,0.05,'square',0.04,650); },
+  land(){ beep(120,0.10,'sine',0.10,60); },
+  boing(){ beep(150,0.25,'sine',0.12,600); },
+  charm(n){ beep(660+n*60,0.15,'sine',0.10,1320+n*60); },
+  jackpot(){ [523,659,784,1046].forEach((f,i)=>setTimeout(()=>beep(f,0.18,'triangle',0.10),i*70)); },
+  squawk(){ beep(900,0.15,'sawtooth',0.08,300); beep(1200,0.10,'sawtooth',0.06,400); },
+  gotcha(){ beep(200,0.3,'sawtooth',0.10,80); },
+  vibrate(){ beep(90,0.20,'square',0.12,90); },
+  over(){ [400,350,300,200,150].forEach((f,i)=>setTimeout(()=>beep(f,0.25,'sawtooth',0.09),i*120)); },
+  clean(){ beep(150,0.4,'sawtooth',0.12,900); },
+};
+
+/* ---------------- storage ---------------- */
+function storeGet(k, d){
+  try{ const v = (typeof localStorage!=='undefined') ? localStorage.getItem(k) : null;
+    return v===null||v===undefined ? d : v; }catch(e){ return d; }
+}
+function storeSet(k, v){ try{ if(typeof localStorage!=='undefined') localStorage.setItem(k,String(v)); }catch(e){} }
+
+const HOOK_LINE = "THIS PHONE CAN'T WALK. ONLY FLIP."; // 6 words
+const POPUPS_OK = true;
+
+const OVER_LINES = [
+  "Flippy survived the fall. You didn't survive the score.",
+  "The phone is fine. Your ego is cracked.",
+  "Indestructible phone. Destructible pride.",
+  "It fell and judged you the whole way down.",
+  "Gravity: 1. Brick phone: still 1.",
+  "The fall didn't hurt Flippy. It hurt.",
+  "Flippy landed fine. Your plan didn't.",
+  "LOW BATTERY. HIGH EMBARRASSMENT."
+];
+const RANKS = [
+  [0,   "LANDFILL LIZARD"],
+  [40,  "PIZZA BOXER"],
+  [90,  "TRASH PRINCE"],
+  [160, "BRICK LEGEND"],
+  [260, "UNBREAKABLE"]
+];
+function rankFor(s){ let r = RANKS[0][1]; for (const [t,n] of RANKS) if (s>=t) r=n; return r; }
+function wordCount(s){ return s.trim().split(/\s+/).length; }
+
+/* ---------------- game state ---------------- */
+const G = {
+  mode:'menu', t:0, paused:false,
+  score:0, maxHeightM:0, charms:0, streak:0, streakT:0, bestStreak:0,
+  camY:0, minCamY:0, startY:0,
+  hi: parseInt(storeGet('fliponly_hi','0'),10)||0,
+  rings: JSON.parse(storeGet('fliponly_rings','[]')||'[]'),
+  vibrateOn:false, gameOverLine:'', newBest:false, lastTapT:0, lastTapX:0, lastTapY:0,
+  popups:[], particles:[], platforms:[], pigeons:[], charmsList:[], papers:[],
+  pigeonT:1.5, cleanOn:false, cleanY:0, cleanSpeed:0, shake:0, flashT:0,
+  flippy:null,
+};
+function newFlippy(x,y){
+  return { x, y, w:34, h:56, vx:0, vy:0, ang:0, angV:0,
+    airborne:false, restingPlat:null, squash:0, face:'ok',
+    vibrateUsed:false, dizzy:0 };
+}
+function resetWorld(){
+  G.score=0; G.maxHeightM=0; G.charms=0; G.streak=0; G.streakT=0; G.bestStreak=0;
+  G.t=0; G.paused=false; G.newBest=false;
+  G.platforms=[]; G.pigeons=[]; G.charmsList=[]; G.popups=[]; G.particles=[];
+  G.papers=[]; G.cleanOn=false; G.cleanSpeed=0; G.shake=0; G.flashT=0;
+  G.vibrateOn=false; G.pigeonT=1.5;
+  G.startY = -30;
+  G.flippy = newFlippy(W/2, G.startY - 28);
+  // start platform (big, friendly)
+  G.platforms.push({x:W/2-90, y:G.startY, w:180, h:18, kind:'solid', state:'idle', t:0});
+  for (let i=0;i<26;i++) spawnPaper(true);
+  genPlatforms(G.startY - 110, G.startY - 4200);
+  G.camY = G.startY - H + 170; G.minCamY = G.camY;
+}
+function genPlatforms(yTop, yBottom){
+  let y = yTop;
+  let px = W/2;
+  while (y > yBottom){
+    const heightM = (G.startY - y)/PX_PER_M;
+    const gap = 95 + Math.min(120, heightM*0.5) + Math.random()*40;
+    px += (Math.random()-0.5)*220; px = Math.max(50, Math.min(W-50, px));
+    const w = 70 + Math.random()*70 - Math.min(40, heightM*0.08);
+    const r = Math.random();
+    const kind = r<0.12 ? 'crumble' : (r<0.24 ? 'boing' : 'solid');
+    const p = {x:px-w/2, y, w:Math.max(46,w), h:16, kind, state:'idle', t:0};
+    G.platforms.push(p);
+    if (Math.random()<0.30){
+      const golden = Math.random()<0.10;
+      G.charmsList.push({x:px, y:y-34, r:golden?16:12, taken:false, golden, bob:Math.random()*6});
+    }
+    y -= gap;
+  }
+}
+function spawnPaper(anywhere){
+  G.papers.push({x:Math.random()*W, y: anywhere?Math.random()*H:(G.camY-30),
+    s:4+Math.random()*8, r:Math.random()*6, vr:(Math.random()-0.5)*2,
+    vy:20+Math.random()*40, sway:Math.random()*6});
+}
+
+/* ---------------- input ---------------- */
+function onTap(sx, sy){
+  if (!canvas) { sx = sx; sy = sy; }
+  let x, y;
+  if (canvas){
+    const rect = canvas.getBoundingClientRect();
+    x = (sx-rect.left)/rect.width*W; y = (sy-rect.top)/rect.height*H;
+  } else { x = sx; y = sy; }
+  if (G.mode==='menu'){ startGame(); return; }
+  if (G.mode==='over'){
+    if (G.t > 0.6){ startGame(); }
+    return;
+  }
+  if (G.paused) return;
+  const now = G.t;
+  const f = G.flippy;
+  // double-tap = vibration dash (after unlock)
+  if (G.vibrateOn && f.airborne && !f.vibrateUsed && (now - G.lastTapT) < 0.35){
+    f.vibrateUsed = true; f.vy = -620; f.vx *= 0.3; f.dizzy = 0.8;
+    popup(f.x, f.y-50, "VIBRATE!"); SFX.vibrate();
+    burst(f.x, f.y, '#00e5ff', 12);
+    G.lastTapT = now; return;
+  }
+  G.lastTapT = now; G.lastTapX = x; G.lastTapY = y;
+  const wy = y + G.camY; // world coords
+  if (!f.airborne){
+    // FLIP toward tap
+    let dx = x - f.x, dy = wy - f.y;
+    const d = Math.hypot(dx,dy)||1; dx/=d; dy/=d;
+    if (dy > -0.35) { // must go up — clamp to upward hemisphere
+      const a = Math.atan2(dy,dx);
+      const na = a > Math.PI/2 ? Math.PI*0.72 : (a < -Math.PI/2 ? -Math.PI*0.72 : a);
+      dx = Math.cos(na); dy = Math.sin(na);
+    }
+    const sp = 700;
+    f.vx = dx*sp; f.vy = dy*sp;
+    f.airborne = true; f.restingPlat = null;
+    f.angV = dx >= 0 ? 9.5 : -9.5;
+    f.squash = 0; f.face='ok';
+    SFX.flip();
+    burst(f.x, f.y+20, '#888899', 6);
+  } else {
+    // mid-air nudge
+    let dx = x - f.x, dy = (wy - f.y);
+    const d = Math.hypot(dx,dy)||1;
+    f.vx += dx/d*230; f.vy += dy/d*140;
+    if (f.vx > 520) f.vx = 520; if (f.vx < -520) f.vx = -520;
+    SFX.nudge();
+  }
+}
+function popup(x,y,text){ G.popups.push({x,y,text,t:0}); }
+function burst(x,y,color,n){
+  for(let i=0;i<n;i++){
+    G.particles.push({x,y,vx:(Math.random()-0.5)*260,vy:(Math.random()-0.5)*260-80,
+      t:0,life:0.4+Math.random()*0.4,color,s:2+Math.random()*3});
+  }
+}
+function startGame(){
+  resetWorld();
+  G.mode='play';
+  SFX.flip();
+}
+
+/* ---------------- update ---------------- */
+function landOn(f, p){
+  f.airborne=false; f.vx=0; f.vy=0;
+  f.restingPlat=p;
+  f.y = p.y - f.h/2 + 2;
+  f.squash=1; f.vibrateUsed=false; f.dizzy=0;
+  f.face='ok';
+  SFX.land();
+  burst(f.x, p.y, '#997755', 8);
+  if (p.kind==='crumble' && p.state==='idle'){ p.state='cracking'; p.t=0; }
+  if (p.kind==='boing'){ // extra launch — but stays here
+    popup(f.x, f.y-60, "BOING!"); SFX.boing();
+    f.vy = -880; f.airborne=true; f.restingPlat=null; f.angV = 12;
+  }
+}
+function killStreak(){ G.streak=0; }
+
+function tick(dt){
+  G.t += dt;
+  if (G.mode!=='play' || G.paused) return;
+  const f = G.flippy;
+
+  // camera: follow up only
+  const target = f.y - H*0.62;
+  if (target < G.minCamY) G.minCamY = target;
+  G.camY = G.minCamY;
+
+  // height / score
+  const hM = Math.max(0, (G.startY - f.y)/PX_PER_M);
+  if (hM > G.maxHeightM) G.maxHeightM = hM;
+  G.score = Math.floor(G.maxHeightM + G.charms*10);
+  if (G.streakT > 0){ G.streakT -= dt; if (G.streakT<=0) killStreak(); }
+
+  // unlock vibrate
+  if (!G.vibrateOn && G.maxHeightM > 45){
+    G.vibrateOn = true;
+    popup(f.x, f.y-70, "VIBRATE ON!");
+    SFX.jackpot();
+  }
+
+  // --- flippy physics ---
+  if (f.airborne){
+    const prevBottom = f.y + f.h/2;
+    f.vy += GRAV*dt;
+    if (f.vy > 1100) f.vy = 1100;
+    f.x += f.vx*dt; f.y += f.vy*dt;
+    f.ang += f.angV*dt;
+    if (f.x < f.w/2){ f.x=f.w/2; f.vx=Math.abs(f.vx)*0.6; }
+    if (f.x > W-f.w/2){ f.x=W-f.w/2; f.vx=-Math.abs(f.vx)*0.6; }
+    // land on platforms (falling only)
+    for (const p of G.platforms){
+      if (p.state==='gone') continue;
+      const newBottom = f.y + f.h/2;
+      if (f.vy > 0 && prevBottom <= p.y+4 && newBottom >= p.y &&
+          f.x+f.w/2 > p.x+4 && f.x-f.w/2 < p.x+p.w-4){
+        landOn(f, p);
+        break;
+      }
+    }
+  } else {
+    // resting: wiggle trying to move (the joke: it can only flip)
+    f.ang = Math.sin(G.t*7)*0.10;
+    f.squash = Math.max(0, f.squash - dt*4);
+    const p = f.restingPlat;
+    if (p && (p.state==='gone')){
+      f.airborne=true; f.restingPlat=null; f.vy=50; f.angV=6;
+      popup(f.x, f.y-50, "OOPS.");
+    } else if (p){
+      f.x += (p.x+p.w/2 - f.x)*Math.min(1,dt*8);
+      f.y = p.y - f.h/2 + 2;
+    }
+  }
+  if (f.dizzy>0) f.dizzy-=dt;
+  if (f.airborne && f.vy>500) f.face='panic'; else if (f.dizzy>0) f.face='dizzy'; else f.face='ok';
+
+  // --- platforms ---
+  for (const p of G.platforms){
+    if (p.kind==='crumble' && p.state==='cracking'){
+      p.t += dt;
+      if (p.t > 0.7){ p.state='gone'; burst(p.x+p.w/2, p.y, '#aa8855', 10); }
+    }
+  }
+  // cull far-below platforms
+  G.platforms = G.platforms.filter(p => p.y < G.camY + H + 400);
+
+  // --- charms ---
+  for (const c of G.charmsList){
+    if (c.taken) continue;
+    c.bob += dt*4;
+    const dx=f.x-c.x, dy=f.y-(c.y+Math.sin(c.bob)*4);
+    if (dx*dx+dy*dy < (c.r+f.w/2)*(c.r+f.w/2)){
+      c.taken=true; G.charms++;
+      G.streak++; G.streakT=4; if (G.streak>G.bestStreak) G.bestStreak=G.streak;
+      SFX.charm(Math.min(G.streak,8));
+      burst(c.x, c.y, c.golden?'#ffd700':'#ffe97a', c.golden?18:10);
+      if (c.golden){ popup(c.x, c.y-20, "JACKPOT!"); SFX.jackpot(); }
+      else if (G.streak>=3){ popup(c.x, c.y-20, "STREAK x"+G.streak); }
+    }
+  }
+  G.charmsList = G.charmsList.filter(c => !c.taken && c.y < G.camY + H + 200);
+
+  // --- pigeons (angry red hazard, the ONLY angry faces) ---
+  if (G.maxHeightM > 70){
+    G.pigeonT -= dt;
+    if (G.pigeonT <= 0){
+      const side = Math.random()<0.5 ? -1 : 1;
+      const sp = 170 + G.maxHeightM*0.5 + Math.random()*60;
+      G.pigeons.push({x: side<0?-50:W+50, y:G.camY+80+Math.random()*(H-200),
+        vx:-side*sp, flap:Math.random()*6, near:false});
+      G.pigeonT = Math.max(0.9, 3.0 - G.maxHeightM/120) * (0.7+Math.random()*0.6);
+    }
+  }
+  for (const pg of G.pigeons){
+    pg.x += pg.vx*dt; pg.flap += dt*14;
+    const dx=f.x-pg.x, dy=f.y-pg.y;
+    const rr=42;
+    if (dx*dx+dy*dy < rr*rr){
+      // GOTCHA — knocked, not killed (indestructible!)
+      f.vx = (dx>=0?1:-1)*420; f.vy = -320; f.airborne=true; f.restingPlat=null;
+      f.angV = 14; f.dizzy=1.2;
+      popup(f.x, f.y-50, "GOTCHA!"); SFX.gotcha(); SFX.squawk();
+      G.shake=0.35; killStreak();
+      burst(f.x, f.y, '#ff4444', 12);
+      pg.near=true; pg.x = pg.vx>0 ? W+80 : -80; // shoo it away
+    } else if (!pg.near && Math.abs(dx)<70 && Math.abs(dy)<46){
+      pg.near=true; popup(f.x, f.y-60, "SO CLOSE!"); SFX.nudge();
+    }
+  }
+  G.pigeons = G.pigeons.filter(pg => pg.x>-100 && pg.x<W+100);
+
+  // --- the cleaner (twist: descends, forces pace) ---
+  if (!G.cleanOn && G.maxHeightM > 110){
+    G.cleanOn=true; G.cleanY=G.camY-70; G.cleanSpeed=46;
+    popup(W/2, G.camY+H/2, "CLEANER IS");
+    popup(W/2, G.camY+H/2+34, "COMING!");
+    SFX.clean();
+  }
+  if (G.cleanOn){
+    G.cleanSpeed += 7*dt;
+    G.cleanY += G.cleanSpeed*dt;
+    if (f.y - f.h/2 < G.cleanY+34 && f.y > G.cleanY-200){
+      f.vy = 700; f.vx = (Math.random()<0.5?-1:1)*300;
+      f.airborne=true; f.restingPlat=null; f.angV=16; f.dizzy=1.5;
+      popup(f.x, f.y-50, "CLEANED!"); SFX.gotcha(); G.shake=0.5;
+      killStreak();
+    }
+  }
+
+  // --- particles / popups / bg ---
+  for (const pt of G.particles){ pt.t+=dt; pt.x+=pt.vx*dt; pt.y+=pt.vy*dt; pt.vy+=900*dt; }
+  G.particles = G.particles.filter(pt=>pt.t<pt.life);
+  for (const pp of G.popups) pp.t+=dt;
+  G.popups = G.popups.filter(pp=>pp.t<1.1);
+  for (const pa of G.papers){
+    pa.y += pa.vy*dt*0.4; pa.x += Math.sin(G.t+pa.sway)*20*dt; pa.r += pa.vr*dt;
+    if (pa.y > G.camY+H+40){ pa.y = G.camY-30; pa.x=Math.random()*W; }
+  }
+  if (Math.random()<dt*3) spawnPaper(false);
+
+  if (G.shake>0) G.shake-=dt;
+  if (G.flashT>0) G.flashT-=dt;
+
+  // --- fail: fell out of view (indestructible, just embarrassing) ---
+  if (f.y - G.camY > H + 120 || G.t > 150){
+    gameOver();
+  }
+}
+
+function gameOver(){
+  G.mode='over'; G.t=0;
+  SFX.over();
+  G.gameOverLine = OVER_LINES[Math.floor(Math.random()*OVER_LINES.length)];
+  if (G.score > G.hi){ G.hi=G.score; G.newBest=true; storeSet('fliponly_hi', G.hi); }
+  // ringtone unlocks (cosmetic, localStorage)
+  const unlock = [];
+  if (G.score>=100 && !G.rings.includes('Polyphonic')) unlock.push('Polyphonic');
+  if (G.score>=200 && !G.rings.includes('Frog Symphony')) unlock.push('Frog Symphony');
+  if (G.score>=300 && !G.rings.includes('Dial-up Dreams')) unlock.push('Dial-up Dreams');
+  for (const u of unlock) G.rings.push(u);
+  if (unlock.length){ storeSet('fliponly_rings', JSON.stringify(G.rings)); }
+  G.unlockedNow = unlock;
+  burst(G.flippy.x, G.flippy.y, '#ff2d95', 20);
+}
+
+/* ============================================================
+   RENDER
+   ============================================================ */
+function draw(){
+  if (!ctx) return;
+  const s = canvas.width / W;
+  ctx.save(); ctx.scale(s,s);
+  let shx=0, shy=0;
+  if (G.shake>0){ shx=(Math.random()-0.5)*10*G.shake*3; shy=(Math.random()-0.5)*10*G.shake*3; }
+  ctx.translate(shx,shy);
+
+  // bg
+  const bg = ctx.createLinearGradient(0,0,0,H);
+  bg.addColorStop(0,'#0b0b22'); bg.addColorStop(1,'#141428');
+  ctx.fillStyle=bg; ctx.fillRect(-20,-20,W+40,H+40);
+  // distant skyline (parallax)
+  ctx.fillStyle='#1b1b3a';
+  const skyOff = (G.camY*0.05)%120;
+  for (let x=-120; x<W+120; x+=60){
+    const bx = ((x - skyOff)%(W+120)+(W+120))%(W+120)-60;
+    ctx.fillRect(bx, H-160-(x%90), 44, 200);
+  }
+  // flying papers (bg objects)
+  for (const pa of G.papers){
+    const sy = pa.y - G.camY; if (sy<-40||sy>H+40) continue;
+    ctx.save(); ctx.translate(pa.x, sy); ctx.rotate(pa.r);
+    ctx.fillStyle='rgba(200,200,220,0.35)';
+    ctx.fillRect(-pa.s/2,-pa.s/3,pa.s,pa.s*0.66);
+    ctx.restore();
+  }
+
+  // cleaner bar
+  if (G.cleanOn){
+    const cy = G.cleanY - G.camY;
+    ctx.save();
+    ctx.fillStyle='#3a0a3a'; ctx.fillRect(-20, cy-40, W+40, 46);
+    ctx.fillStyle='#ff2d95';
+    for (let x=0;x<W;x+=16){
+      const wob = Math.sin(G.t*20 + x)*5;
+      ctx.fillRect(x, cy+2, 10, 14+wob);
+    }
+    ctx.fillStyle='#fff'; ctx.font='bold 13px monospace'; ctx.textAlign='center';
+    ctx.fillText('STREET CLEANER', W/2, cy-14);
+    ctx.restore();
+  }
+
+  ctx.save(); ctx.translate(0, -G.camY);
+
+  // platforms
+  for (const p of G.platforms){
+    if (p.y < G.camY-60 || p.y > G.camY+H+200) continue;
+    ctx.save();
+    if (p.kind==='solid'){
+      ctx.fillStyle='#2c2c52'; ctx.fillRect(p.x,p.y,p.w,p.h);
+      ctx.fillStyle='#00e5ff'; ctx.fillRect(p.x,p.y,p.w,3);
+      ctx.fillStyle='#1a1a34';
+      for(let i=0;i<3;i++) ctx.fillRect(p.x+8+i*22, p.y+7, 12, 3);
+    } else if (p.kind==='boing'){
+      ctx.fillStyle='#123a5e'; ctx.fillRect(p.x,p.y,p.w,p.h);
+      ctx.strokeStyle='#00e5ff'; ctx.lineWidth=3;
+      for(let i=0;i<p.w/18;i++){ ctx.beginPath(); ctx.moveTo(p.x+9+i*18,p.y+p.h); ctx.lineTo(p.x+9+i*18,p.y+p.h+10+Math.sin(G.t*10+i)*3); ctx.stroke(); }
+      ctx.fillStyle='#00e5ff'; ctx.font='bold 10px monospace'; ctx.textAlign='center';
+      ctx.fillText('SPRING', p.x+p.w/2, p.y+12);
+    } else { // crumble cardboard
+      const crack = p.state==='cracking' ? Math.sin(G.t*40)*2 : 0;
+      ctx.fillStyle= p.state==='cracking' ? '#8a6a3a' : '#a8843f';
+      ctx.fillRect(p.x+crack,p.y,p.w,p.h);
+      ctx.strokeStyle='#5e4420'; ctx.lineWidth=2;
+      ctx.strokeRect(p.x+crack,p.y,p.w,p.h);
+      ctx.beginPath(); ctx.moveTo(p.x+p.w*0.3,p.y); ctx.lineTo(p.x+p.w*0.45,p.y+p.h);
+      ctx.moveTo(p.x+p.w*0.6,p.y); ctx.lineTo(p.x+p.w*0.5,p.y+p.h); ctx.stroke();
+      if (p.state==='cracking'){
+        ctx.fillStyle='#fff'; ctx.font='bold 9px monospace'; ctx.textAlign='center';
+        ctx.fillText('CRACK!', p.x+p.w/2, p.y-6);
+      }
+    }
+    ctx.restore();
+  }
+
+  // charms — the ONLY glowing things
+  for (const c of G.charmsList){
+    const cy = c.y + Math.sin(c.bob)*4;
+    if (cy < G.camY-40 || cy > G.camY+H+100) continue;
+    const pulse = 1 + Math.sin(G.t*6+c.bob)*0.12;
+    ctx.save(); ctx.translate(c.x, cy); ctx.scale(pulse,pulse);
+    const g = ctx.createRadialGradient(0,0,2,0,0,c.r+10);
+    g.addColorStop(0, c.golden?'#fff7c0':'#fff2a8');
+    g.addColorStop(0.5, c.golden?'#ffd700':'#ffe97a');
+    g.addColorStop(1, 'rgba(255,215,0,0)');
+    ctx.fillStyle=g; ctx.beginPath(); ctx.arc(0,0,c.r+10,0,7); ctx.fill();
+    ctx.fillStyle= c.golden ? '#ff9d00' : '#ffcf3d';
+    ctx.beginPath(); ctx.arc(0,0,c.r,0,7); ctx.fill();
+    ctx.fillStyle='#7a4d00'; ctx.font='bold '+(c.r)+'px monospace'; ctx.textAlign='center'; ctx.textBaseline='middle';
+    ctx.fillText(c.golden?'$':'*', 0, 1);
+    ctx.restore();
+  }
+
+  // pigeons — angry red, the ONLY angry faces
+  for (const pg of G.pigeons){
+    const sy = pg.y; if (sy < G.camY-60 || sy > G.camY+H+60) continue;
+    ctx.save(); ctx.translate(pg.x, sy); ctx.scale(pg.vx<0?-1:1, 1);
+    const flap = Math.sin(pg.flap)*10;
+    ctx.fillStyle='#6a4a6a';
+    ctx.beginPath(); ctx.ellipse(-14,-8-flap*0.5,14,7,-0.4,0,7); ctx.fill(); // wing
+    ctx.fillStyle='#8a5a8a';
+    ctx.beginPath(); ctx.ellipse(0,0,22,13,0,0,7); ctx.fill(); // body
+    ctx.beginPath(); ctx.arc(20,-8,10,0,7); ctx.fill(); // head
+    ctx.fillStyle='#3a2a3a'; ctx.beginPath(); ctx.moveTo(29,-8); ctx.lineTo(38,-5); ctx.lineTo(29,-2); ctx.fill(); // beak
+    // ANGRY eyes (red)
+    ctx.fillStyle='#ff2222';
+    ctx.fillRect(14,-14,8,6); ctx.fillRect(24,-14,8,6);
+    ctx.fillStyle='#fff'; ctx.fillRect(16,-13,3,3); ctx.fillRect(26,-13,3,3);
+    ctx.strokeStyle='#ff2222'; ctx.lineWidth=3;
+    ctx.beginPath(); ctx.moveTo(12,-17); ctx.lineTo(34,-19); ctx.stroke(); // angry brow
+    ctx.restore();
+  }
+
+  // Flippy the brick phone
+  const f = G.flippy;
+  ctx.save(); ctx.translate(f.x, f.y); ctx.rotate(f.ang);
+  const sq = f.squash*0.25;
+  ctx.scale(1+sq, 1-sq);
+  const wob = f.airborne ? 0 : Math.sin(G.t*7)*1.5;
+  // antenna
+  ctx.strokeStyle='#33335a'; ctx.lineWidth=5;
+  ctx.beginPath(); ctx.moveTo(10+wob,-f.h/2); ctx.lineTo(14+wob*2,-f.h/2-14); ctx.stroke();
+  ctx.fillStyle='#ff2d95'; ctx.beginPath(); ctx.arc(14+wob*2,-f.h/2-14,4,0,7); ctx.fill();
+  // body
+  const bodyG = ctx.createLinearGradient(-f.w/2,0,f.w/2,0);
+  bodyG.addColorStop(0,'#2a2a4a'); bodyG.addColorStop(0.5,'#3d3d66'); bodyG.addColorStop(1,'#23233d');
+  ctx.fillStyle=bodyG;
+  roundRect(-f.w/2,-f.h/2,f.w,f.h,7); ctx.fill();
+  ctx.strokeStyle='#00e5ff'; ctx.lineWidth=2; roundRect(-f.w/2,-f.h/2,f.w,f.h,7); ctx.stroke();
+  // screen
+  ctx.fillStyle='#0a2a3a'; ctx.fillRect(-f.w/2+6,-f.h/2+8,f.w-12,20);
+  ctx.fillStyle='rgba(0,229,255,0.15)'; ctx.fillRect(-f.w/2+6,-f.h/2+8,f.w-12,20);
+  // eyes on screen
+  ctx.fillStyle='#fff';
+  if (f.face==='panic'){ // wide
+    ctx.beginPath(); ctx.arc(-6,-f.h/2+18,4,0,7); ctx.arc(6,-f.h/2+18,4,0,7); ctx.fill();
+    ctx.fillStyle='#000'; ctx.beginPath(); ctx.arc(-6,-f.h/2+18,1.8,0,7); ctx.arc(6,-f.h/2+18,1.8,0,7); ctx.fill();
+  } else if (f.face==='dizzy'){ // spiral-ish X
+    ctx.font='bold 10px monospace'; ctx.textAlign='center';
+    ctx.fillText('X X', 0, -f.h/2+21);
+  } else { // determined >
+    ctx.beginPath(); ctx.arc(-6,-f.h/2+18,3,0,7); ctx.arc(6,-f.h/2+18,3,0,7); ctx.fill();
+    ctx.fillStyle='#0a2a3a'; ctx.beginPath(); ctx.arc(-5,-f.h/2+18,1.4,0,7); ctx.arc(7,-f.h/2+18,1.4,0,7); ctx.fill();
+  }
+  // keypad
+  ctx.fillStyle='#55557a';
+  for(let r=0;r<3;r++) for(let cI=0;cI<3;cI++)
+    { ctx.beginPath(); ctx.arc(-8+cI*8, -f.h/2+40+r*7, 2.6, 0, 7); ctx.fill(); }
+  ctx.restore();
+
+  // particles
+  for (const pt of G.particles){
+    ctx.globalAlpha = 1 - pt.t/pt.life;
+    ctx.fillStyle = pt.color;
+    ctx.fillRect(pt.x-pt.s/2, pt.y-pt.s/2, pt.s, pt.s);
+  }
+  ctx.globalAlpha = 1;
+
+  // popups (<=3 words)
+  ctx.textAlign='center';
+  for (const pp of G.popups){
+    const a = pp.t<0.15 ? pp.t/0.15 : (pp.t>0.8 ? Math.max(0,1-(pp.t-0.8)/0.3) : 1);
+    ctx.globalAlpha = a;
+    ctx.font='bold 22px monospace';
+    ctx.fillStyle='#000'; ctx.fillText(pp.text, pp.x+2, pp.y-pp.t*40+2);
+    ctx.fillStyle='#ffe97a'; ctx.fillText(pp.text, pp.x, pp.y-pp.t*40);
+  }
+  ctx.globalAlpha=1;
+  ctx.restore(); // camera
+
+  /* ---------- HUD / screens ---------- */
+  ctx.textAlign='left';
+  ctx.font='bold 20px monospace';
+  ctx.fillStyle='#000'; ctx.fillText('SCORE '+G.score, 12, 32);
+  ctx.fillStyle='#00e5ff'; ctx.fillText('SCORE '+G.score, 10, 30);
+  ctx.textAlign='right';
+  ctx.fillStyle='#000'; ctx.fillText('HI '+G.hi, W-12, 32);
+  ctx.fillStyle='#ff2d95'; ctx.fillText('HI '+G.hi, W-10, 30);
+  if (G.streak>=2){
+    ctx.textAlign='left'; ctx.font='bold 16px monospace';
+    ctx.fillStyle='#000'; ctx.fillText('STREAK x'+G.streak, 12, 56);
+    ctx.fillStyle='#ffe97a'; ctx.fillText('STREAK x'+G.streak, 10, 54);
+  }
+  if (G.mode==='menu'){
+    ctx.fillStyle='rgba(5,5,15,0.78)'; ctx.fillRect(0,0,W,H);
+    ctx.textAlign='center';
+    ctx.font='bold 44px monospace';
+    ctx.fillStyle='#000'; ctx.fillText('FLIP ONLY', W/2+3, H/2-108);
+    ctx.fillStyle='#ff2d95'; ctx.fillText('FLIP ONLY', W/2, H/2-110);
+    ctx.font='bold 17px monospace';
+    ctx.fillStyle='#000'; ctx.fillText(HOOK_LINE, W/2+2, H/2-62);
+    ctx.fillStyle='#00e5ff'; ctx.fillText(HOOK_LINE, W/2, H/2-64);
+    drawMiniPhone(W/2, H/2+10);
+    if (Math.floor(G.t*2)%2===0){
+      ctx.font='bold 22px monospace';
+      ctx.fillStyle='#000'; ctx.fillText('TAP TO FLIP', W/2+2, H/2+92);
+      ctx.fillStyle='#ffe97a'; ctx.fillText('TAP TO FLIP', W/2, H/2+90);
+    }
+    ctx.font='15px monospace'; ctx.fillStyle='#8888aa';
+    ctx.fillText('HI '+G.hi+'  |  double-tap = vibrate (later)', W/2, H/2+130);
+    if (G.rings.length){
+      ctx.fillStyle='#ffd700';
+      ctx.fillText('RINGTONES: '+G.rings.join(' / '), W/2, H/2+156);
+    }
+  }
+  if (G.mode==='over'){
+    ctx.fillStyle='rgba(5,5,15,0.82)'; ctx.fillRect(0,0,W,H);
+    ctx.textAlign='center';
+    ctx.font='bold 36px monospace';
+    ctx.fillStyle='#000'; ctx.fillText('RUN OVER', W/2+3, H/2-118);
+    ctx.fillStyle='#ff2d95'; ctx.fillText('RUN OVER', W/2, H/2-120);
+    ctx.font='15px monospace'; ctx.fillStyle='#ccccdd';
+    wrapText(G.gameOverLine, W/2, H/2-80, W-80, 20);
+    ctx.font='bold 22px monospace';
+    ctx.fillStyle='#000'; ctx.fillText('SCORE '+G.score, W/2+2, H/2-8);
+    ctx.fillStyle='#00e5ff'; ctx.fillText('SCORE '+G.score, W/2, H/2-10);
+    ctx.font='17px monospace'; ctx.fillStyle='#ffe97a';
+    ctx.fillText(rankFor(G.score), W/2, H/2+22);
+    if (G.newBest){ ctx.fillStyle='#ffd700'; ctx.fillText('NEW BEST!', W/2, H/2+48); }
+    if (G.unlockedNow && G.unlockedNow.length){
+      ctx.fillStyle='#00e5ff'; ctx.font='14px monospace';
+      ctx.fillText('UNLOCKED RINGTONE: '+G.unlockedNow.join(', '), W/2, H/2+72);
+    }
+    if (Math.floor(G.t*2)%2===0){
+      ctx.font='bold 20px monospace';
+      ctx.fillStyle='#000'; ctx.fillText('TAP TO FLIP AGAIN', W/2+2, H/2+122);
+      ctx.fillStyle='#fff'; ctx.fillText('TAP TO FLIP AGAIN', W/2, H/2+120);
+    }
+    ctx.font='13px monospace'; ctx.fillStyle='#8888aa';
+    ctx.fillText('tap 📋 then paste anywhere to brag', W/2, H-70);
+    // copy button
+    ctx.fillStyle='#22223a'; ctx.fillRect(W/2-90, H-58, 180, 34);
+    ctx.strokeStyle='#00e5ff'; ctx.strokeRect(W/2-90, H-58, 180, 34);
+    ctx.fillStyle='#00e5ff'; ctx.font='bold 15px monospace';
+    ctx.fillText('📋 COPY BRAG', W/2, H-36);
+  }
+  if (G.paused){
+    ctx.fillStyle='rgba(5,5,15,0.7)'; ctx.fillRect(0,0,W,H);
+    ctx.textAlign='center'; ctx.font='bold 30px monospace'; ctx.fillStyle='#fff';
+    ctx.fillText('PAUSED', W/2, H/2);
+  }
+  ctx.restore();
+}
+function roundRect(x,y,w,h,r){
+  ctx.beginPath();
+  ctx.moveTo(x+r,y); ctx.arcTo(x+w,y,x+w,y+h,r); ctx.arcTo(x+w,y+h,x,y+h,r);
+  ctx.arcTo(x,y+h,x,y,r); ctx.arcTo(x,y,x+w,y,r); ctx.closePath();
+}
+function wrapText(text,x,y,maxW,lh){
+  const words=text.split(' '); let line='', yy=y;
+  for(const wd of words){
+    const t=line+wd+' ';
+    if(ctx.measureText(t).width>maxW && line){ ctx.fillText(line,x,yy); line=wd+' '; yy+=lh; }
+    else line=t;
+  }
+  ctx.fillText(line,x,yy);
+}
+function drawMiniPhone(x,y){
+  ctx.save(); ctx.translate(x,y); ctx.rotate(Math.sin(G.t*3)*0.3);
+  ctx.fillStyle='#3d3d66'; roundRect(-17,-28,34,56,6); ctx.fill();
+  ctx.strokeStyle='#00e5ff'; ctx.lineWidth=2; roundRect(-17,-28,34,56,6); ctx.stroke();
+  ctx.fillStyle='#0a2a3a'; ctx.fillRect(-11,-20,22,16);
+  ctx.fillStyle='#fff'; ctx.beginPath(); ctx.arc(-5,-12,2.6,0,7); ctx.arc(5,-12,2.6,0,7); ctx.fill();
+  ctx.restore();
+}
+
+/* ---------------- main loop ---------------- */
+let lastTs = 0;
+function loop(ts){
+  if (typeof requestAnimationFrame === 'undefined') return;
+  const dt = Math.min(0.05, (ts-lastTs)/1000 || 0.016);
+  lastTs = ts;
+  if (!G.paused) tick(dt);
+  draw();
+  requestAnimationFrame(loop);
+}
+
+if (canvas && typeof document !== 'undefined'){
+  canvas.addEventListener('pointerdown', e=>{
+    e.preventDefault();
+    // copy button on game-over screen
+    if (G.mode==='over' && G.t>0.6){
+      const rect = canvas.getBoundingClientRect();
+      const bx=(e.clientX-rect.left)/rect.width*W, by=(e.clientY-rect.top)/rect.height*H;
+      if (bx>W/2-90 && bx<W/2+90 && by>H-58 && by<H-24){
+        copyBrag(); return;
+      }
+    }
+    onTap(e.clientX, e.clientY);
+  });
+  document.addEventListener('keydown', e=>{
+    if (e.code==='Space'||e.code==='Enter'){ e.preventDefault(); onTap(W/2, H/2-100); }
+    if (e.code==='KeyP'){ if(G.mode==='play') G.paused=!G.paused; }
+    if (e.code==='KeyR' && G.mode==='over'){ startGame(); }
+  });
+  document.addEventListener('visibilitychange', ()=>{
+    if (document.hidden && G.mode==='play') G.paused=true;
+  });
+  resetWorld();
+  requestAnimationFrame(loop);
+}
+function copyBrag(){
+  const url = (typeof location!=='undefined') ? location.href : 'https://tuannx.github.io/daily-mini-games/games/flip-only.html';
+  const txt = 'I flipped '+G.score+' with a phone that can\'t walk. It survived. My pride didn\'t. '+url;
+  try{
+    if (typeof navigator!=='undefined' && navigator.clipboard) navigator.clipboard.writeText(txt);
+  }catch(e){}
+  return txt;
+}
+
+/* node test hook */
+if (typeof module !== 'undefined'){
+  module.exports = { G, tick, onTap, startGame, gameOver, resetWorld, rankFor, wordCount, HOOK_LINE, copyBrag, newFlippy, OVER_LINES };
+}
+</script>
+</body>
+</html>

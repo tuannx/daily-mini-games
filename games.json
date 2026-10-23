@@ -195,5 +195,14 @@
     "mechanic": "Hold-to-drill digger",
     "tagline": "Dig deep. Sell shinies. The lava pockets woke up — and they swim.",
     "title": "DOWN PAYMENT"
+  },
+  {
+    "date": "2026-10-23",
+    "day": 23,
+    "emoji": "📱",
+    "file": "games/flip-only.html",
+    "mechanic": "Tap-to-flip phone climber",
+    "tagline": "This phone can't walk. It can only flip. Climb the Trashlands.",
+    "title": "FLIP ONLY"
   }
 ]
