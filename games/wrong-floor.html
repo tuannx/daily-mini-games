@@ -1,0 +1,526 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<title>WRONG FLOOR! — Day 24</title>
+<style>
+  * { margin:0; padding:0; box-sizing:border-box; -webkit-tap-highlight-color:transparent; }
+  html,body { height:100%; background:#0a0a18; overflow:hidden; font-family:'Courier New',monospace; }
+  #wrap { position:fixed; inset:0; display:flex; align-items:center; justify-content:center; background:radial-gradient(ellipse at 50% 20%, #1a1a3a 0%, #0a0a18 70%); }
+  canvas { touch-action:none; border:2px solid #ffd319; border-radius:8px; box-shadow:0 0 24px #ffd31966, 0 0 64px #ff297533; }
+</style>
+</head>
+<body>
+<div id="wrap"><canvas id="c"></canvas></div>
+<script>
+"use strict";
+/* ============================================================
+   WRONG FLOOR! — Day 24
+   You are the elevator. Don't let them in.
+   Doors open -> friendlies (glow, smile) walk in for points,
+   monsters (red, angry) walk in to ruin your shift. 3 monsters
+   in the cab = game over. Tap / Space = SLAM the doors.
+   Twist 1: sticky doors (double-tap). Twist 2: EXPRESS MODE.
+   ============================================================ */
+
+const W = 420, H = 700;
+const DOOR_X = 130, DOOR_W = 160;       // doorway in cab coordinates
+const CAB_X = 60, CAB_W = 300;
+const ENTER_X = DOOR_X + 20;            // crossing this = inside the cab
+const BOUNCE_ZONE = 46;                 // entity within this of ENTER_X when slammed = near-miss
+
+let canvas = null, ctx = null;
+if (typeof document !== 'undefined' && document.getElementById) {
+  const el = document.getElementById('c');
+  if (el) {
+    canvas = el;
+    ctx = canvas.getContext('2d');
+    fitCanvas();
+    if (typeof window !== 'undefined' && window.addEventListener)
+      window.addEventListener('resize', fitCanvas);
+  }
+}
+function fitCanvas(){
+  const s = Math.min(window.innerWidth / W, window.innerHeight / H);
+  canvas.width = Math.floor(W * s); canvas.height = Math.floor(H * s);
+}
+
+/* ---------------- audio (WebAudio, self-generated) ---------------- */
+let AC = null;
+function beep(freq, dur, type, vol, slideTo){
+  try{
+    if (typeof AudioContext === 'undefined' && typeof webkitAudioContext === 'undefined') return;
+    if (!AC) AC = new (AudioContext || webkitAudioContext)();
+    const o = AC.createOscillator(), g = AC.createGain();
+    o.type = type || 'square'; o.frequency.setValueAtTime(freq, AC.currentTime);
+    if (slideTo) o.frequency.exponentialRampToValueAtTime(Math.max(20,slideTo), AC.currentTime + dur);
+    g.gain.setValueAtTime(vol || 0.08, AC.currentTime);
+    g.gain.exponentialRampToValueAtTime(0.0001, AC.currentTime + dur);
+    o.connect(g); g.connect(AC.destination);
+    o.start(); o.stop(AC.currentTime + dur);
+  }catch(e){}
+}
+const SFX = {
+  ding(){ beep(880,0.25,'sine',0.10); setTimeout(()=>beep(1320,0.30,'sine',0.08),120); },
+  slam(){ beep(140,0.12,'square',0.14,50); },
+  stuck(){ beep(180,0.08,'square',0.10,120); setTimeout(()=>beep(140,0.08,'square',0.10,100),90); },
+  boing(){ beep(200,0.22,'sine',0.12,700); },
+  friend(){ beep(660,0.12,'sine',0.09,990); },
+  growl(){ beep(220,0.30,'sawtooth',0.10,70); },
+  jackpot(){ [523,659,784,1046,1318].forEach((f,i)=>setTimeout(()=>beep(f,0.16,'triangle',0.10),i*60)); },
+  over(){ [400,350,300,220,150,110].forEach((f,i)=>setTimeout(()=>beep(f,0.22,'sawtooth',0.09),i*110)); },
+  click(){ beep(500,0.06,'square',0.06,700); },
+};
+
+/* ---------------- storage ---------------- */
+function storeGet(k, d){
+  try{ const v = (typeof localStorage!=='undefined') ? localStorage.getItem(k) : null;
+    return v===null||v===undefined ? d : v; }catch(e){ return d; }
+}
+function storeSet(k, v){ try{ if(typeof localStorage!=='undefined') localStorage.setItem(k,String(v)); }catch(e){} }
+
+const HI_KEY = 'wrongfloor_hi';
+const UNLOCK_KEY = 'wrongfloor_unlocks';
+let hi = parseInt(storeGet(HI_KEY, '0'), 10) || 0;
+let unlocks = [];
+try{ unlocks = JSON.parse(storeGet(UNLOCK_KEY, '[]')) || []; }catch(e){ unlocks = []; }
+
+/* ---------------- game state ---------------- */
+const PHASE = { MENU:'menu', RIDE:'ride', OPEN:'open', OVER:'over' };
+let phase = PHASE.MENU;
+let score = 0, combo = 0, bestCombo = 0, floor = 1;
+let monsters = 0, friendsIn = 0, slams = 0, nearMisses = 0;
+let elapsed = 0, rideT = 0, openT = 0, doorP = 0; // doorP: 0 closed .. 1 open
+let doorTarget = 0, shakeT = 0, stuckPending = false, stickyFloor = false;
+let entities = [], passengers = [], cabMonsters = [];
+let popups = [], particles = [];
+let flashT = 0, express = false, expressAnnounced = false;
+let newUnlock = null, overLines = [], overIdx = 0;
+
+const FRIEND_FACES = ['^','o','w'];
+const MONSTER_FACES = ['>','x','#'];
+const OVER_LINES = [
+  'THEY ALL LIVE HERE NOW.',
+  'FLOOR: HELL.',
+  'YOU HAD ONE JOB. DOORS.',
+  'THE MONSTERS PAY NO RENT.',
+  'DOORMAN OF THE YEAR? NO.',
+  'PLEASE MIND THE MONSTERS.',
+];
+const RANKS = [
+  [0,'LOBBY LURKER'],[100,'DOORMAN'],[250,'BOUNCER'],[500,'ELEVATOR TYRANT'],[1000,'GRAND DOORLORD']
+];
+const COSMETICS = [
+  { at:150, name:'NEON CAB', desc:'cab goes neon pink' },
+  { at:400, name:'DISCO CAB', desc:'cab goes disco gold' },
+  { at:800, name:'GOLD CAB', desc:'cab goes full gold' },
+];
+function rankFor(s){ let r = RANKS[0][1]; for (const [t,n] of RANKS) if (s >= t) r = n; return r; }
+function cabTheme(){
+  if (unlocks.indexOf('GOLD CAB') >= 0) return { wall:'#3a2a00', trim:'#ffd319', floor:'#1a1200' };
+  if (unlocks.indexOf('DISCO CAB') >= 0) return { wall:'#2a1a2e', trim:'#ff2975', floor:'#160a18' };
+  if (unlocks.indexOf('NEON CAB') >= 0) return { wall:'#1a1030', trim:'#ff2d95', floor:'#0d0618' };
+  return { wall:'#232338', trim:'#8a8ab0', floor:'#14141f' };
+}
+function rand(a,b){ return a + Math.random()*(b-a); }
+function pick(arr){ return arr[Math.floor(Math.random()*arr.length)]; }
+function popup(x,y,text,color){ popups.push({x,y,text,color,t:0}); }
+function burst(x,y,color,n){
+  for (let i=0;i<n;i++) particles.push({x,y,vx:rand(-90,90),vy:rand(-140,-20),t:0,life:rand(0.4,0.8),color,r:rand(2,5)});
+}
+
+/* difficulty scales with floor */
+function monsterChance(){
+  let c = 0.32 + floor*0.018;
+  if (express) c += 0.12;
+  return Math.min(0.62, c);
+}
+function rideInterval(){ return Math.max(1.15, 2.5 - floor*0.07); }
+function openWindow(){ return Math.max(1.35, 2.5 - floor*0.05); }
+function walkSpeed(){ return rand(55,75) + floor*2.2 + (express ? 25 : 0); }
+
+function spawnFloor(){
+  floor++;
+  if (floor === 6) popup(W/2, 300, 'DOORS STICK!', '#ffd319');
+  if (floor >= 12 && !express) { express = true; popup(W/2, 300, 'EXPRESS MODE!', '#ff2975'); SFX.ding(); }
+  stickyFloor = floor >= 6 && Math.random() < 0.32;
+  stuckPending = false;
+  const n = 1 + (Math.random() < 0.35 + (express?0.25:0) ? 1 : 0) + (express && Math.random() < 0.25 ? 1 : 0);
+  entities = [];
+  for (let i=0;i<n;i++){
+    const isVip = Math.random() < 0.08;
+    const isMonster = !isVip && Math.random() < monsterChance();
+    const type = isVip ? 'vip' : (isMonster ? 'monster' : 'friend');
+    entities.push({
+      type, x: CAB_X + CAB_W + 20 + i*64, y: 470 + (i%2)*4,
+      v: walkSpeed(), w: type==='vip'?52:44, h: type==='vip'?58:48,
+      face: type==='monster' ? pick(MONSTER_FACES) : pick(FRIEND_FACES),
+      bob: Math.random()*6.28, state:'walk', vx:0, rot:0,
+    });
+  }
+  SFX.ding();
+}
+
+function slamDoors(){
+  if (phase !== PHASE.OPEN) return;
+  slams++;
+  if (stickyFloor && !stuckPending){
+    stuckPending = true; shakeT = 0.3; SFX.stuck();
+    popup(W/2, 330, 'STUCK!', '#ffd319');
+    return; // doors refuse: need a second slam
+  }
+  doorTarget = 0; SFX.slam();
+  // bounce anything caught in the doorway
+  for (const e of entities){
+    if (e.state !== 'walk') continue;
+    if (e.x < ENTER_X + BOUNCE_ZONE){
+      e.state = 'bounce'; e.vx = rand(260,380); e.rot = 0;
+      burst(e.x, e.y, e.type==='monster' ? '#ff2975' : '#00e5ff', 8);
+      if (e.type === 'monster'){
+        popup(e.x, e.y - 40, 'NOPE!', '#ff2975');
+        if (e.x < ENTER_X + 26){ nearMisses++; score += 5; popup(e.x, e.y - 66, 'SO CLOSE!', '#ffd319'); }
+      } else {
+        popup(e.x, e.y - 40, 'BYE!', '#8a8ab0');
+      }
+      SFX.boing();
+    }
+  }
+}
+
+function startGame(){
+  score = 0; combo = 0; bestCombo = 0; floor = 1;
+  monsters = 0; friendsIn = 0; slams = 0; nearMisses = 0;
+  elapsed = 0; rideT = 0; openT = 0; doorP = 0; doorTarget = 0;
+  entities = []; passengers = []; cabMonsters = [];
+  popups = []; particles = []; express = false; newUnlock = null;
+  stickyFloor = false; stuckPending = false;
+  overLines = OVER_LINES.slice(); overIdx = Math.floor(Math.random()*overLines.length);
+  phase = PHASE.RIDE;
+  SFX.click();
+}
+
+function gameOver(){
+  phase = PHASE.OVER;
+  SFX.over();
+  if (score > hi){ hi = score; storeSet(HI_KEY, String(hi)); }
+  for (const c of COSMETICS){
+    if (score >= c.at && unlocks.indexOf(c.name) < 0){ unlocks.push(c.name); newUnlock = c.name; }
+  }
+  storeSet(UNLOCK_KEY, JSON.stringify(unlocks));
+}
+
+function update(dt){
+  elapsed += dt;
+  // popups + particles always tick
+  for (const p of popups) p.t += dt;
+  popups = popups.filter(p => p.t < 1.1);
+  for (const pt of particles){ pt.t += dt; pt.x += pt.vx*dt; pt.y += pt.vy*dt; pt.vy += 300*dt; }
+  particles = particles.filter(pt => pt.t < pt.life);
+  if (shakeT > 0) shakeT -= dt;
+  if (flashT > 0) flashT -= dt;
+
+  // door animation
+  const speed = 5.5;
+  if (doorP < doorTarget) doorP = Math.min(doorTarget, doorP + speed*dt);
+  if (doorP > doorTarget) doorP = Math.max(doorTarget, doorP - speed*dt);
+
+  if (phase === PHASE.RIDE){
+    rideT += dt;
+    if (rideT >= rideInterval()){
+      rideT = 0; spawnFloor();
+      phase = PHASE.OPEN; openT = 0; doorTarget = 1;
+    }
+  } else if (phase === PHASE.OPEN){
+    openT += dt;
+    for (const e of entities){
+      if (e.state === 'walk'){
+        e.x -= e.v * dt; e.bob += dt*10;
+        if (e.x <= ENTER_X + 10 && doorP < 0.5){
+          e.x = ENTER_X + 10; // pressed against closed doors: no entry
+        } else if (e.x <= ENTER_X){
+          e.state = 'in';
+          if (e.type === 'monster'){
+            monsters++; cabMonsters.push(e); SFX.growl();
+            popup(W/2, 330, 'IT GOT IN!', '#ff2975');
+            combo = 0;
+            if (monsters >= 3){ gameOver(); return; }
+          } else {
+            passengers.push(e);
+            const gain = e.type === 'vip' ? 50 : 10;
+            combo++; bestCombo = Math.max(bestCombo, combo);
+            score += gain + (combo >= 3 ? 5*(combo-2) : 0);
+            friendsIn++;
+            if (e.type === 'vip'){ popup(e.x, e.y - 50, 'JACKPOT!', '#ffd319'); SFX.jackpot(); burst(e.x, e.y, '#ffd319', 16); }
+            else { popup(e.x, e.y - 44, '+'+gain, '#00e5ff'); SFX.friend(); }
+          }
+        }
+      } else if (e.state === 'bounce'){
+        e.x += e.vx*dt; e.vx *= (1 - 1.4*dt); e.rot += dt*9;
+        if (e.x > W + 60) e.state = 'gone';
+      }
+    }
+    entities = entities.filter(e => e.state !== 'gone');
+    if (openT >= openWindow() && doorP >= 0.99){
+      doorTarget = 0; // auto-close; stragglers left outside get sad
+      for (const e of entities) if (e.state === 'walk'){ e.state = 'gone'; }
+      phase = PHASE.RIDE; rideT = 0;
+    } else if (openT >= openWindow() + 1.2){
+      // safety: doors shut even if animation lagged
+      doorTarget = 0; phase = PHASE.RIDE; rideT = 0;
+    }
+  }
+}
+
+/* ---------------- drawing ---------------- */
+function drawFace(x, y, type, face, t){
+  // head
+  const bob = Math.sin(t)*2;
+  ctx.save();
+  ctx.translate(x, y + bob);
+  if (type === 'monster'){
+    ctx.fillStyle = '#ff2975';
+    ctx.strokeStyle = '#ff5c8a'; ctx.lineWidth = 2;
+    ctx.beginPath(); ctx.arc(0,0,20,0,Math.PI*2); ctx.fill(); ctx.stroke();
+    // horns
+    ctx.fillStyle = '#ffd319';
+    ctx.beginPath(); ctx.moveTo(-14,-14); ctx.lineTo(-20,-26); ctx.lineTo(-8,-18); ctx.fill();
+    ctx.beginPath(); ctx.moveTo(14,-14); ctx.lineTo(20,-26); ctx.lineTo(8,-18); ctx.fill();
+    // angry eyes
+    ctx.strokeStyle = '#fff'; ctx.lineWidth = 3; ctx.beginPath();
+    ctx.moveTo(-12,-4); ctx.lineTo(-4,-8); ctx.moveTo(12,-4); ctx.lineTo(4,-8); ctx.stroke();
+    ctx.fillStyle = '#1a0010'; ctx.beginPath(); ctx.arc(-8,-2,2.5,0,Math.PI*2); ctx.arc(8,-2,2.5,0,Math.PI*2); ctx.fill();
+    // jagged mouth
+    ctx.strokeStyle = '#fff'; ctx.lineWidth = 2; ctx.beginPath();
+    ctx.moveTo(-10,10); ctx.lineTo(-5,5); ctx.lineTo(0,10); ctx.lineTo(5,5); ctx.lineTo(10,10); ctx.stroke();
+  } else if (type === 'vip'){
+    ctx.shadowColor = '#ffd319'; ctx.shadowBlur = 18;
+    ctx.fillStyle = '#ffd319';
+    ctx.beginPath(); ctx.arc(0,0,24,0,Math.PI*2); ctx.fill();
+    ctx.shadowBlur = 0;
+    ctx.fillStyle = '#fff7cc';
+    ctx.beginPath(); ctx.arc(0,0,18,0,Math.PI*2); ctx.fill();
+    ctx.fillStyle = '#7a5b00';
+    ctx.beginPath(); ctx.arc(-7,-3,2.5,0,Math.PI*2); ctx.arc(7,-3,2.5,0,Math.PI*2); ctx.fill();
+    ctx.strokeStyle = '#7a5b00'; ctx.lineWidth = 2.5; ctx.beginPath(); ctx.arc(0,4,9,0.15,Math.PI-0.15); ctx.stroke();
+    // crown
+    ctx.fillStyle = '#ff2975';
+    ctx.beginPath(); ctx.moveTo(-12,-16); ctx.lineTo(-12,-26); ctx.lineTo(-6,-18); ctx.lineTo(0,-27); ctx.lineTo(6,-18); ctx.lineTo(12,-26); ctx.lineTo(12,-16); ctx.closePath(); ctx.fill();
+  } else {
+    ctx.fillStyle = '#7de3ff';
+    ctx.beginPath(); ctx.arc(0,0,19,0,Math.PI*2); ctx.fill();
+    ctx.fillStyle = '#123';
+    ctx.beginPath(); ctx.arc(-6,-3,2.5,0,Math.PI*2); ctx.arc(6,-3,2.5,0,Math.PI*2); ctx.fill();
+    ctx.strokeStyle = '#123'; ctx.lineWidth = 2.5; ctx.beginPath(); ctx.arc(0,5,8,0.15,Math.PI-0.15); ctx.stroke();
+  }
+  ctx.restore();
+}
+
+function draw(){
+  if (!ctx) return;
+  const s = canvas.width / W;
+  ctx.setTransform(s,0,0,s,0,0);
+  const theme = cabTheme();
+  const shake = shakeT > 0 ? (Math.random()-0.5)*6 : 0;
+  ctx.save();
+  ctx.translate(shake, 0);
+
+  // background hallway
+  ctx.fillStyle = '#0d0d20'; ctx.fillRect(0,0,W,H);
+  ctx.fillStyle = '#141428';
+  for (let i=0;i<5;i++) ctx.fillRect(0, 120+i*110, W, 2);
+
+  // floor indicator + HUD
+  ctx.fillStyle = '#000'; ctx.fillRect(0,0,W,64);
+  ctx.fillStyle = '#ffd319'; ctx.font = 'bold 26px Courier New'; ctx.textAlign = 'left';
+  ctx.fillText('FLOOR ' + floor, 14, 32);
+  ctx.fillStyle = '#00e5ff'; ctx.font = 'bold 22px Courier New'; ctx.textAlign = 'right';
+  ctx.fillText('SCORE ' + score, W-14, 30);
+  ctx.fillStyle = '#ff2975'; ctx.font = 'bold 16px Courier New';
+  ctx.fillText('HI ' + hi, W-14, 54);
+  ctx.textAlign = 'left'; ctx.fillStyle = '#ffd319'; ctx.font = 'bold 15px Courier New';
+  if (combo >= 2) ctx.fillText('COMBO x' + combo, 14, 54);
+  if (express) { ctx.fillStyle = '#ff2975'; ctx.fillText('EXPRESS!', 150, 54); }
+
+  // cab
+  ctx.fillStyle = theme.wall; ctx.fillRect(CAB_X, 90, CAB_W, 480);
+  ctx.fillStyle = theme.floor; ctx.fillRect(CAB_X, 540, CAB_W, 30);
+  ctx.strokeStyle = theme.trim; ctx.lineWidth = 3; ctx.strokeRect(CAB_X, 90, CAB_W, 480);
+  // cab ceiling light
+  ctx.fillStyle = '#ffd319'; ctx.fillRect(CAB_X+40, 100, CAB_W-80, 6);
+
+  // hallway entities (behind doors when closed, visible when open)
+  for (const e of entities){
+    if (e.state === 'gone') continue;
+    ctx.save();
+    if (e.state === 'bounce') ctx.translate(e.x, e.y), ctx.rotate(e.rot);
+    else ctx.translate(e.x, e.y);
+    if (e.type === 'friend' || e.type === 'vip'){
+      ctx.shadowColor = e.type==='vip' ? '#ffd319' : '#00e5ff'; ctx.shadowBlur = 16;
+    }
+    drawFace(0, 0, e.type, e.face, e.bob);
+    ctx.restore();
+    // little body
+    ctx.fillStyle = e.type==='monster' ? '#5c1030' : (e.type==='vip' ? '#7a5b00' : '#1a4a66');
+    ctx.fillRect(e.x-10, e.y+20, 20, 22);
+  }
+
+  // passengers inside cab (bottom row)
+  passengers.slice(-8).forEach((p,i)=>{
+    const px = CAB_X + 26 + i*34, py = 520;
+    ctx.save(); ctx.translate(px, py); ctx.scale(0.62,0.62);
+    drawFace(0, 0, p.type, p.face, i);
+    ctx.restore();
+  });
+  // monsters in cab loom at the sides
+  cabMonsters.forEach((m,i)=>{
+    const mx = i%2===0 ? CAB_X+26 : CAB_X+CAB_W-26, my = 170 + Math.floor(i/2)*110;
+    ctx.save(); ctx.translate(mx + Math.sin(elapsed*14+i)*2, my); ctx.scale(1.15,1.15);
+    drawFace(0, 0, 'monster', m.face, i*2);
+    ctx.restore();
+  });
+
+  // doors (two panels sliding apart as doorP -> 1)
+  const panelW = DOOR_W/2;
+  const open = doorP * panelW;
+  ctx.fillStyle = '#3a3a5c';
+  ctx.fillRect(DOOR_X - open, 120, panelW, 420);
+  ctx.fillRect(DOOR_X + panelW + open, 120, panelW, 420);
+  ctx.fillStyle = '#56568a';
+  ctx.fillRect(DOOR_X - open + panelW - 4, 120, 4, 420);
+  ctx.fillRect(DOOR_X + panelW + open, 120, 4, 420);
+  // door window slits
+  ctx.fillStyle = '#00e5ff';
+  ctx.fillRect(DOOR_X - open + 12, 200, 16, 60);
+  ctx.fillRect(DOOR_X + panelW + open + panelW - 28, 200, 16, 60);
+  if (stickyFloor && phase === PHASE.OPEN && doorP > 0.5){
+    // rusty bolt cue: this floor's doors stick
+    ctx.fillStyle = '#ff7a00'; ctx.font = 'bold 26px Courier New'; ctx.textAlign = 'center';
+    ctx.fillText('⚙', DOOR_X + DOOR_W/2, 160);
+  }
+  // monster slots (top of cab)
+  ctx.textAlign = 'center';
+  for (let i=0;i<3;i++){
+    ctx.fillStyle = i < monsters ? '#ff2975' : '#33334d';
+    ctx.beginPath(); ctx.arc(CAB_X + 60 + i*40, 575, 12, 0, Math.PI*2); ctx.fill();
+    if (i < monsters){ ctx.fillStyle = '#fff'; ctx.font = 'bold 14px Courier New'; ctx.fillText('!', CAB_X + 60 + i*40, 580); }
+  }
+  ctx.fillStyle = '#8a8ab0'; ctx.font = 'bold 13px Courier New';
+  ctx.fillText('MONSTERS IN CAB: ' + monsters + '/3', CAB_X + CAB_W/2, 610);
+
+  // floor buttons panel
+  ctx.fillStyle = '#101024'; ctx.fillRect(CAB_X + CAB_W + 6, 120, 44, 300);
+  for (let i=0;i<8;i++){
+    ctx.fillStyle = (floor % 8 === i) ? '#ffd319' : '#2a2a44';
+    ctx.beginPath(); ctx.arc(CAB_X + CAB_W + 28, 140 + i*36, 11, 0, Math.PI*2); ctx.fill();
+  }
+
+  // popups
+  ctx.textAlign = 'center';
+  for (const p of popups){
+    const a = p.t < 0.8 ? 1 : 1 - (p.t-0.8)/0.3;
+    ctx.globalAlpha = a;
+    ctx.fillStyle = p.color; ctx.font = 'bold 26px Courier New';
+    ctx.fillText(p.text, p.x, p.y - p.t*26);
+    ctx.globalAlpha = 1;
+  }
+  // particles
+  for (const pt of particles){
+    ctx.globalAlpha = 1 - pt.t/pt.life;
+    ctx.fillStyle = pt.color; ctx.beginPath(); ctx.arc(pt.x, pt.y, pt.r, 0, Math.PI*2); ctx.fill();
+    ctx.globalAlpha = 1;
+  }
+
+  // overlays
+  if (phase === PHASE.MENU){
+    ctx.fillStyle = 'rgba(0,0,0,0.72)'; ctx.fillRect(0,0,W,H);
+    ctx.textAlign = 'center';
+    ctx.fillStyle = '#ffd319'; ctx.font = 'bold 44px Courier New';
+    ctx.fillText('WRONG', W/2, 200); ctx.fillText('FLOOR!', W/2, 250);
+    ctx.fillStyle = '#fff'; ctx.font = 'bold 22px Courier New';
+    ctx.fillText("DON'T LET THEM IN.", W/2, 300);
+    ctx.font = '16px Courier New'; ctx.fillStyle = '#8a8ab0';
+    ctx.fillText('GLOW = friend, let in.', W/2, 340);
+    ctx.fillText('RED + ANGRY = slam doors!', W/2, 364);
+    ctx.fillStyle = '#00e5ff'; ctx.font = 'bold 22px Courier New';
+    ctx.fillText('TAP TO START', W/2, 440);
+    ctx.fillStyle = '#8a8ab0'; ctx.font = '15px Courier New';
+    ctx.fillText('HI ' + hi + '  •  TAP / SPACE = SLAM', W/2, 480);
+  } else if (phase === PHASE.OPEN){
+    ctx.textAlign = 'center';
+    ctx.fillStyle = '#ffd319'; ctx.font = 'bold 24px Courier New';
+    ctx.fillText('SLAM!', W/2, 660);
+  } else if (phase === PHASE.OVER){
+    ctx.fillStyle = 'rgba(0,0,0,0.78)'; ctx.fillRect(0,0,W,H);
+    ctx.textAlign = 'center';
+    ctx.fillStyle = '#ff2975'; ctx.font = 'bold 36px Courier New';
+    ctx.fillText('OVERRUN!', W/2, 170);
+    ctx.fillStyle = '#fff'; ctx.font = 'bold 20px Courier New';
+    ctx.fillText(overLines[overIdx], W/2, 210);
+    ctx.fillStyle = '#00e5ff'; ctx.font = 'bold 22px Courier New';
+    ctx.fillText('SCORE ' + score, W/2, 260);
+    ctx.fillStyle = '#ffd319'; ctx.font = 'bold 18px Courier New';
+    ctx.fillText('RANK: ' + rankFor(score), W/2, 292);
+    ctx.fillStyle = '#8a8ab0'; ctx.font = '15px Courier New';
+    ctx.fillText('Friends in: ' + friendsIn + '  •  Best combo x' + bestCombo, W/2, 320);
+    ctx.fillText('Near-miss: ' + nearMisses + '  •  Slams: ' + slams, W/2, 342);
+    if (newUnlock){ ctx.fillStyle = '#ffd319'; ctx.font = 'bold 18px Courier New'; ctx.fillText('UNLOCKED: ' + newUnlock + '!', W/2, 380); }
+    ctx.fillStyle = '#00e5ff'; ctx.font = 'bold 20px Courier New';
+    ctx.fillText('📋 COPY BRAG', W/2, 430);
+    ctx.fillStyle = '#fff'; ctx.font = 'bold 20px Courier New';
+    ctx.fillText('TAP TO RIDE AGAIN', W/2, 480);
+    ctx.fillStyle = '#8a8ab0'; ctx.font = '14px Courier New';
+    ctx.fillText('HI ' + hi, W/2, 510);
+  }
+  ctx.restore();
+}
+
+/* ---------------- input ---------------- */
+function copyBrag(){
+  const text = 'I let ' + monsters + ' monsters into my elevator and scored ' + score + ' in WRONG FLOOR! Rank: ' + rankFor(score) + '. Play: https://tuannx.github.io/daily-mini-games/games/wrong-floor.html';
+  try{
+    if (navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(text);
+    else { const ta = document.createElement('textarea'); ta.value = text; document.body.appendChild(ta); ta.select(); document.execCommand('copy'); ta.remove(); }
+    popup(W/2, 400, 'COPIED!', '#00e5ff');
+  }catch(e){}
+}
+function onTap(x, y){
+  if (phase === PHASE.MENU){ startGame(); return; }
+  if (phase === PHASE.OVER){
+    if (y >= 405 && y <= 455) copyBrag();
+    else startGame();
+    return;
+  }
+  slamDoors();
+}
+if (typeof document !== 'undefined' && document.addEventListener){
+  document.addEventListener('pointerdown', (e)=>{
+    const r = canvas.getBoundingClientRect();
+    onTap((e.clientX - r.left) / r.width * W, (e.clientY - r.top) / r.height * H);
+  });
+  document.addEventListener('keydown', (e)=>{
+    if (e.code === 'Space' || e.code === 'KeyR'){ e.preventDefault(); onTap(W/2, 660); }
+  });
+}
+
+/* ---------------- loop ---------------- */
+let last = 0;
+function loop(ts){
+  const dt = Math.min(0.05, last ? (ts - last)/1000 : 0.016);
+  last = ts;
+  if (phase !== PHASE.MENU || true) update(dt);
+  draw();
+  requestAnimationFrame(loop);
+}
+if (typeof window !== 'undefined' && canvas && typeof requestAnimationFrame !== 'undefined'){
+  requestAnimationFrame(loop);
+}
+
+/* node-test hooks */
+if (typeof module !== 'undefined' && module.exports){
+  module.exports = { startGame, slamDoors, update, spawnFloor, rankFor,
+    getState: () => ({ phase, score, combo, floor, monsters, entities, doorTarget, stickyFloor, stuckPending, express, passengers, cabMonsters, hi }) };
+}
+</script>
+</body>
+</html>

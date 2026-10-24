@@ -204,5 +204,14 @@
     "mechanic": "Tap-to-flip phone climber",
     "tagline": "This phone can't walk. It can only flip. Climb the Trashlands.",
     "title": "FLIP ONLY"
+  },
+  {
+    "date": "2026-10-24",
+    "day": 24,
+    "emoji": "🛗",
+    "file": "games/wrong-floor.html",
+    "mechanic": "Elevator door-slam defense",
+    "tagline": "You are the elevator. GLOW = friend, RED + ANGRY = slam the doors. 3 monsters in and your shift is over.",
+    "title": "WRONG FLOOR!"
   }
 ]
