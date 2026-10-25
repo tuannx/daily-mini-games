@@ -213,5 +213,14 @@
     "mechanic": "Elevator door-slam defense",
     "tagline": "You are the elevator. GLOW = friend, RED + ANGRY = slam the doors. 3 monsters in and your shift is over.",
     "title": "WRONG FLOOR!"
+  },
+  {
+    "date": "2026-10-25",
+    "day": 25,
+    "emoji": "🍬",
+    "file": "games/candy-tax.html",
+    "mechanic": "Hold-to-steal candy heist",
+    "tagline": "Steal candy from your own kid. Eyes flutter? FREEZE. The dog knows everything.",
+    "title": "CANDY TAX"
   }
 ]

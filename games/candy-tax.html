@@ -1,0 +1,471 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
+<title>CANDY TAX — Steal candy. Don't wake the kid.</title>
+<style>
+  *{margin:0;padding:0;box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+  html,body{height:100%;background:#0d0b1e;overflow:hidden}
+  body{display:flex;align-items:center;justify-content:center;font-family:system-ui,'Arial Black',Arial,sans-serif;user-select:none;-webkit-user-select:none;touch-action:none}
+  #wrap{position:relative;width:100%;max-width:480px;height:100%;max-height:860px}
+  canvas{display:block;width:100%;height:100%;background:#141233}
+  #ui{position:absolute;inset:0;pointer-events:none}
+  .btn{pointer-events:auto;cursor:pointer}
+</style>
+</head>
+<body>
+<div id="wrap">
+<canvas id="c" width="480" height="760"></canvas>
+<div id="ui"></div>
+</div>
+<script>
+'use strict';
+/* CANDY TAX — hold to steal candy from your sleeping kid. Freeze when eyes flutter.
+   One family, one role: glowing candy = good ONLY. Grumpy broccoli = bad ONLY.
+   No role swaps anywhere. Dog = tap-to-shoo hazard with its own bark tell. */
+const cv = document.getElementById('c');
+const ctx = cv.getContext('2d');
+const W = 480, H = 760;
+
+// ---------- audio (WebAudio, self-generated, no assets) ----------
+let AC = null, muted = false;
+function beep(f, d, type, vol){
+  if (muted) return;
+  try {
+    AC = AC || new (window.AudioContext || window.webkitAudioContext)();
+    const o = AC.createOscillator(), g = AC.createGain();
+    o.type = type || 'sine'; o.frequency.value = f;
+    g.gain.setValueAtTime(vol || 0.12, AC.currentTime);
+    g.gain.exponentialRampToValueAtTime(0.001, AC.currentTime + d);
+    o.connect(g); g.connect(AC.destination);
+    o.start(); o.stop(AC.currentTime + d);
+  } catch(e){}
+}
+const sGrab = ()=>beep(700 + Math.random()*300, .08, 'triangle', .10);
+const sGold = ()=>{ beep(880,.1,'sine',.12); setTimeout(()=>beep(1320,.14,'sine',.12),70); };
+const sEw = ()=>beep(160,.18,'sawtooth',.10);
+const sCaught = ()=>{ beep(220,.25,'sawtooth',.14); setTimeout(()=>beep(140,.3,'sawtooth',.14),120); };
+const sBark = ()=>{ beep(300,.07,'square',.12); setTimeout(()=>beep(240,.09,'square',.12),90); };
+const sNear = ()=>beep(990,.09,'sine',.12);
+
+// ---------- storage ----------
+const HI_KEY = 'candytax_hi', SK_KEY = 'candytax_skins';
+const hi = +(localStorage.getItem(HI_KEY) || 0);
+let skins = JSON.parse(localStorage.getItem(SK_KEY) || '["NORMAL"]');
+
+// ---------- game state ----------
+const S = {
+  screen: 'start', // start | play | over
+  t: 0, timeLeft: 60, score: 0, hearts: 3, streak: 0, rush: false,
+  holding: false, handX: 0, handY: 0, handIn: 0, // handIn 0..1 extension
+  grabTimer: 0, stream: [], streamIdx: 0,
+  kid: 'sleep', kidT: 0, sleepDur: 2.6, flutterDur: .55, openDur: 1.0,
+  dog: null, dogT: 0, nextDog: 32,
+  pops: [], parts: [], zzz: [], candies: [], // candies = flying grabbed candy particles
+  nearMiss: false, flutterWarned: false, overReason: '', newHi: false,
+  shake: 0, kidSit: 0, parentFace: 'sneak', faceT: 0,
+  unlocked: [], muted: false,
+};
+const RANKS = [[0,'AMATEUR THIEF'],[100,'SNEAKY PARENT'],[250,'CANDY TAX PRO'],[500,'GRAND LARCENIST']];
+function rankFor(sc){ let r = RANKS[0][1]; for (const [n,t] of RANKS) if (sc >= n) r = t; return r; }
+function handSkin(){ return skins.includes('GOLDEN') ? '#ffd94a' : skins.includes('SPOOKY') ? '#7dffb0' : '#f2c49b'; }
+
+function rand(a,b){ return a + Math.random()*(b-a); }
+function pick(arr){ return arr[Math.floor(Math.random()*arr.length)]; }
+
+// candy stream: what the hand pulls next while holding
+function genStream(){
+  const s = [];
+  for (let i = 0; i < 40; i++){
+    const r = Math.random();
+    if (r < 0.10) s.push('gold');
+    else if (r < 0.28) s.push('broccoli');
+    else s.push('candy');
+  }
+  return s;
+}
+function startGame(){
+  Object.assign(S, { screen:'play', t:0, timeLeft:60, score:0, hearts:3, streak:0, rush:false,
+    holding:false, handIn:0, grabTimer:0, stream:genStream(), streamIdx:0,
+    kid:'sleep', kidT:0, sleepDur:2.6, flutterDur:.55, openDur:1.0,
+    dog:null, dogT:0, nextDog:32, pops:[], parts:[], zzz:[], candies:[],
+    nearMiss:false, flutterWarned:false, overReason:'', newHi:false, shake:0, kidSit:0,
+    parentFace:'sneak', faceT:0, unlocked:[] });
+  beep(520,.1,'triangle',.1);
+}
+function popup(x, y, txt, color, big){
+  S.pops.push({ x, y, txt, color: color || '#fff', t: 0, big: !!big });
+}
+function burst(x, y, color, n){
+  for (let i = 0; i < (n || 12); i++)
+    S.parts.push({ x, y, vx: rand(-160,160), vy: rand(-220,20), t: 0, color, s: rand(3,8) });
+}
+function endGame(reason){
+  if (S.screen === 'over') return;
+  S.screen = 'over'; S.overReason = reason;
+  if (S.score > hi){ localStorage.setItem(HI_KEY, S.score); S.newHi = true; }
+  const unlocks = [];
+  if (S.score >= 150 && !skins.includes('SPOOKY')){ skins.push('SPOOKY'); unlocks.push('SPOOKY HAND'); }
+  if (S.score >= 400 && !skins.includes('GOLDEN')){ skins.push('GOLDEN'); unlocks.push('GOLDEN HAND'); }
+  if (unlocks.length) localStorage.setItem(SK_KEY, JSON.stringify(skins));
+  S.unlocked = unlocks;
+}
+function caught(){
+  if (S.screen !== 'play') return;
+  S.hearts--; S.streak = 0; S.rush = false; S.holding = false; S.handIn = 0;
+  S.kidSit = 1; S.shake = 14; S.parentFace = 'busted'; S.faceT = 1.2;
+  sCaught(); burst(240, 300, '#ff5d5d', 20); burst(240, 300, '#ffd94a', 12);
+  popup(240, 250, 'BUSTED!', '#ff5d5d', true);
+  if (S.hearts <= 0){ setTimeout(()=>endGame('busted'), 900); }
+}
+
+// ---------- update ----------
+function update(dt){
+  S.t += dt;
+  if (S.screen !== 'play') { animOnly(dt); return; }
+  S.timeLeft -= dt;
+  // difficulty ramp: sleep shortens, flutter shortens, open lengthens
+  const diff = Math.min(1, S.t / 55);
+  S.sleepDur = 2.6 - diff * 1.3;
+  S.flutterDur = Math.max(.34, .55 - diff * .18);
+  S.openDur = 1.0 + diff * .5;
+
+  // kid eye state machine
+  S.kidT += dt;
+  if (S.kid === 'sleep' && S.kidT >= S.sleepDur){
+    S.kid = 'flutter'; S.kidT = 0; S.flutterWarned = false;
+  } else if (S.kid === 'flutter'){
+    if (!S.flutterWarned){ S.flutterWarned = true; }
+    if (S.kidT >= S.flutterDur){
+      S.kid = 'open'; S.kidT = 0;
+      if (S.handIn > .6) caught(); // hand still in the bucket when eyes open
+    }
+  } else if (S.kid === 'open' && S.kidT >= S.openDur){
+    S.kid = 'sleep'; S.kidT = 0;
+  }
+
+  // hand extension
+  const target = S.holding ? 1 : 0;
+  S.handIn += (target - S.handIn) * Math.min(1, dt * 10);
+  if (Math.abs(S.handIn - target) < .02) S.handIn = target;
+
+  // grabbing while hand is in
+  if (S.holding && S.handIn > .85){
+    S.grabTimer -= dt;
+    if (S.grabTimer <= 0){
+      S.grabTimer = S.rush ? .30 : .45;
+      const item = S.stream[S.streamIdx++ % S.stream.length];
+      if (S.streamIdx % 40 === 0) S.stream = genStream();
+      if (item === 'candy'){
+        S.streak++;
+        const pts = S.rush ? 20 : 10;
+        S.score += pts;
+        sGrab();
+        S.candies.push({ x: 300, y: 520, vx: rand(-60,60), vy: rand(-260,-160), t: 0, gold: false });
+        if (S.streak === 5){ S.rush = true; popup(300, 430, 'SUGAR RUSH!', '#ff9de2', true); }
+      } else if (item === 'gold'){
+        S.streak++;
+        S.score += 50; sGold();
+        S.candies.push({ x: 300, y: 520, vx: rand(-60,60), vy: rand(-260,-160), t: 0, gold: true });
+        popup(300, 430, 'JACKPOT!', '#ffd94a', true);
+        burst(300, 520, '#ffd94a', 14);
+      } else { // broccoli — grumpy, never glows
+        S.streak = 0; S.rush = false; sEw();
+        S.parentFace = 'ew'; S.faceT = 1.0;
+        popup(300, 430, 'EW.', '#7dffb0', true);
+      }
+    }
+  }
+
+  // dog: appears, barks, forces an early flutter
+  if (S.t >= S.nextDog && !S.dog){
+    S.dog = { x: 420, y: 120, t: 0, barked: false };
+  }
+  if (S.dog){
+    S.dog.t += dt;
+    if (!S.dog.barked && S.dog.t > .9){
+      S.dog.barked = true; sBark(); S.shake = 8;
+      popup(380, 80, 'WOOF!', '#ff9d5c', true);
+      if (S.kid === 'sleep'){ S.kid = 'flutter'; S.kidT = 0; }
+    }
+    if (S.dog.t > 3.2){ S.dog = null; S.nextDog = S.t + rand(12, 20); }
+  }
+
+  if (S.timeLeft <= 0) endGame('escaped');
+  animOnly(dt);
+}
+function animOnly(dt){
+  for (const p of S.pops) p.t += dt;
+  S.pops = S.pops.filter(p => p.t < 1.1);
+  for (const p of S.parts){ p.t += dt; p.x += p.vx * dt; p.y += p.vy * dt; p.vy += 300 * dt; }
+  S.parts = S.parts.filter(p => p.t < 1);
+  for (const c of S.candies){ c.t += dt; c.x += c.vx * dt; c.y += c.vy * dt; c.vy += 400 * dt; }
+  S.candies = S.candies.filter(c => c.t < 1.2);
+  if (Math.random() < dt * 1.4 && S.screen === 'play') S.zzz.push({ x: 200 + Math.random()*60, y: 300, t: 0 });
+  for (const z of S.zzz){ z.t += dt; z.y -= 22 * dt; z.x += Math.sin(z.t * 4) * 10 * dt; }
+  S.zzz = S.zzz.filter(z => z.t < 2.4);
+  if (S.shake > 0) S.shake = Math.max(0, S.shake - dt * 30);
+  if (S.kidSit > 0) S.kidSit = Math.max(0, S.kidSit - dt * 1.2);
+  if (S.faceT > 0){ S.faceT -= dt; if (S.faceT <= 0) S.parentFace = 'sneak'; }
+}
+
+// ---------- input ----------
+function pos(e){
+  const r = cv.getBoundingClientRect();
+  const x = (e.clientX - r.left) * (W / r.width), y = (e.clientY - r.top) * (H / r.height);
+  return { x, y };
+}
+function press(e){
+  e.preventDefault();
+  if (S.screen === 'start'){ startGame(); return; }
+  if (S.screen === 'over'){
+    const p = pos(e);
+    if (p.y >= 540 && p.y < 590) return; // copy-brag zone: click handler owns it
+    startGame(); // any other tap restarts
+    return;
+  }
+  const p = pos(e);
+  // mute toggle corner
+  if (p.x > 430 && p.y < 50){ muted = !muted; return; }
+  // tap the dog to shoo it — dog zone only, never starts a hold
+  if (S.dog && Math.hypot(p.x - 420, p.y - 120) < 55){
+    S.dog = null; S.nextDog = S.t + rand(14, 22);
+    S.score += 5; popup(380, 80, 'SHOO!', '#7dffb0', true); beep(600,.08,'triangle',.1);
+    return;
+  }
+  // near-miss: releasing during flutter is rewarded at release; here just start hold
+  S.holding = true;
+}
+function release(e){
+  if (S.screen !== 'play') return;
+  if (!S.holding) return;
+  // near-miss: hand pulled out during flutter, just before eyes open
+  if (S.kid === 'flutter' && S.handIn > .6){
+    S.score += 5; sNear(); popup(300, 430, 'SO CLOSE!', '#7dffb0', true);
+  }
+  S.holding = false;
+}
+cv.addEventListener('pointerdown', press);
+window.addEventListener('pointerup', release);
+window.addEventListener('keydown', e => {
+  if (e.code === 'Space'){ e.preventDefault(); if (!S.holding && S.screen === 'play') S.holding = true; else if (S.screen !== 'play') press({ preventDefault(){}, clientX: 240, clientY: 400 }); }
+  if (e.code === 'KeyR' && S.screen === 'over') startGame();
+});
+window.addEventListener('keyup', e => { if (e.code === 'Space') release(e); });
+
+// ---------- draw ----------
+function rr(x, y, w, h, r){
+  ctx.beginPath(); ctx.moveTo(x + r, y); ctx.arcTo(x + w, y, x + w, y + h, r); ctx.arcTo(x + w, y + h, x, y + h, r); ctx.arcTo(x, y + h, x, y, r); ctx.arcTo(x, y, x + w, y, r); ctx.closePath();
+}
+function face(x, y, r, mood, color){
+  ctx.fillStyle = color; ctx.beginPath(); ctx.arc(x, y, r, 0, 7); ctx.fill();
+  ctx.fillStyle = '#1a1030';
+  if (mood === 'sleep'){ // closed happy arcs
+    ctx.lineWidth = 3; ctx.strokeStyle = '#1a1030'; ctx.beginPath();
+    ctx.arc(x - r*.35, y - r*.1, r*.16, Math.PI, 0); ctx.stroke();
+    ctx.beginPath(); ctx.arc(x + r*.35, y - r*.1, r*.16, Math.PI, 0); ctx.stroke();
+  } else if (mood === 'flutter'){
+    ctx.lineWidth = 3; ctx.strokeStyle = '#1a1030';
+    ctx.beginPath(); ctx.moveTo(x - r*.5, y - r*.1); ctx.lineTo(x - r*.2, y - r*.1); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(x + r*.2, y - r*.1); ctx.lineTo(x + r*.5, y - r*.1); ctx.stroke();
+  } else if (mood === 'open'){ // wide shocked eyes
+    ctx.fillStyle = '#fff'; ctx.beginPath(); ctx.arc(x - r*.35, y - r*.15, r*.22, 0, 7); ctx.fill();
+    ctx.beginPath(); ctx.arc(x + r*.35, y - r*.15, r*.22, 0, 7); ctx.fill();
+    ctx.fillStyle = '#1a1030'; ctx.beginPath(); ctx.arc(x - r*.35, y - r*.15, r*.1, 0, 7); ctx.fill();
+    ctx.beginPath(); ctx.arc(x + r*.35, y - r*.15, r*.1, 0, 7); ctx.fill();
+  } else if (mood === 'angry'){
+    ctx.lineWidth = 4; ctx.strokeStyle = '#1a1030';
+    ctx.beginPath(); ctx.moveTo(x - r*.55, y - r*.35); ctx.lineTo(x - r*.15, y - r*.15); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(x + r*.55, y - r*.35); ctx.lineTo(x + r*.15, y - r*.15); ctx.stroke();
+    ctx.fillStyle = '#1a1030';
+    ctx.beginPath(); ctx.arc(x - r*.32, y - r*.05, r*.09, 0, 7); ctx.fill();
+    ctx.beginPath(); ctx.arc(x + r*.32, y - r*.05, r*.09, 0, 7); ctx.fill();
+  } else if (mood === 'smile'){
+    ctx.fillStyle = '#1a1030';
+    ctx.beginPath(); ctx.arc(x - r*.32, y - r*.1, r*.09, 0, 7); ctx.fill();
+    ctx.beginPath(); ctx.arc(x + r*.32, y - r*.1, r*.09, 0, 7); ctx.fill();
+  }
+  // mouth
+  ctx.strokeStyle = '#1a1030'; ctx.lineWidth = 3; ctx.beginPath();
+  if (mood === 'open') ctx.arc(x, y + r*.45, r*.22, 0, 7);
+  else if (mood === 'angry') ctx.arc(x, y + r*.55, r*.2, Math.PI * 1.15, Math.PI * 1.85);
+  else if (mood === 'ew') ctx.arc(x, y + r*.5, r*.18, Math.PI, 0);
+  else ctx.arc(x, y + r*.25, r*.25, 0.15 * Math.PI, 0.85 * Math.PI);
+  ctx.stroke();
+}
+function candyShape(x, y, r, gold){
+  ctx.save();
+  ctx.shadowColor = gold ? '#ffd94a' : '#ff5da2'; ctx.shadowBlur = 18;
+  ctx.fillStyle = gold ? '#ffd94a' : '#ff5da2';
+  ctx.beginPath(); ctx.arc(x, y, r, 0, 7); ctx.fill();
+  ctx.shadowBlur = 0;
+  ctx.fillStyle = 'rgba(255,255,255,.75)';
+  ctx.beginPath(); ctx.arc(x - r*.3, y - r*.3, r*.28, 0, 7); ctx.fill();
+  ctx.restore();
+}
+function broccoliShape(x, y, r){
+  ctx.fillStyle = '#2fae5f';
+  ctx.beginPath(); ctx.arc(x - r*.4, y - r*.2, r*.5, 0, 7); ctx.arc(x + r*.4, y - r*.2, r*.5, 0, 7); ctx.arc(x, y - r*.5, r*.55, 0, 7); ctx.fill();
+  ctx.fillStyle = '#1d7a3f'; ctx.fillRect(x - r*.15, y, r*.3, r*.9);
+  face(x, y - r*.2, r*.7, 'angry', 'rgba(0,0,0,0)');
+}
+function draw(){
+  ctx.save();
+  if (S.shake > 0) ctx.translate(rand(-S.shake, S.shake) * .4, rand(-S.shake, S.shake) * .4);
+  // room
+  const g = ctx.createLinearGradient(0, 0, 0, H);
+  g.addColorStop(0, '#1b1740'); g.addColorStop(1, '#0d0b1e');
+  ctx.fillStyle = g; ctx.fillRect(0, 0, W, H);
+  // window + moon
+  ctx.fillStyle = '#241f5e'; rr(310, 40, 130, 130, 16); ctx.fill();
+  ctx.fillStyle = '#ffe9a8'; ctx.beginPath(); ctx.arc(375, 105, 34, 0, 7); ctx.fill();
+  ctx.fillStyle = '#f5d67a'; ctx.beginPath(); ctx.arc(365, 95, 8, 0, 7); ctx.arc(388, 118, 6, 0, 7); ctx.fill();
+  ctx.strokeStyle = '#17123f'; ctx.lineWidth = 6;
+  ctx.beginPath(); ctx.moveTo(375, 40); ctx.lineTo(375, 170); ctx.moveTo(310, 105); ctx.lineTo(440, 105); ctx.stroke();
+  // stars
+  ctx.fillStyle = '#cfd2ff';
+  for (let i = 0; i < 14; i++){ const sx = (i * 67) % 300, sy = 30 + (i * 37) % 160; ctx.fillRect(sx, sy, 3, 3); }
+  // rug
+  ctx.fillStyle = '#2a2166'; ctx.beginPath(); ctx.ellipse(240, 700, 210, 34, 0, 0, 7); ctx.fill();
+  // bed
+  ctx.fillStyle = '#3b2f8f'; rr(30, 330, 300, 90, 20); ctx.fill();
+  ctx.fillStyle = '#5747c9'; rr(30, 330, 300, 34, 16); ctx.fill();
+  ctx.fillStyle = '#ff5da2'; rr(150, 300, 130, 40, 16); ctx.fill(); // pillow
+  // kid: body under blanket, head pops up; sits up when busted
+  const sit = S.kidSit;
+  const kx = 215, ky = 310 - sit * 55;
+  ctx.fillStyle = '#5747c9'; rr(60, 350 - sit * 30, 200, 60, 18); ctx.fill();
+  const mood = S.screen === 'play' ? (S.kid === 'sleep' ? 'sleep' : S.kid === 'flutter' ? 'flutter' : 'open') : 'sleep';
+  face(kx, ky, 44 + sit * 6, S.kidSit > .3 ? 'open' : mood, '#f2c49b');
+  // kid hair + nightcap
+  ctx.fillStyle = '#7a4a2b'; ctx.beginPath(); ctx.arc(kx, ky - 30, 30, Math.PI, 0); ctx.fill();
+  ctx.fillStyle = '#ff5d5d'; ctx.beginPath(); ctx.moveTo(kx - 28, ky - 48); ctx.lineTo(kx + 28, ky - 48); ctx.lineTo(kx, ky - 78); ctx.closePath(); ctx.fill();
+  ctx.fillStyle = '#fff'; ctx.beginPath(); ctx.arc(kx, ky - 78, 9, 0, 7); ctx.fill();
+  // Zzz
+  ctx.font = 'bold 26px Arial'; ctx.fillStyle = '#9d8cff';
+  for (const z of S.zzz){ ctx.globalAlpha = 1 - z.t / 2.4; ctx.fillText('z', z.x, z.y); }
+  ctx.globalAlpha = 1;
+  // candy bucket (right side)
+  const bx = 330, by = 560;
+  ctx.fillStyle = '#ff7a1a'; ctx.beginPath(); ctx.moveTo(bx - 62, by - 30); ctx.lineTo(bx + 62, by - 30); ctx.lineTo(bx + 48, by + 60); ctx.lineTo(bx - 48, by + 60); ctx.closePath(); ctx.fill();
+  ctx.fillStyle = '#e85d04'; ctx.fillRect(bx - 62, by - 30, 124, 12);
+  // candies peeking from bucket — glowing = the ONLY glow in the room
+  candyShape(bx - 30, by - 34, 15, false);
+  candyShape(bx + 5, by - 40, 13, true);
+  candyShape(bx + 34, by - 32, 14, false);
+  // broccoli lurking at bucket edge (grumpy, NO glow — unmistakably not candy)
+  broccoliShape(bx - 52, by - 14, 13);
+  // parent hand: reaches from bottom-left toward bucket
+  const hx = 60 + S.handIn * 200, hy = 700 - S.handIn * 130;
+  ctx.strokeStyle = handSkin(); ctx.lineWidth = 26; ctx.lineCap = 'round';
+  ctx.beginPath(); ctx.moveTo(20, 740); ctx.quadraticCurveTo(120, 720, hx, hy); ctx.stroke();
+  // hand + face
+  ctx.fillStyle = handSkin(); ctx.beginPath(); ctx.arc(hx, hy, 26, 0, 7); ctx.fill();
+  ctx.fillStyle = '#1a1030';
+  const fm = S.parentFace === 'busted' ? 'open' : S.parentFace === 'ew' ? 'ew' : 'smile';
+  ctx.beginPath(); ctx.arc(hx - 9, hy - 4, 3.5, 0, 7); ctx.arc(hx + 9, hy - 4, 3.5, 0, 7); ctx.fill();
+  ctx.strokeStyle = '#1a1030'; ctx.lineWidth = 2.5; ctx.beginPath();
+  if (fm === 'open') ctx.arc(hx, hy + 10, 8, 0, 7);
+  else if (fm === 'ew') ctx.arc(hx, hy + 12, 7, Math.PI, 0);
+  else ctx.arc(hx, hy + 6, 8, 0.15 * Math.PI, 0.85 * Math.PI);
+  ctx.stroke();
+  // grabbed candy particles
+  for (const c of S.candies) candyShape(c.x, c.y, 12, c.gold);
+  // burst particles
+  for (const p of S.parts){ ctx.fillStyle = p.color; ctx.beginPath(); ctx.arc(p.x, p.y, p.s, 0, 7); ctx.fill(); }
+  // dog
+  if (S.dog){
+    const d = S.dog, bob = Math.sin(d.t * 14) * 4;
+    ctx.fillStyle = '#b07a4a'; ctx.beginPath(); ctx.arc(d.x, d.y + bob, 26, 0, 7); ctx.fill();
+    ctx.fillStyle = '#8a5a30'; ctx.beginPath(); ctx.ellipse(d.x - 26, d.y - 8 + bob, 8, 14, -.4, 0, 7); ctx.ellipse(d.x + 26, d.y - 8 + bob, 8, 14, .4, 0, 7); ctx.fill();
+    ctx.fillStyle = '#1a1030'; ctx.beginPath(); ctx.arc(d.x - 9, d.y - 4 + bob, 3.5, 0, 7); ctx.arc(d.x + 9, d.y - 4 + bob, 3.5, 0, 7); ctx.fill();
+    if (d.barked){ ctx.font = 'bold 20px Arial'; ctx.fillStyle = '#ff9d5c'; ctx.fillText('!', d.x + 30, d.y - 20 + bob); }
+    ctx.font = 'bold 13px Arial'; ctx.fillStyle = '#fff'; ctx.fillText('TAP TO SHOO', d.x - 44, d.y + 48 + bob);
+  }
+  // HUD
+  ctx.font = '900 30px Arial'; ctx.fillStyle = '#fff';
+  ctx.fillText('🍬 ' + S.score, 16, 42);
+  ctx.font = '900 20px Arial'; ctx.fillStyle = '#ffd94a';
+  ctx.fillText('⏱ ' + Math.max(0, Math.ceil(S.timeLeft)), 16, 70);
+  ctx.fillStyle = '#ff5d5d'; ctx.font = '900 26px Arial';
+  ctx.fillText('♥'.repeat(S.hearts) + '♡'.repeat(3 - S.hearts), 300, 42);
+  if (S.rush){ ctx.fillStyle = '#ff9de2'; ctx.font = '900 18px Arial'; ctx.fillText('SUGAR RUSH x2', 16, 96); }
+  if (S.streak >= 2){ ctx.fillStyle = '#7dffb0'; ctx.font = '900 18px Arial'; ctx.fillText('COMBO x' + S.streak, 300, 70); }
+  ctx.fillStyle = '#cfd2ff'; ctx.font = '16px Arial'; ctx.fillText(muted ? '🔇' : '🔊', 448, 30);
+  // popups
+  for (const p of S.pops){
+    ctx.globalAlpha = 1 - p.t / 1.1;
+    ctx.font = p.big ? '900 34px Arial' : '900 22px Arial';
+    ctx.fillStyle = p.color; ctx.textAlign = 'center';
+    ctx.fillText(p.txt, p.x, p.y - p.t * 40);
+    ctx.textAlign = 'left';
+  }
+  ctx.globalAlpha = 1;
+  // screens
+  if (S.screen === 'start'){
+    ctx.fillStyle = 'rgba(10,8,30,.72)'; ctx.fillRect(0, 0, W, H);
+    ctx.textAlign = 'center';
+    ctx.font = '900 52px Arial'; ctx.fillStyle = '#ffd94a';
+    ctx.fillText('🍬 CANDY TAX', 240, 210);
+    ctx.font = '900 26px Arial'; ctx.fillStyle = '#fff';
+    ctx.fillText("STEAL CANDY. DON'T WAKE THE KID.", 240, 260);
+    ctx.font = '20px Arial'; ctx.fillStyle = '#cfd2ff';
+    ctx.fillText('HOLD TO STEAL — RELEASE TO HIDE', 240, 300);
+    ctx.fillText('TAP THE DOG TO SHOO IT', 240, 328);
+    ctx.font = '18px Arial'; ctx.fillStyle = '#9d8cff';
+    ctx.fillText('Glowing candy = yours. Grumpy broccoli = NO.', 240, 366);
+    ctx.fillStyle = '#ff5da2'; rr(120, 400, 240, 64, 32); ctx.fill();
+    ctx.font = '900 26px Arial'; ctx.fillStyle = '#fff';
+    ctx.fillText('HOLD TO START', 240, 442);
+    ctx.font = '18px Arial'; ctx.fillStyle = '#cfd2ff';
+    ctx.fillText('Best: ' + Math.max(hi, 0) + '  •  Rank: ' + rankFor(hi), 240, 500);
+    ctx.textAlign = 'left';
+  }
+  if (S.screen === 'over'){
+    ctx.fillStyle = 'rgba(10,8,30,.78)'; ctx.fillRect(0, 0, W, H);
+    ctx.textAlign = 'center';
+    const lines = S.overReason === 'busted'
+      ? ['THE KID KNEW.', 'GROUNDED.', 'TAX AUDIT FAILED.', 'CAUGHT CANDY-HANDED.', 'THE DOG TOLD.']
+      : ['YOU GOT AWAY!', 'CLEAN GETAWAY.', 'SUGAR SMUGGLER.'];
+    const line = lines[Math.floor(Math.random() * lines.length)];
+    ctx.font = '900 46px Arial'; ctx.fillStyle = S.overReason === 'busted' ? '#ff5d5d' : '#7dffb0';
+    ctx.fillText(S.overReason === 'busted' ? 'BUSTED!' : 'ESCAPED!', 240, 230);
+    ctx.font = '900 28px Arial'; ctx.fillStyle = '#fff'; ctx.fillText(line, 240, 280);
+    ctx.font = '900 30px Arial'; ctx.fillStyle = '#ffd94a';
+    ctx.fillText('🍬 ' + S.score + '  •  ' + rankFor(S.score), 240, 330);
+    if (S.newHi){ ctx.font = '900 22px Arial'; ctx.fillStyle = '#7dffb0'; ctx.fillText('NEW BEST!', 240, 364); }
+    if (S.unlocked.length){ ctx.font = '20px Arial'; ctx.fillStyle = '#ff9de2'; ctx.fillText('UNLOCKED: ' + S.unlocked.join(', '), 240, 392); }
+    ctx.font = '18px Arial'; ctx.fillStyle = '#cfd2ff';
+    ctx.fillText('Best: ' + Math.max(hi, S.score), 240, 424);
+    ctx.fillStyle = '#ff5da2'; rr(120, 460, 240, 60, 30); ctx.fill();
+    ctx.font = '900 24px Arial'; ctx.fillStyle = '#fff'; ctx.fillText('STEAL AGAIN', 240, 498);
+    ctx.fillStyle = '#5747c9'; rr(120, 540, 240, 50, 25); ctx.fill();
+    ctx.font = '900 20px Arial'; ctx.fillText('📋 COPY BRAG', 240, 572);
+    ctx.font = '18px Arial'; ctx.fillStyle = '#9d8cff';
+    ctx.fillText('Tap anywhere else to restart', 240, 620);
+    ctx.textAlign = 'left';
+  }
+  ctx.restore();
+}
+// copy brag (button zone handled via click listener below)
+cv.addEventListener('click', e => {
+  if (S.screen !== 'over') return;
+  const p = pos(e);
+  if (p.y > 540 && p.y < 590){
+    const txt = 'I scored ' + S.score + ' in CANDY TAX — stole candy, dodged a kid, got judged by a dog. Play: https://tuannx.github.io/daily-mini-games/games/candy-tax.html';
+    try { navigator.clipboard.writeText(txt); popup(240, 520, 'COPIED!', '#7dffb0', true); }
+    catch(err){ popup(240, 520, 'COPY FAILED', '#ff5d5d', true); }
+  }
+});
+// ---------- loop ----------
+let last = performance.now();
+function loop(now){
+  const dt = Math.min(.05, (now - last) / 1000); last = now;
+  update(dt); draw();
+  requestAnimationFrame(loop);
+}
+requestAnimationFrame(loop);
+</script>
+</body>
+</html>
