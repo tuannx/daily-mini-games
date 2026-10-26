@@ -222,5 +222,14 @@
     "mechanic": "Hold-to-steal candy heist",
     "tagline": "Steal candy from your own kid. Eyes flutter? FREEZE. The dog knows everything.",
     "title": "CANDY TAX"
+  },
+  {
+    "date": "2026-10-26",
+    "day": 26,
+    "emoji": "🤖",
+    "file": "games/roomba-rampage.html",
+    "mechanic": "Steer-the-Roomba dust chase (cats ride you)",
+    "tagline": "Suck the dust. Dodge the cats. One WILL ride you.",
+    "title": "ROOMBA RAMPAGE"
   }
 ]
