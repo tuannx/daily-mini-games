@@ -231,5 +231,14 @@
     "mechanic": "Steer-the-Roomba dust chase (cats ride you)",
     "tagline": "Suck the dust. Dodge the cats. One WILL ride you.",
     "title": "ROOMBA RAMPAGE"
+  },
+  {
+    "date": "2026-10-27",
+    "day": 27,
+    "emoji": "🪰",
+    "file": "games/swat-the-fly.html",
+    "mechanic": "Tap-to-swat fly chase (flies dodge, helmet boss, twins)",
+    "tagline": "Swat the smug flies. NEVER swat the bee — the union stings back.",
+    "title": "SWAT THE FLY"
   }
 ]

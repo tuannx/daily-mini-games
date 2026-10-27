@@ -1,0 +1,466 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
+<title>SWAT THE FLY — Swat flies. Spare bees.</title>
+<style>
+  *{margin:0;padding:0;box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+  html,body{height:100%;background:#0d0b1e;overflow:hidden}
+  body{display:flex;align-items:center;justify-content:center;font-family:system-ui,'Arial Black',Arial,sans-serif;user-select:none;-webkit-user-select:none;touch-action:none}
+  #wrap{position:relative;width:100%;max-width:480px;height:100%;max-height:860px}
+  canvas{display:block;width:100%;height:100%;background:#141233}
+  .btn{position:absolute;top:8px;width:38px;height:38px;border:2px solid #35e0ff;border-radius:50%;background:rgba(13,11,30,.7);color:#fff;font-size:17px;line-height:34px;text-align:center;cursor:pointer;z-index:5}
+  #pauseBtn{right:8px} #muteBtn{right:52px}
+</style>
+</head>
+<body>
+<div id="wrap">
+<canvas id="c" width="480" height="760"></canvas>
+<div class="btn" id="muteBtn">♪</div>
+<div class="btn" id="pauseBtn">II</div>
+</div>
+<script>
+'use strict';
+/* SWAT THE FLY, NOT THE BEE — tap flies, never tap bees.
+   Twist: at 15s flies LEARN TO DODGE your swat; at 30s a helmet boss needs
+   3 hits; at 45s twin flies split into two fast minis on first hit.
+   One family, one role: ONLY glowing smug flies = tap. ONLY red angry
+   bees = never tap (sting = lose a life). Background ants are neutral,
+   faceless, no glow. No role swaps anywhere. */
+const cv = document.getElementById('c');
+const ctx = cv.getContext('2d');
+const W = 480, H = 760;
+const GAME_URL = 'https://tuannx.github.io/daily-mini-games/games/swat-the-fly.html';
+
+// ---------- audio (WebAudio, self-generated, no assets) ----------
+let AC = null, muted = false;
+function beep(f, d, type, vol){
+  if (muted) return;
+  try {
+    AC = AC || new (window.AudioContext || window.webkitAudioContext)();
+    const o = AC.createOscillator(), g = AC.createGain();
+    o.type = type || 'sine'; o.frequency.value = f;
+    g.gain.setValueAtTime(vol || 0.12, AC.currentTime);
+    g.gain.exponentialRampToValueAtTime(0.001, AC.currentTime + d);
+    o.connect(g); g.connect(AC.destination);
+    o.start(); o.stop(AC.currentTime + d);
+  } catch(e){}
+}
+const sHit  = ()=>{ beep(900,.07,'square',.11); setTimeout(()=>beep(500,.09,'square',.10),60); };
+const sGold = ()=>{ beep(880,.1,'sine',.12); setTimeout(()=>beep(1320,.14,'sine',.12),70); };
+const sSting= ()=>{ beep(220,.22,'sawtooth',.14); setTimeout(()=>beep(140,.3,'sawtooth',.14),110); };
+const sNear = ()=>beep(990,.09,'sine',.11);
+const sDodge= ()=>{ beep(600,.08,'sine',.11); setTimeout(()=>beep(900,.1,'sine',.11),70); };
+const sOver = ()=>{ beep(330,.25,'sawtooth',.12); setTimeout(()=>beep(220,.35,'sawtooth',.12),140); };
+
+// ---------- storage ----------
+const HI_KEY = 'swatfly_hi', SK_KEY = 'swatfly_skins';
+let best = +(localStorage.getItem(HI_KEY) || 0);
+let skins = JSON.parse(localStorage.getItem(SK_KEY) || '["NORMAL"]');
+const RANKS = [[0,'FLY FLUNKER'],[100,'SWATTER ROOKIE'],[250,'PICNIC GUARD'],[450,'SWAT LEGEND']];
+function rankFor(sc){ let r = RANKS[0][1]; for (const n of RANKS) if (sc >= n[0]) r = n[1]; return r; }
+function swatColor(){
+  if (skins.includes('DISCO')) return '#ff5df2';
+  if (skins.includes('GOLD')) return '#ffd94a';
+  return '#35e0ff';
+}
+const OVER_LINES = [
+  'The bees filed a complaint.',
+  'Swatted by your own picnic.',
+  'The flies are laughing. Audibly.',
+  'Bee union wins again.',
+  'You brought a swatter. They brought lawyers.'
+];
+
+// ---------- state ----------
+let state = 'start'; // start | play | pause | over
+let S = null;
+function newGame(){
+  S = {
+    score: 0, timeLeft: 60, lives: 3, combo: 0, elapsed: 0,
+    flies: [], bees: [], parts: [], pops: [],
+    flyT: 0.4, beeT: 1.6, goldT: 12,
+    rx: W/2, ry: H/2, slap: null, shake: 0,
+    overLine: '', copied: false, newSkin: ''
+  };
+  for (let i = 0; i < 14; i++) S.parts.push(null);
+  S.parts = [];
+  // background pollen dots (neutral, drifting, no interaction)
+  S.pollen = [];
+  for (let i = 0; i < 22; i++) S.pollen.push({x: Math.random()*W, y: Math.random()*H, r: 1.5+Math.random()*2.5, p: Math.random()*6.28});
+  // background ants marching along the bottom (neutral, faceless, no glow)
+  S.ants = [];
+  for (let i = 0; i < 6; i++) S.ants.push({x: i*80+20, y: H-24-(i%2)*14, s: 14+Math.random()*10});
+  for (let i = 0; i < 3; i++) spawnFly('normal');
+  spawnBee();
+}
+function spawnFly(kind){
+  const golden = kind === 'gold';
+  const mini = kind === 'mini';
+  const helmet = kind === 'helmet';
+  const r = golden ? 22 : mini ? 13 : helmet ? 30 : 19;
+  const a = Math.random()*Math.PI*2, sp = (mini ? 150 : golden ? 130 : 95) + Math.random()*40 + Math.min(S.elapsed*1.2, 60);
+  S.flies.push({
+    kind, r, x: 40+Math.random()*(W-80), y: 90+Math.random()*(H-220),
+    vx: Math.cos(a)*sp, vy: Math.sin(a)*sp, ph: Math.random()*6.28,
+    hp: helmet ? 3 : 1, dodgeCd: 0, dash: 0, wing: Math.random()*6.28,
+    twin: kind === 'twin'
+  });
+}
+function spawnBee(){
+  const a = Math.random()*Math.PI*2, sp = 70+Math.random()*40+Math.min(S.elapsed, 40);
+  S.bees.push({x: 40+Math.random()*(W-80), y: 90+Math.random()*(H-220),
+    vx: Math.cos(a)*sp, vy: Math.sin(a)*sp, ph: Math.random()*6.28, r: 24, wing: Math.random()*6.28});
+}
+function addPop(x, y, txt, col){
+  S.pops.push({x, y, txt, col: col || '#fff', t: 0});
+}
+function burst(x, y, col, n){
+  for (let i = 0; i < (n || 12); i++){
+    const a = Math.random()*Math.PI*2, sp = 40+Math.random()*120;
+    S.parts.push({x, y, vx: Math.cos(a)*sp, vy: Math.sin(a)*sp, col, t: 0, r: 2+Math.random()*3});
+  }
+}
+function popupNearFly(x, y){ return S.flies.concat([]); }
+
+// ---------- swat ----------
+function swat(x, y){
+  if (state !== 'play') return;
+  S.rx = x; S.ry = y; S.slap = {x, y, t: 0};
+  // bees first: tapping a bee is always bad
+  for (let i = 0; i < S.bees.length; i++){
+    const b = S.bees[i];
+    if (Math.hypot(b.x-x, b.y-y) < b.r+6){
+      S.lives--; S.combo = 0; S.shake = 10;
+      burst(x, y, '#ff4d5e', 16); addPop(x, y-24, 'OUCH!', '#ff4d5e'); sSting();
+      S.bees.splice(i, 1); spawnBee();
+      if (S.lives <= 0) endGame();
+      return;
+    }
+  }
+  // flies
+  let hitIdx = -1, hitD = 1e9;
+  S.flies.forEach((f, i)=>{
+    const d = Math.hypot(f.x-x, f.y-y);
+    if (d < f.r+8 && d < hitD){ hitD = d; hitIdx = i; }
+  });
+  if (hitIdx >= 0){
+    const f = S.flies[hitIdx];
+    if (f.kind === 'helmet' && f.hp > 1){
+      f.hp--; S.combo++; S.score += 10;
+      addPop(f.x, f.y-28, 'CRACK!', '#ffd94a'); sHit(); burst(f.x, f.y, '#c0c8d8', 8);
+      return;
+    }
+    S.flies.splice(hitIdx, 1);
+    S.combo++; S.score += f.kind === 'gold' ? 50 : f.kind === 'mini' ? 15 : f.kind === 'helmet' ? 50 : 10;
+    if (S.combo > 0 && S.combo % 5 === 0){ S.score += 25; addPop(f.x, f.y-30, 'STREAK!', '#35e0ff'); }
+    else if (f.kind === 'gold'){ addPop(f.x, f.y-30, 'GOLD!', '#ffd94a'); sGold(); }
+    else sHit();
+    burst(f.x, f.y, f.kind === 'gold' ? '#ffd94a' : '#7dff9a', 14);
+    if (f.twin){
+      addPop(f.x, f.y-30, 'TWINS!', '#ff9de2');
+      spawnFly('mini'); spawnFly('mini');
+    }
+    return;
+  }
+  // near-miss / dodge: nearest fly within range
+  let near = null, nearD = 1e9;
+  S.flies.forEach((f)=>{
+    const d = Math.hypot(f.x-x, f.y-y);
+    if (d < nearD){ nearD = d; near = f; }
+  });
+  if (near && S.elapsed >= 15 && nearD < near.r+55 && near.dodgeCd <= 0){
+    // fly dodges: dash away from the swat
+    const a = Math.atan2(near.y-y, near.x-x);
+    near.vx = Math.cos(a)*320; near.vy = Math.sin(a)*320; near.dash = 0.45; near.dodgeCd = 2.5;
+    addPop(near.x, near.y-28, 'HA!', '#ff9de2'); sDodge();
+  } else if (near && nearD < near.r+30){
+    S.score += 5; addPop(x, y-24, 'SO CLOSE!', '#35e0ff'); sNear();
+  }
+}
+function endGame(){
+  state = 'over'; sOver();
+  S.overLine = OVER_LINES[Math.floor(Math.random()*OVER_LINES.length)];
+  if (S.score > best){ best = S.score; localStorage.setItem(HI_KEY, String(best)); }
+  S.newSkin = '';
+  if (S.score >= 400 && !skins.includes('DISCO')){ skins.push('DISCO'); S.newSkin = 'DISCO SWATTER!'; }
+  else if (S.score >= 200 && !skins.includes('GOLD')){ skins.push('GOLD'); S.newSkin = 'GOLD SWATTER!'; }
+  if (S.newSkin) localStorage.setItem(SK_KEY, JSON.stringify(skins));
+}
+
+// ---------- update ----------
+let last = 0;
+function update(dt){
+  if (state !== 'play') return;
+  S.elapsed += dt; S.timeLeft -= dt;
+  if (S.slap) S.slap.t += dt;
+  if (S.shake > 0) S.shake -= dt*40;
+  // spawns, escalating every 15s
+  S.flyT -= dt; S.beeT -= dt; S.goldT -= dt;
+  const flyInt = Math.max(0.55, 0.95 - S.elapsed*0.008);
+  const beeInt = Math.max(1.4, 2.6 - S.elapsed*0.02);
+  if (S.flyT <= 0){
+    S.flyT = flyInt;
+    if (S.elapsed >= 45 && Math.random() < 0.3) spawnFly('twin');
+    else spawnFly('normal');
+  }
+  if (S.beeT <= 0){ S.beeT = beeInt; if (S.bees.length < 4) spawnBee(); }
+  if (S.goldT <= 0){ S.goldT = 16+Math.random()*6; spawnFly('gold'); }
+  if (S.elapsed >= 30 && !S.flies.some(f=>f.kind==='helmet') && Math.random() < dt*0.25) spawnFly('helmet');
+  if (S.flies.length < 3) spawnFly('normal');
+
+  const move = (o, dt)=>{
+    o.ph += dt*3; o.wing += dt*22;
+    if (o.dash > 0){ o.dash -= dt; }
+    else { o.vx += Math.cos(o.ph)*30*dt; o.vy += Math.sin(o.ph)*30*dt; }
+    if (o.dodgeCd > 0) o.dodgeCd -= dt;
+    o.x += o.vx*dt; o.y += o.vy*dt;
+    const m = 30;
+    if (o.x < m){ o.x = m; o.vx = Math.abs(o.vx); }
+    if (o.x > W-m){ o.x = W-m; o.vx = -Math.abs(o.vx); }
+    if (o.y < 70){ o.y = 70; o.vy = Math.abs(o.vy); }
+    if (o.y > H-m){ o.y = H-m; o.vy = -Math.abs(o.vy); }
+    const sp = Math.hypot(o.vx, o.vy), cap = o.kind === 'mini' ? 260 : 200;
+    if (sp > cap){ o.vx *= cap/sp; o.vy *= cap/sp; }
+  };
+  S.flies.forEach(f=>move(f, dt));
+  S.bees.forEach(b=>move(b, dt));
+  S.pollen.forEach(p=>{ p.y += 6*dt; p.x += Math.sin(p.p += dt)*8*dt; if (p.y > H) p.y = 0; });
+  S.ants.forEach(a=>{ a.x += a.s*dt; if (a.x > W+20) a.x = -20; });
+  S.parts.forEach(p=>{ p.t += dt; p.x += p.vx*dt; p.y += p.vy*dt; p.vy += 120*dt; });
+  S.parts = S.parts.filter(p=>p.t < 0.7);
+  S.pops.forEach(p=>{ p.t += dt; p.y -= 30*dt; });
+  S.pops = S.pops.filter(p=>p.t < 1.1);
+  if (S.timeLeft <= 0){ S.timeLeft = 0; endGame(); }
+}
+
+// ---------- draw ----------
+function rr(x, y, w, h, r){
+  ctx.beginPath(); ctx.moveTo(x+r, y); ctx.arcTo(x+w, y, x+w, y+h, r); ctx.arcTo(x+w, y+h, x, y+h, r);
+  ctx.arcTo(x, y+h, x, y, r); ctx.arcTo(x, y, x+w, y, r); ctx.closePath();
+}
+function text(t, x, y, size, col, align){
+  ctx.fillStyle = col || '#fff'; ctx.font = size + 'px "Arial Black", Arial, sans-serif';
+  ctx.textAlign = align || 'center'; ctx.textBaseline = 'middle'; ctx.fillText(t, x, y);
+}
+function drawFly(f){
+  const gold = f.kind === 'gold', helmet = f.kind === 'helmet';
+  const glow = gold ? '#ffd94a' : '#7dff9a';
+  ctx.save(); ctx.translate(f.x, f.y);
+  ctx.shadowColor = glow; ctx.shadowBlur = 18;
+  ctx.fillStyle = gold ? '#ffe27a' : '#2b3a2e';
+  ctx.beginPath(); ctx.ellipse(0, 0, f.r, f.r*0.82, 0, 0, Math.PI*2); ctx.fill();
+  ctx.shadowBlur = 0;
+  // wings
+  const wflap = Math.sin(f.wing)*0.5+0.6;
+  ctx.fillStyle = 'rgba(200,240,255,.55)';
+  ctx.beginPath(); ctx.ellipse(-f.r*0.5, -f.r*0.9, f.r*0.55*wflap, f.r*0.32, -0.5, 0, Math.PI*2); ctx.fill();
+  ctx.beginPath(); ctx.ellipse(f.r*0.5, -f.r*0.9, f.r*0.55*wflap, f.r*0.32, 0.5, 0, Math.PI*2); ctx.fill();
+  // smug eyes + smirk
+  ctx.fillStyle = '#fff';
+  ctx.beginPath(); ctx.arc(-f.r*0.35, -f.r*0.15, f.r*0.24, 0, Math.PI*2); ctx.fill();
+  ctx.beginPath(); ctx.arc(f.r*0.35, -f.r*0.15, f.r*0.24, 0, Math.PI*2); ctx.fill();
+  ctx.fillStyle = '#111';
+  ctx.beginPath(); ctx.arc(-f.r*0.3, -f.r*0.05, f.r*0.1, 0, Math.PI*2); ctx.fill();
+  ctx.beginPath(); ctx.arc(f.r*0.42, -f.r*0.05, f.r*0.1, 0, Math.PI*2); ctx.fill();
+  ctx.strokeStyle = '#fff'; ctx.lineWidth = 2; ctx.beginPath();
+  ctx.arc(f.r*0.1, f.r*0.35, f.r*0.3, 0.15, Math.PI-0.5); ctx.stroke();
+  if (helmet){
+    ctx.fillStyle = '#aab4c4';
+    ctx.beginPath(); ctx.arc(0, -f.r*0.25, f.r*0.95, Math.PI, 0); ctx.fill();
+    ctx.strokeStyle = '#5a6472'; ctx.lineWidth = 2;
+    const cracks = 3 - f.hp;
+    for (let i = 0; i < cracks; i++){
+      ctx.beginPath(); ctx.moveTo(-f.r*0.4+i*f.r*0.4, -f.r*0.9);
+      ctx.lineTo(-f.r*0.2+i*f.r*0.4, -f.r*0.45); ctx.lineTo(-f.r*0.35+i*f.r*0.4, -f.r*0.2); ctx.stroke();
+    }
+  }
+  ctx.restore();
+}
+function drawBee(b){
+  ctx.save(); ctx.translate(b.x, b.y);
+  ctx.fillStyle = 'rgba(200,240,255,.5)';
+  const wflap = Math.sin(b.wing)*0.5+0.6;
+  ctx.beginPath(); ctx.ellipse(-14, -20, 14*wflap, 8, -0.5, 0, Math.PI*2); ctx.fill();
+  ctx.beginPath(); ctx.ellipse(14, -20, 14*wflap, 8, 0.5, 0, Math.PI*2); ctx.fill();
+  // red angry body, NO glow (glow = tap target only)
+  ctx.fillStyle = '#c22e3d';
+  ctx.beginPath(); ctx.ellipse(0, 0, b.r, b.r*0.85, 0, 0, Math.PI*2); ctx.fill();
+  ctx.fillStyle = '#ffd94a';
+  ctx.fillRect(-b.r*0.6, -b.r*0.4, b.r*0.35, b.r*0.8);
+  ctx.fillRect(b.r*0.25, -b.r*0.4, b.r*0.35, b.r*0.8);
+  // angry brows + gritted mouth
+  ctx.strokeStyle = '#111'; ctx.lineWidth = 3; ctx.beginPath();
+  ctx.moveTo(-16, -10); ctx.lineTo(-4, -4); ctx.moveTo(16, -10); ctx.lineTo(4, -4); ctx.stroke();
+  ctx.fillStyle = '#fff';
+  ctx.beginPath(); ctx.arc(-8, -2, 5, 0, Math.PI*2); ctx.fill();
+  ctx.beginPath(); ctx.arc(8, -2, 5, 0, Math.PI*2); ctx.fill();
+  ctx.fillStyle = '#111';
+  ctx.beginPath(); ctx.arc(-8, -1, 2.5, 0, Math.PI*2); ctx.fill();
+  ctx.beginPath(); ctx.arc(8, -1, 2.5, 0, Math.PI*2); ctx.fill();
+  ctx.strokeStyle = '#fff'; ctx.lineWidth = 2; ctx.beginPath();
+  ctx.moveTo(-10, 12); ctx.lineTo(10, 12); ctx.stroke();
+  ctx.restore();
+}
+function drawSwatter(){
+  const col = swatColor();
+  ctx.save(); ctx.translate(S.rx, S.ry);
+  if (S.slap && S.slap.t < 0.18){
+    ctx.scale(1+S.slap.t*2, 1+S.slap.t*2);
+    ctx.fillStyle = 'rgba(255,255,255,.25)';
+    ctx.beginPath(); ctx.arc(0, 0, 42, 0, Math.PI*2); ctx.fill();
+  }
+  ctx.rotate(-0.5);
+  ctx.strokeStyle = col; ctx.lineWidth = 4;
+  ctx.beginPath(); ctx.moveTo(0, 0); ctx.lineTo(26, 26); ctx.stroke();
+  ctx.fillStyle = col; ctx.globalAlpha = 0.9;
+  ctx.beginPath(); ctx.ellipse(0, 0, 22, 26, 0, 0, Math.PI*2); ctx.fill();
+  ctx.globalAlpha = 1; ctx.fillStyle = '#0d0b1e';
+  for (let i = -1; i <= 1; i++) for (let j = -1; j <= 1; j++){
+    ctx.beginPath(); ctx.arc(i*11, j*12, 3.5, 0, Math.PI*2); ctx.fill();
+  }
+  ctx.restore();
+}
+function draw(){
+  ctx.save();
+  if (S && S.shake > 0) ctx.translate((Math.random()-0.5)*S.shake, (Math.random()-0.5)*S.shake);
+  ctx.fillStyle = '#141233'; ctx.fillRect(-20, -20, W+40, H+40);
+  // neon picnic dots
+  ctx.fillStyle = 'rgba(53,224,255,.12)';
+  for (let x = 0; x < W; x += 60) for (let y = 0; y < H; y += 60){
+    ctx.beginPath(); ctx.arc(x+30, y+30, 2, 0, Math.PI*2); ctx.fill();
+  }
+  if (S){
+    ctx.fillStyle = 'rgba(255,255,255,.35)';
+    S.pollen.forEach(p=>{ ctx.beginPath(); ctx.arc(p.x, p.y, p.r, 0, Math.PI*2); ctx.fill(); });
+    // ants: dark neutral bodies, no faces, no glow
+    ctx.fillStyle = '#3a3f5a';
+    S.ants.forEach(a=>{
+      ctx.beginPath(); ctx.arc(a.x, a.y, 5, 0, Math.PI*2); ctx.fill();
+      ctx.beginPath(); ctx.arc(a.x+9, a.y, 4, 0, Math.PI*2); ctx.fill();
+      ctx.beginPath(); ctx.arc(a.x-9, a.y, 4, 0, Math.PI*2); ctx.fill();
+    });
+    S.bees.forEach(drawBee);
+    S.flies.forEach(drawFly);
+    S.parts.forEach(p=>{
+      ctx.globalAlpha = 1-p.t/0.7; ctx.fillStyle = p.col;
+      ctx.beginPath(); ctx.arc(p.x, p.y, p.r, 0, Math.PI*2); ctx.fill();
+    });
+    ctx.globalAlpha = 1;
+    S.pops.forEach(p=>{ ctx.globalAlpha = 1-p.t/1.1; text(p.txt, p.x, p.y, 24, p.col); });
+    ctx.globalAlpha = 1;
+  }
+  ctx.restore();
+
+  if (state === 'start'){
+    ctx.fillStyle = 'rgba(13,11,30,.72)'; ctx.fillRect(0, 0, W, H);
+    text('🪰', W/2, 150, 90, '#fff');
+    text('SWAT THE FLY', W/2, 250, 44, '#7dff9a');
+    text('NOT THE BEE', W/2, 300, 30, '#ff4d5e');
+    text('Swat flies. Spare bees.', W/2, 360, 22, '#fff');
+    ctx.fillStyle = '#7dff9a'; rr(W/2-130, 410, 260, 56, 28); ctx.fill();
+    text('TAP TO START', W/2, 439, 24, '#0d0b1e');
+    text('BEST: ' + best, W/2, 500, 20, '#ffd94a');
+    text('Glow = swat  •  Red + angry = NEVER', W/2, 540, 17, '#aaa');
+    text('Arrows move swatter • Space swats', W/2, 570, 17, '#aaa');
+  } else if (S){
+    // HUD
+    text('★ ' + S.score, 14, 30, 24, '#ffd94a', 'left');
+    text(Math.ceil(S.timeLeft) + 's', W/2, 30, 26, '#fff');
+    let hearts = '';
+    for (let i = 0; i < S.lives; i++) hearts += '♥';
+    text(hearts, W-14, 30, 24, '#ff4d5e', 'right');
+    if (S.combo >= 2) text('x' + S.combo + ' COMBO', 14, 58, 17, '#35e0ff', 'left');
+    if (state === 'play') drawSwatter();
+    if (state === 'pause'){
+      ctx.fillStyle = 'rgba(13,11,30,.7)'; ctx.fillRect(0, 0, W, H);
+      text('PAUSED', W/2, H/2, 40, '#fff');
+      text('Tap II to resume', W/2, H/2+50, 20, '#aaa');
+    }
+    if (state === 'over'){
+      ctx.fillStyle = 'rgba(13,11,30,.78)'; ctx.fillRect(0, 0, W, H);
+      text('GAME OVER', W/2, 210, 40, '#ff4d5e');
+      text(S.overLine, W/2, 260, 20, '#fff');
+      text('SCORE ' + S.score + '  •  BEST ' + best, W/2, 310, 22, '#ffd94a');
+      text('RANK: ' + rankFor(S.score), W/2, 350, 22, '#35e0ff');
+      if (S.newSkin) text('UNLOCKED: ' + S.newSkin, W/2, 390, 20, '#ff5df2');
+      ctx.fillStyle = '#7dff9a'; rr(W/2-130, 430, 260, 56, 28); ctx.fill();
+      text('PLAY AGAIN', W/2, 459, 22, '#0d0b1e');
+      ctx.fillStyle = '#35e0ff'; rr(W/2-130, 500, 260, 56, 28); ctx.fill();
+      text(S.copied ? 'COPIED!' : 'COPY RESULT', W/2, 529, 22, '#0d0b1e');
+      text('R = again  •  C = copy', W/2, 590, 17, '#aaa');
+    }
+  }
+}
+function loop(t){
+  const dt = Math.min(0.05, (t - last)/1000 || 0);
+  last = t;
+  update(dt);
+  draw();
+  requestAnimationFrame(loop);
+}
+
+// ---------- input ----------
+function posOf(e){
+  const r = cv.getBoundingClientRect();
+  const cx = (e.touches ? e.touches[0].clientX : e.clientX);
+  const cy = (e.touches ? e.touches[0].clientY : e.clientY);
+  return {x: (cx-r.left)*W/r.width, y: (cy-r.top)*H/r.height};
+}
+cv.addEventListener('pointerdown', (e)=>{
+  e.preventDefault();
+  const p = posOf(e);
+  if (state === 'start'){ newGame(); state = 'play'; return; }
+  if (state === 'pause') return;
+  if (state === 'over'){
+    if (p.y >= 430 && p.y <= 486 && p.x >= W/2-130 && p.x <= W/2+130){ newGame(); state = 'play'; }
+    else if (p.y >= 500 && p.y <= 556 && p.x >= W/2-130 && p.x <= W/2+130){ copyResult(); }
+    return;
+  }
+  swat(p.x, p.y);
+});
+cv.addEventListener('pointermove', (e)=>{
+  if (state !== 'play') return;
+  const p = posOf(e); S.rx = p.x; S.ry = p.y;
+});
+function copyResult(){
+  const txt = 'I swatted ' + S.score + ' pts in SWAT THE FLY (rank: ' + rankFor(S.score) + ') — bees stung me ' + (3-S.lives) + 'x. Play: ' + GAME_URL;
+  try {
+    if (navigator.clipboard) navigator.clipboard.writeText(txt).then(()=>{ S.copied = true; });
+    else { const ta = document.createElement('textarea'); ta.value = txt; document.body.appendChild(ta); ta.select(); document.execCommand('copy'); ta.remove(); S.copied = true; }
+  } catch(e){}
+}
+const keys = {};
+window.addEventListener('keydown', (e)=>{
+  keys[e.key] = true;
+  if (state === 'start' && (e.key === 'Enter' || e.key === ' ')){ newGame(); state = 'play'; }
+  else if (state === 'over' && (e.key === 'r' || e.key === 'R')){ newGame(); state = 'play'; }
+  else if (state === 'over' && (e.key === 'c' || e.key === 'C')){ copyResult(); }
+  else if (e.key === 'p' || e.key === 'P'){ togglePause(); }
+  else if (state === 'play' && e.key === ' '){ e.preventDefault(); swat(S.rx, S.ry); }
+});
+window.addEventListener('keyup', (e)=>{ keys[e.key] = false; });
+setInterval(()=>{
+  if (state !== 'play' || !S) return;
+  const sp = 320;
+  if (keys['ArrowLeft']) S.rx -= sp*0.016;
+  if (keys['ArrowRight']) S.rx += sp*0.016;
+  if (keys['ArrowUp']) S.ry -= sp*0.016;
+  if (keys['ArrowDown']) S.ry += sp*0.016;
+  S.rx = Math.max(10, Math.min(W-10, S.rx));
+  S.ry = Math.max(70, Math.min(H-10, S.ry));
+}, 16);
+function togglePause(){
+  if (state === 'play') state = 'pause';
+  else if (state === 'pause') state = 'play';
+}
+document.getElementById('pauseBtn').addEventListener('click', togglePause);
+document.getElementById('muteBtn').addEventListener('click', function(){
+  muted = !muted; this.textContent = muted ? '✕' : '♪';
+});
+newGame(); state = 'start';
+requestAnimationFrame(loop);
+</script>
+</body>
+</html>
