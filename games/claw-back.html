@@ -1,0 +1,448 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
+<title>CLAW BACK! — Grab cute. Miss — it hates you.</title>
+<style>
+  *{margin:0;padding:0;box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+  html,body{height:100%;background:#0d0b1e;overflow:hidden}
+  body{display:flex;align-items:center;justify-content:center;font-family:system-ui,'Arial Black',Arial,sans-serif;user-select:none;-webkit-user-select:none;touch-action:none}
+  #wrap{position:relative;width:100%;max-width:480px;height:100%;max-height:860px}
+  canvas{display:block;width:100%;height:100%;background:#141233}
+  .btn{position:absolute;top:8px;width:38px;height:38px;border:2px solid #35e0ff;border-radius:50%;background:rgba(13,11,30,.7);color:#fff;font-size:17px;line-height:34px;text-align:center;cursor:pointer;z-index:5}
+  #pauseBtn{right:8px} #muteBtn{right:52px}
+</style>
+</head>
+<body>
+<div id="wrap">
+<canvas id="c" width="480" height="760"></canvas>
+<div class="btn" id="muteBtn">♪</div>
+<div class="btn" id="pauseBtn">II</div>
+</div>
+<script>
+'use strict';
+/* CLAW BACK! — claw-machine revenge.
+   Move the claw, tap to drop, grab GLOWING cute plush. Twist: every MISS
+   insults the nearest plush — it flashes 0.6s, then morphs ANGRY (new shape,
+   red/purple, angry face, glow gone) and hunts your claw. Grab an angry one
+   and it BITES (lose a life). Escalation at 15s/30s/45s: faster pile, more angry.
+   One family, one role: ONLY glowing pastel plush = grab. ONLY red/purple
+   angry plush = never grab. Role change only via the 0.6s 4-signal morph. */
+const cv = document.getElementById('c');
+const ctx = cv.getContext('2d');
+const W = 480, H = 760;
+const GAME_URL = 'https://tuannx.github.io/daily-mini-games/games/claw-back.html';
+const HS_KEY = 'clawback-highscore';
+
+// ---------- audio (WebAudio, self-generated, no assets) ----------
+let AC = null, muted = false;
+function beep(f, d, type, vol){
+  if (muted) return;
+  try {
+    AC = AC || new (window.AudioContext || window.webkitAudioContext)();
+    const o = AC.createOscillator(), g = AC.createGain();
+    o.type = type || 'sine'; o.frequency.value = f;
+    g.gain.setValueAtTime(vol || 0.12, AC.currentTime);
+    g.gain.exponentialRampToValueAtTime(0.001, AC.currentTime + d);
+    o.connect(g); g.connect(AC.destination);
+    o.start(); o.stop(AC.currentTime + d);
+  } catch(e){}
+}
+const sGrab = ()=>{ beep(700,.08,'square',.11); setTimeout(()=>beep(1050,.12,'square',.10),70); };
+const sBite = ()=>{ beep(160,.25,'sawtooth',.14); setTimeout(()=>beep(110,.3,'sawtooth',.12),120); };
+const sMiss = ()=>{ beep(300,.15,'triangle',.11); setTimeout(()=>beep(200,.2,'triangle',.10),130); };
+const sGold = ()=>{ [880,1100,1320].forEach((f,i)=>setTimeout(()=>beep(f,.12,'square',.10),i*70)); };
+const sOver = ()=>{ [440,330,220,160].forEach((f,i)=>setTimeout(()=>beep(f,.18,'triangle',.11),i*140)); };
+
+// ---------- state ----------
+let state = 'menu'; // menu | play | pause | over
+let score = 0, combo = 0, lives = 3, timeLeft = 60, elapsed = 0;
+let high = +(localStorage.getItem(HS_KEY) || 0);
+let claw = { x: 240, y: 96, vy: 0, mode: 'idle', grab: null, shake: 0, slowUntil: 0 };
+let plush = [], parts = [], popups = [];
+let spawnT = 0, goldT = 9, shakeT = 0, flashT = 0;
+let keys = {};
+const ROASTS = [
+  'The plush union filed a complaint.',
+  'The claw has anger issues now.',
+  'Even the golden one is judging you.',
+  'HR wants to see the claw.',
+  'The pile remembers EVERY miss.',
+  'Claw certification: REVOKED.'
+];
+const RANKS = [[0,'CLAW ROOKIE'],[100,'PLUSH PIRATE'],[250,'TOY TYRANT'],[450,'CLAW LEGEND']];
+function rankFor(s){ let r = RANKS[0][1]; RANKS.forEach(rk => { if (s >= rk[0]) r = rk[1]; }); return r; }
+
+const GOOD_SHAPES = [
+  { body:'#ffb3d1', ear:'#ff8fb8', kind:'bear' },
+  { body:'#b3e5ff', ear:'#7cc9ff', kind:'bunny' },
+  { body:'#c8ffb3', ear:'#8fe57c', kind:'dino' }
+];
+function rand(a, b){ return a + Math.random() * (b - a); }
+function pick(arr){ return arr[Math.floor(Math.random() * arr.length)]; }
+
+function spawnPlush(angry){
+  const y = rand(600, 700);
+  if (angry) {
+    plush.push({ x: rand(50, 430), y, vx: rand(-40, 40), vy: 0, r: 30, angry: true,
+      morph: 0, hop: rand(0, 2), body: pick(['#ff4d5e', '#b04dff']), face: 'angry',
+      squash: 1, golden: false });
+  } else {
+    const s = pick(GOOD_SHAPES);
+    plush.push({ x: rand(50, 430), y, vx: rand(-25, 25), vy: 0, r: 30, angry: false,
+      morph: 0, hop: rand(0, 2), body: s.body, ear: s.ear, kind: s.kind,
+      squash: 1, golden: false, bob: rand(0, 6) });
+  }
+}
+function reset(){
+  score = 0; combo = 0; lives = 3; timeLeft = 60; elapsed = 0;
+  claw = { x: 240, y: 96, vy: 0, mode: 'idle', grab: null, shake: 0, slowUntil: 0 };
+  plush = []; parts = []; popups = []; spawnT = 0; goldT = 9; shakeT = 0; flashT = 0;
+  for (let i = 0; i < 7; i++) spawnPlush(false);
+}
+function popup(txt, x, y, color){
+  popups.push({ txt, x, y, t: 1.1, color: color || '#fff' });
+}
+function burst(x, y, color, n){
+  for (let i = 0; i < (n || 14); i++)
+    parts.push({ x, y, vx: rand(-160, 160), vy: rand(-220, -20), t: rand(.5, 1), color: pick([color, '#fff', '#ffd93d']) });
+}
+function nearestGood(x, y){
+  let best = null, bd = 1e9;
+  plush.forEach(p => { if (!p.angry && p.morph <= 0) { const d = Math.hypot(p.x - x, p.y - y); if (d < bd) { bd = d; best = p; } } });
+  return { p: best, d: bd };
+}
+
+// ---------- input ----------
+let pd = null;
+function canvasPos(e){
+  const r = cv.getBoundingClientRect();
+  const t = e.touches ? e.touches[0] : e;
+  return { x: (t.clientX - r.left) * W / r.width, y: (t.clientY - r.top) * H / r.height };
+}
+cv.addEventListener('pointerdown', e => { pd = { x: e.clientX, y: e.clientY, t: performance.now() }; });
+cv.addEventListener('pointermove', e => {
+  if (state !== 'play') return;
+  const p = canvasPos(e);
+  claw.x = Math.max(40, Math.min(440, p.x));
+});
+cv.addEventListener('pointerup', e => {
+  if (!pd) return;
+  const moved = Math.hypot(e.clientX - pd.x, e.clientY - pd.y);
+  const dt = performance.now() - pd.t;
+  pd = null;
+  if (state === 'menu') { startGame(); return; }
+  if (state === 'over') {
+    const p = canvasPos(e);
+    if (p.y > 440 && p.y < 485) return; // COPY RESULT zone handled below
+    startGame(); return;
+  }
+  if (state === 'play' && dt < 300 && moved < 14) dropClaw();
+});
+window.addEventListener('keydown', e => {
+  keys[e.code] = true;
+  if (e.code === 'Space') { e.preventDefault(); if (state === 'menu' || state === 'over') startGame(); else if (state === 'play') dropClaw(); }
+  if (e.code === 'ArrowLeft' || e.code === 'ArrowRight') e.preventDefault();
+});
+window.addEventListener('keyup', e => { keys[e.code] = false; });
+document.getElementById('pauseBtn').addEventListener('click', () => {
+  if (state === 'play') state = 'pause';
+  else if (state === 'pause') state = 'play';
+});
+document.getElementById('muteBtn').addEventListener('click', function(){
+  muted = !muted; this.textContent = muted ? '✕' : '♪';
+});
+
+function startGame(){ reset(); state = 'play'; }
+function dropClaw(){
+  if (claw.mode !== 'idle') return;
+  claw.mode = 'down'; claw.vy = 0;
+  beep(500, .08, 'sine', .07);
+}
+function endGame(){
+  state = 'over'; sOver();
+  if (score > high) { high = score; localStorage.setItem(HS_KEY, high); }
+}
+
+// ---------- update ----------
+function update(dt){
+  elapsed += dt;
+  timeLeft -= dt;
+  if (timeLeft <= 0) { timeLeft = 0; endGame(); return; }
+  // escalation
+  const tier = elapsed < 15 ? 0 : elapsed < 30 ? 1 : elapsed < 45 ? 2 : 3;
+  if (tier === 1 && !update.t1) { update.t1 = true; popup('PILE STIRS...', 240, 300, '#ffd93d'); }
+  if (tier === 2 && !update.t2) { update.t2 = true; popup('PILE WAKES UP!', 240, 300, '#ff4d5e'); spawnPlush(true); }
+  if (tier === 3 && !update.t3) { update.t3 = true; popup('REVENGE TIME!', 240, 300, '#ff4d5e'); spawnPlush(true); spawnPlush(true); }
+  if (tier === 0) { update.t1 = update.t2 = update.t3 = false; }
+  const speedMul = 1 + tier * 0.45;
+
+  // claw keys
+  const slow = performance.now() < claw.slowUntil;
+  const spd = (slow ? 130 : 300) * dt;
+  if (keys['ArrowLeft']) claw.x = Math.max(40, claw.x - spd);
+  if (keys['ArrowRight']) claw.x = Math.min(440, claw.x + spd);
+  if (claw.shake > 0) claw.shake -= dt;
+
+  // claw vertical
+  if (claw.mode === 'down') {
+    claw.y += 620 * dt;
+    if (claw.y >= 590) { // reach pile: grab check
+      claw.mode = 'grab';
+      claw.grabT = 0.18;
+      const hit = plush.find(p => Math.hypot(p.x - claw.x, p.y - claw.y) < 52 && p.morph <= 0);
+      if (hit) {
+        claw.grab = hit;
+        plush.splice(plush.indexOf(hit), 1);
+        if (hit.angry) {
+          lives--; combo = 0; claw.shake = 0.6; shakeT = 0.4; sBite();
+          popup('OUCH! BITTEN!', 240, 380, '#ff4d5e');
+          claw.slowUntil = performance.now() + 2000; // angry plush clings, slows claw
+          if (lives <= 0) { endGame(); return; }
+        } else if (hit.golden) {
+          score += 50; combo++; sGold(); burst(claw.x, claw.y, '#ffd93d', 22);
+          popup('+50 GOLD!', 240, 380, '#ffd93d');
+        } else {
+          combo++;
+          const pts = 10 * combo;
+          score += pts; sGrab(); burst(claw.x, claw.y, hit.body, 14);
+          popup('+' + pts + (combo > 1 ? ' x' + combo : ''), 240, 380, '#7CFF6B');
+        }
+      } else {
+        // MISS: nearest good plush gets insulted -> morphs angry after 0.6s
+        const ng = nearestGood(claw.x, claw.y);
+        if (ng.p && ng.d < 90) popup('SO CLOSE!', claw.x, 480, '#ffd93d');
+        else { sMiss(); popup('MISS!', claw.x, 480, '#ff8fa3'); }
+        if (ng.p) { ng.p.morph = 0.6; ng.p.targetAngry = true; }
+      }
+    }
+  } else if (claw.mode === 'grab') {
+    claw.grabT -= dt;
+    if (claw.grabT <= 0) claw.mode = 'up';
+  } else if (claw.mode === 'up') {
+    claw.y -= 620 * dt;
+    if (claw.y <= 96) { claw.y = 96; claw.mode = 'idle'; claw.grab = null; }
+  }
+
+  // plush life
+  spawnT -= dt;
+  if (spawnT <= 0) {
+    spawnT = rand(1.2, 2.2) / speedMul;
+    if (plush.length < 9 + tier) spawnPlush(Math.random() < 0.12 + tier * 0.08);
+  }
+  goldT -= dt;
+  if (goldT <= 0) {
+    goldT = rand(11, 16);
+    const s = pick(GOOD_SHAPES);
+    plush.push({ x: rand(60, 420), y: rand(600, 690), vx: rand(-30, 30), vy: 0, r: 32,
+      angry: false, morph: 0, hop: 0, body: '#ffd93d', ear: '#ffb800', kind: s.kind,
+      squash: 1, golden: true, bob: 0 });
+    popup('GOLDEN!', 240, 540, '#ffd93d');
+  }
+  plush.forEach(p => {
+    if (p.morph > 0) { // 0.6s transition: flash, then full role change
+      p.morph -= dt;
+      if (p.morph <= 0) {
+        p.angry = true; p.body = pick(['#ff4d5e', '#b04dff']); p.face = 'angry'; p.golden = false;
+        popup("IT'S ANGRY!", p.x, p.y - 50, '#ff4d5e'); sMiss();
+      }
+      return;
+    }
+    p.bob = (p.bob || 0) + dt * 3;
+    p.x += p.vx * speedMul * dt;
+    if (p.x < 40 || p.x > 440) p.vx *= -1;
+    if (p.angry) { // angry plush hop menacingly toward the claw's x
+      p.hop -= dt;
+      if (p.hop <= 0) { p.hop = rand(.7, 1.4); p.vy = -rand(90, 150); p.vx += Math.sign(claw.x - p.x) * rand(10, 40); }
+      p.vy += 300 * dt;
+      p.y += p.vy * dt;
+      if (p.y > 700) { p.y = 700; p.vy = 0; }
+    } else {
+      p.y += Math.sin(p.bob) * 6 * dt;
+    }
+    p.squash = 1 + Math.sin((p.bob || 0) * 2) * 0.06;
+  });
+  // particles / popups
+  parts.forEach(pt => { pt.x += pt.vx * dt; pt.y += pt.vy * dt; pt.vy += 300 * dt; pt.t -= dt; });
+  parts = parts.filter(pt => pt.t > 0);
+  popups.forEach(pp => { pp.y -= 30 * dt; pp.t -= dt; });
+  popups = popups.filter(pp => pp.t > 0);
+  if (shakeT > 0) shakeT -= dt;
+  if (flashT > 0) flashT -= dt;
+}
+
+// ---------- draw ----------
+function drawPlush(p){
+  const ctx2 = ctx;
+  const r = p.r * p.squash;
+  const morphing = p.morph > 0;
+  // glow: ONLY good/golden plush glow
+  if (!p.angry && !morphing) {
+    ctx2.save();
+    ctx2.shadowColor = p.golden ? '#ffd93d' : '#7CFF6B';
+    ctx2.shadowBlur = 26;
+    ctx2.fillStyle = p.body;
+    ctx2.beginPath(); ctx2.arc(p.x, p.y, r, 0, Math.PI * 2); ctx2.fill();
+    ctx2.restore();
+  } else {
+    ctx2.fillStyle = morphing && Math.floor(p.morph * 12) % 2 === 0 ? '#ffffff' : p.body;
+    ctx2.beginPath(); ctx2.arc(p.x, p.y, r, 0, Math.PI * 2); ctx2.fill();
+  }
+  // ears / spikes by kind
+  ctx2.fillStyle = p.angry ? p.body : (p.ear || p.body);
+  if (p.kind === 'bunny' && !p.angry) {
+    ctx2.beginPath(); ctx2.ellipse(p.x - 13, p.y - r - 8, 7, 16, -0.2, 0, Math.PI * 2); ctx2.fill();
+    ctx2.beginPath(); ctx2.ellipse(p.x + 13, p.y - r - 8, 7, 16, 0.2, 0, Math.PI * 2); ctx2.fill();
+  } else if (p.kind === 'dino' && !p.angry) {
+    for (let i = -1; i <= 1; i++) { ctx2.beginPath(); ctx2.moveTo(p.x + i * 14 - 6, p.y - r + 4); ctx2.lineTo(p.x + i * 14, p.y - r - 10); ctx2.lineTo(p.x + i * 14 + 6, p.y - r + 4); ctx2.fill(); }
+  } else if (p.angry) {
+    for (let i = -2; i <= 2; i++) { ctx2.beginPath(); ctx2.moveTo(p.x + i * 12 - 5, p.y - r + 6); ctx2.lineTo(p.x + i * 12, p.y - r - 12); ctx2.lineTo(p.x + i * 12 + 5, p.y - r + 6); ctx2.fill(); }
+  } else { // bear ears
+    ctx2.beginPath(); ctx2.arc(p.x - 20, p.y - r + 10, 10, 0, Math.PI * 2); ctx2.fill();
+    ctx2.beginPath(); ctx2.arc(p.x + 20, p.y - r + 10, 10, 0, Math.PI * 2); ctx2.fill();
+  }
+  // face
+  ctx2.fillStyle = '#1a1a2e';
+  if (p.angry || morphing) { // angry eyes: slanted lines
+    ctx2.strokeStyle = '#1a1a2e'; ctx2.lineWidth = 3;
+    ctx2.beginPath(); ctx2.moveTo(p.x - 16, p.y - 8); ctx2.lineTo(p.x - 4, p.y - 2); ctx2.stroke();
+    ctx2.beginPath(); ctx2.moveTo(p.x + 16, p.y - 8); ctx2.lineTo(p.x + 4, p.y - 2); ctx2.stroke();
+    ctx2.beginPath(); ctx2.arc(p.x, p.y + 12, 8, Math.PI * 1.15, Math.PI * 1.85); ctx2.stroke();
+  } else { // happy eyes + smile
+    ctx2.beginPath(); ctx2.arc(p.x - 10, p.y - 4, 3.5, 0, Math.PI * 2); ctx2.fill();
+    ctx2.beginPath(); ctx2.arc(p.x + 10, p.y - 4, 3.5, 0, Math.PI * 2); ctx2.fill();
+    ctx2.strokeStyle = '#1a1a2e'; ctx2.lineWidth = 2.5;
+    ctx2.beginPath(); ctx2.arc(p.x, p.y + 4, 9, 0.15 * Math.PI, 0.85 * Math.PI); ctx2.stroke();
+  }
+  if (p.golden) { ctx2.fillStyle = '#fff'; ctx2.font = 'bold 16px system-ui'; ctx2.textAlign = 'center'; ctx2.fillText('★', p.x, p.y - r - 14); }
+}
+function draw(){
+  ctx.save();
+  if (shakeT > 0) ctx.translate(rand(-6, 6), rand(-6, 6));
+  // machine cabinet
+  ctx.fillStyle = '#141233'; ctx.fillRect(0, 0, W, H);
+  ctx.fillStyle = '#1e1b4b'; ctx.fillRect(16, 130, W - 32, 470);
+  ctx.strokeStyle = 'rgba(53,224,255,.5)'; ctx.lineWidth = 3; ctx.strokeRect(16, 130, W - 32, 470);
+  // background coins + stars
+  ctx.fillStyle = 'rgba(255,217,61,.25)';
+  for (let i = 0; i < 8; i++) { const cx = 40 + i * 55, cy = 170 + (i % 3) * 40; ctx.beginPath(); ctx.arc(cx, cy, 9, 0, Math.PI * 2); ctx.fill(); }
+  ctx.fillStyle = 'rgba(255,255,255,.35)';
+  for (let i = 0; i < 10; i++) { ctx.fillRect(30 + i * 47, 220 + (i % 4) * 60, 3, 3); }
+  // rail
+  ctx.fillStyle = '#3b3b6b'; ctx.fillRect(16, 84, W - 32, 14);
+  ctx.fillStyle = '#35e0ff'; ctx.fillRect(16, 84, W - 32, 3);
+  // plush pile floor
+  ctx.fillStyle = '#2a2458'; ctx.fillRect(16, 580, W - 32, 20);
+  plush.forEach(drawPlush);
+  // claw (with grabbed plush riding up)
+  const shX = claw.shake > 0 ? rand(-4, 4) : 0;
+  ctx.strokeStyle = '#cbd5e1'; ctx.lineWidth = 5;
+  ctx.beginPath(); ctx.moveTo(claw.x + shX, 98); ctx.lineTo(claw.x + shX, claw.y - 22); ctx.stroke();
+  ctx.fillStyle = '#e2e8f0';
+  ctx.beginPath(); ctx.moveTo(claw.x + shX - 22, claw.y - 22); ctx.lineTo(claw.x + shX - 4, claw.y + 18); ctx.lineTo(claw.x + shX + 4, claw.y + 2); ctx.lineTo(claw.x + shX + 22, claw.y - 22); ctx.closePath(); ctx.fill();
+  ctx.fillStyle = '#35e0ff'; ctx.beginPath(); ctx.arc(claw.x + shX, claw.y - 26, 10, 0, Math.PI * 2); ctx.fill();
+  if (claw.grab) { // plush dangling from claw
+    const gp = claw.grab;
+    const gy = claw.y + 40;
+    ctx.fillStyle = gp.angry ? gp.body : gp.body;
+    ctx.beginPath(); ctx.arc(claw.x + shX, gy, 22, 0, Math.PI * 2); ctx.fill();
+    ctx.fillStyle = '#1a1a2e';
+    if (gp.angry) { ctx.font = 'bold 18px system-ui'; ctx.textAlign = 'center'; ctx.fillText('><', claw.x + shX, gy + 6); }
+    else { ctx.font = 'bold 18px system-ui'; ctx.textAlign = 'center'; ctx.fillText('^ ^', claw.x + shX, gy + 2); }
+  }
+  // particles
+  parts.forEach(pt => { ctx.globalAlpha = Math.max(0, pt.t); ctx.fillStyle = pt.color; ctx.beginPath(); ctx.arc(pt.x, pt.y, 5, 0, Math.PI * 2); ctx.fill(); });
+  ctx.globalAlpha = 1;
+  // HUD
+  ctx.fillStyle = '#fff'; ctx.textAlign = 'left'; ctx.font = '900 26px system-ui';
+  ctx.fillText('★ ' + score, 20, 40);
+  ctx.textAlign = 'center';
+  ctx.fillStyle = combo > 1 ? '#7CFF6B' : '#94a3b8';
+  ctx.fillText(combo > 1 ? 'COMBO x' + combo : 'COMBO —', 240, 40);
+  ctx.textAlign = 'right'; ctx.fillStyle = timeLeft <= 10 ? '#ff4d5e' : '#fff';
+  ctx.fillText(Math.ceil(timeLeft) + 's', 460, 40);
+  ctx.textAlign = 'left'; ctx.fillStyle = '#ff8fa3'; ctx.font = '900 20px system-ui';
+  ctx.fillText('♥'.repeat(lives) + '♡'.repeat(Math.max(0, 3 - lives)), 20, 68);
+  ctx.fillStyle = '#94a3b8'; ctx.font = '13px system-ui';
+  ctx.fillText('BEST ' + high, 330, 68);
+  // popups
+  popups.forEach(pp => {
+    ctx.globalAlpha = Math.min(1, pp.t);
+    ctx.font = '900 26px system-ui'; ctx.textAlign = 'center'; ctx.fillStyle = pp.color;
+    ctx.fillText(pp.txt, pp.x, pp.y);
+    ctx.globalAlpha = 1;
+  });
+  // overlays
+  if (state === 'menu') {
+    ctx.fillStyle = 'rgba(10,8,30,.78)'; ctx.fillRect(0, 0, W, H);
+    ctx.textAlign = 'center'; ctx.fillStyle = '#ffd93d'; ctx.font = '900 52px system-ui';
+    ctx.fillText('CLAW BACK!', 240, 260);
+    ctx.fillStyle = '#fff'; ctx.font = '700 20px system-ui';
+    ctx.fillText('Grab cute. Miss — it hates you.', 240, 300);
+    ctx.font = '16px system-ui'; ctx.fillStyle = '#94a3b8';
+    ctx.fillText('Move: drag / ← →  •  Drop: tap / SPACE', 240, 340);
+    ctx.fillStyle = '#7CFF6B'; ctx.font = '900 24px system-ui';
+    ctx.fillText('▶ TAP TO PLAY', 240, 420);
+    ctx.fillStyle = '#94a3b8'; ctx.font = '14px system-ui';
+    ctx.fillText('Glowing = grab  •  Red + angry = NEVER', 240, 460);
+  } else if (state === 'pause') {
+    ctx.fillStyle = 'rgba(10,8,30,.7)'; ctx.fillRect(0, 0, W, H);
+    ctx.textAlign = 'center'; ctx.fillStyle = '#fff'; ctx.font = '900 34px system-ui';
+    ctx.fillText('PAUSED', 240, 380);
+    ctx.font = '16px system-ui'; ctx.fillStyle = '#94a3b8';
+    ctx.fillText('Tap II to resume', 240, 415);
+  } else if (state === 'over') {
+    ctx.fillStyle = 'rgba(10,8,30,.82)'; ctx.fillRect(0, 0, W, H);
+    ctx.textAlign = 'center'; ctx.fillStyle = '#ff4d5e'; ctx.font = '900 40px system-ui';
+    ctx.fillText('PILE WINS!', 240, 250);
+    ctx.fillStyle = '#fff'; ctx.font = '700 19px system-ui';
+    ctx.fillText(overRoast, 240, 290);
+    ctx.font = '900 30px system-ui'; ctx.fillStyle = '#ffd93d';
+    ctx.fillText('★ ' + score + '  •  ' + rankFor(score), 240, 340);
+    ctx.font = '15px system-ui'; ctx.fillStyle = '#94a3b8';
+    ctx.fillText('BEST ' + high, 240, 368);
+    ctx.fillStyle = '#35e0ff'; ctx.font = '900 20px system-ui';
+    ctx.fillText('↻ TAP TO CLAW AGAIN', 240, 420);
+    ctx.fillStyle = '#7CFF6B'; ctx.font = '700 17px system-ui';
+    ctx.fillText('📋 COPY RESULT', 240, 462);
+  }
+  ctx.restore();
+}
+let overRoast = ROASTS[0];
+
+function loop(ts){
+  requestAnimationFrame(loop);
+  const now = ts / 1000;
+  const dt = Math.min(0.05, now - (loop.last || now));
+  loop.last = now;
+  if (state === 'play') update(dt);
+  draw();
+}
+// copy result: tap on the COPY RESULT zone on game-over screen
+cv.addEventListener('pointerup', e => {
+  if (state !== 'over') return;
+  const p = canvasPos(e);
+  if (p.y > 440 && p.y < 485) {
+    const txt = 'I scored ' + score + ' in CLAW BACK! (' + rankFor(score) + ') — the plush union is furious. ' + GAME_URL;
+    try { navigator.clipboard.writeText(txt); } catch(err){}
+    popup('COPIED!', 240, 520, '#7CFF6B');
+  }
+});
+window.addEventListener('load', () => {
+  overRoast = pick(ROASTS);
+  reset();
+  // pick a fresh roast each time game ends
+  const origEnd = endGame;
+  endGame = function(){ overRoast = pick(ROASTS); origEnd(); };
+  requestAnimationFrame(loop);
+});
+// fallback if load already fired (cached)
+if (document.readyState === 'complete') {
+  overRoast = pick(ROASTS);
+  reset();
+  requestAnimationFrame(loop);
+}
+</script>
+</body>
+</html>

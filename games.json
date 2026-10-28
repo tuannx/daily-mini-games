@@ -240,5 +240,14 @@
     "mechanic": "Tap-to-swat fly chase (flies dodge, helmet boss, twins)",
     "tagline": "Swat the smug flies. NEVER swat the bee — the union stings back.",
     "title": "SWAT THE FLY"
+  },
+  {
+    "date": "2026-10-28",
+    "day": 28,
+    "emoji": "🧸",
+    "file": "games/claw-back.html",
+    "mechanic": "Claw-machine revenge catcher (miss morphs plush angry)",
+    "tagline": "Grab the cute ones. Miss once — it comes back ANGRY.",
+    "title": "CLAW BACK!"
   }
 ]
