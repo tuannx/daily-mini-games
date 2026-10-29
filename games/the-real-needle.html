@@ -1,0 +1,445 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
+<title>THE REAL NEEDLE — One real needle. A pile of clones.</title>
+<style>
+  *{margin:0;padding:0;box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+  html,body{height:100%;background:#0d0b1e;overflow:hidden}
+  body{display:flex;align-items:center;justify-content:center;font-family:system-ui,'Arial Black',Arial,sans-serif;user-select:none;-webkit-user-select:none;touch-action:none}
+  #wrap{position:relative;width:100%;max-width:480px;height:100%;max-height:860px}
+  canvas{display:block;width:100%;height:100%;background:#141233}
+  .btn{position:absolute;top:8px;width:38px;height:38px;border:2px solid #35e0ff;border-radius:50%;background:rgba(13,11,30,.7);color:#fff;font-size:17px;line-height:34px;text-align:center;cursor:pointer;z-index:5}
+  #pauseBtn{right:8px} #muteBtn{right:52px}
+</style>
+</head>
+<body>
+<div id="wrap">
+<canvas id="c" width="480" height="760"></canvas>
+<div class="btn" id="muteBtn">♪</div>
+<div class="btn" id="pauseBtn">II</div>
+</div>
+<script>
+'use strict';
+/* THE REAL NEEDLE — sweep-the-haystack hunt.
+   Drag the magnet to part the hay. Only GLOWING gold = the real needle.
+   Grey needles with angry faces = clones: tap one and it screams, eats 4s,
+   and reshuffles the hay. Twist: from round 2 (or 15s in) the real needle
+   grows legs and crawls away, re-hiding itself. Golden wheat = +3s.
+   One family, one role: glow gold = grab; grey + angry face = NEVER tap. */
+const cv = document.getElementById('c');
+const ctx = cv.getContext('2d');
+const W = 480, H = 760;
+const GAME_URL = 'https://tuannx.github.io/daily-mini-games/games/the-real-needle.html';
+const HS_KEY = 'realneedle-highscore';
+
+// ---------- audio (WebAudio, self-generated, no assets) ----------
+let AC = null, muted = false;
+function beep(f, d, type, vol){
+  if (muted) return;
+  try {
+    AC = AC || new (window.AudioContext || window.webkitAudioContext)();
+    const o = AC.createOscillator(), g = AC.createGain();
+    o.type = type || 'sine'; o.frequency.value = f;
+    g.gain.setValueAtTime(vol || 0.12, AC.currentTime);
+    g.gain.exponentialRampToValueAtTime(0.001, AC.currentTime + d);
+    o.connect(g); g.connect(AC.destination);
+    o.start(); o.stop(AC.currentTime + d);
+  } catch(e){}
+}
+const sGrab = ()=>{ [880,1170,1560].forEach((f,i)=>setTimeout(()=>beep(f,.12,'square',.10),i*70)); };
+const sClone = ()=>{ beep(140,.3,'sawtooth',.14); setTimeout(()=>beep(100,.35,'sawtooth',.12),120); };
+const sRustle = ()=>{ beep(900 + Math.random()*400,.05,'triangle',.05); };
+const sWheat = ()=>{ [1320,1760].forEach((f,i)=>setTimeout(()=>beep(f,.1,'sine',.10),i*60)); };
+const sOver = ()=>{ [440,330,220,160].forEach((f,i)=>setTimeout(()=>beep(f,.18,'triangle',.11),i*140)); };
+
+// ---------- state ----------
+let state = 'menu'; // menu | play | pause | over
+let score = 0, streak = 0, round = 1, timeLeft = 60, elapsed = 0;
+let high = +(localStorage.getItem(HS_KEY) || 0);
+let mag = { x: 240, y: 420, vx: 0, vy: 0 };
+let hay = [], fakes = [], parts = [], popups = [], wheat = null;
+let needle = null, roundT = 0, wheatT = 10, closeCd = 0, copyMsg = 0, shakeT = 0, overRoast = '';
+let keys = {};
+let downPos = null, downTime = 0;
+const ROASTS = [
+  'The needle is still hiding. Coward.',
+  'The clones unionized. You lost.',
+  'Hay: 1. You: 0.',
+  'The real needle filed for invisibility.',
+  'You poked 0 real needles. Impressive.',
+  'The haystack has seen better diggers.'
+];
+const RANKS = [[0,'HAY ROOKIE'],[200,'HAY DIVER'],[500,'CLONE HUNTER'],[900,'NEEDLE LEGEND']];
+function rankFor(s){ let r = RANKS[0][1]; RANKS.forEach(rk => { if (s >= rk[0]) r = rk[1]; }); return r; }
+function rand(a, b){ return a + Math.random() * (b - a); }
+function pick(arr){ return arr[Math.floor(Math.random() * arr.length)]; }
+function dist(x1,y1,x2,y2){ return Math.hypot(x1-x2, y1-y2); }
+function popup(x, y, txt, col){ popups.push({ x, y, txt, col: col || '#fff', t: 0 }); }
+function burst(x, y, col, n){
+  for (let i = 0; i < (n || 14); i++)
+    parts.push({ x, y, vx: rand(-160,160), vy: rand(-220,20), t: 0, col, r: rand(2,5) });
+}
+
+function spawnHay(n){
+  hay = [];
+  for (let i = 0; i < n; i++)
+    hay.push({ x: rand(24,456), y: rand(190,706), ang: rand(-0.9,0.9),
+      len: rand(26,52), sway: rand(0,6.28), ox: 0, oy: 0,
+      col: pick(['#e8c15a','#d9a83f','#f2d47c','#c9972f']) });
+}
+function newNeedle(){
+  needle = { x: rand(70,410), y: rand(240,650), vx: 0, vy: 0,
+    leg: 0, moving: false, moveT: rand(0,3), found: false };
+}
+function spawnFakes(n){
+  fakes = [];
+  for (let i = 0; i < n; i++)
+    fakes.push({ x: rand(70,410), y: rand(240,650), bounce: rand(0,6.28),
+      laugh: 0, revealed: false });
+}
+function coverCount(x, y){
+  let c = 0;
+  for (const s of hay)
+    if (dist(s.x, s.y, x, y) < 52 && Math.hypot(s.ox, s.oy) < 20) c++;
+  return c;
+}
+function reset(){
+  score = 0; streak = 0; round = 1; timeLeft = 60; elapsed = 0; roundT = 0; roundFound = 0;
+  mag = { x: 240, y: 420, vx: 0, vy: 0 };
+  spawnHay(240); newNeedle(); spawnFakes(4);
+  parts = []; popups = []; wheat = null; wheatT = 10; closeCd = 0; shakeT = 0;
+}
+
+// ---------- input ----------
+function canvasPos(e){
+  const r = cv.getBoundingClientRect();
+  return { x: (e.clientX - r.left) * W / r.width, y: (e.clientY - r.top) * H / r.height };
+}
+cv.addEventListener('pointermove', e => {
+  const p = canvasPos(e); mag.x = p.x; mag.y = p.y;
+});
+cv.addEventListener('pointerdown', e => {
+  const p = canvasPos(e); downPos = p; downTime = performance.now();
+  if (state === 'menu'){ state = 'play'; reset(); return; }
+  if (state === 'over'){
+    if (p.y > 560 && p.y < 610){
+      if (p.x > 90 && p.x < 230){ state = 'play'; reset(); }
+      else if (p.x > 250 && p.x < 390){ copyResult(); }
+    }
+    return;
+  }
+});
+cv.addEventListener('pointerup', e => {
+  if (!downPos || state !== 'play') { downPos = null; return; }
+  const p = canvasPos(e);
+  const dt = performance.now() - downTime;
+  if (dist(p.x, p.y, downPos.x, downPos.y) < 14 && dt < 400) grabAt(p.x, p.y);
+  downPos = null;
+});
+window.addEventListener('keydown', e => {
+  keys[e.key] = true;
+  if (state === 'menu' && (e.key === ' ' || e.key === 'Enter')){ state = 'play'; reset(); }
+  else if (state === 'play' && e.key === ' '){ grabAt(mag.x, mag.y); e.preventDefault(); }
+  else if (state === 'over' && (e.key === ' ' || e.key === 'Enter')){ state = 'play'; reset(); }
+});
+window.addEventListener('keyup', e => { keys[e.key] = false; });
+document.getElementById('pauseBtn').onclick = () => {
+  if (state === 'play') state = 'pause';
+  else if (state === 'pause') state = 'play';
+};
+document.getElementById('muteBtn').onclick = () => {
+  muted = !muted;
+  document.getElementById('muteBtn').textContent = muted ? '✕' : '♪';
+};
+function copyResult(){
+  const txt = 'I found ' + roundFound + ' real needles, dodged the clones, scored ' + score +
+    ' in THE REAL NEEDLE! ' + GAME_URL;
+  try {
+    if (navigator.clipboard) navigator.clipboard.writeText(txt);
+  } catch(e){}
+  copyMsg = 2;
+}
+let roundFound = 0;
+
+// ---------- game logic ----------
+function grabAt(x, y){
+  // revealed real needle?
+  if (needle && coverCount(needle.x, needle.y) <= 3 && dist(x, y, needle.x, needle.y) < 34){
+    const pts = 100 + streak * 25;
+    score += pts; streak++; roundFound++;
+    timeLeft = Math.min(99, timeLeft + 4);
+    burst(needle.x, needle.y, '#ffd94d', 22);
+    popup(needle.x, needle.y - 40, '+' + pts, '#ffd94d');
+    popup(needle.x, needle.y - 66, 'REAL ONE!', '#7dff8a');
+    sGrab();
+    round++;
+    roundT = 0;
+    spawnHay(Math.min(340, 230 + round * 15));
+    newNeedle();
+    spawnFakes(Math.min(12, 3 + round));
+    if (round >= 2) popup(240, 200, 'IT RUNS NOW!', '#ff9de2');
+    return;
+  }
+  for (const f of fakes){
+    if (coverCount(f.x, f.y) <= 3 && dist(x, y, f.x, f.y) < 34){
+      streak = 0; timeLeft -= 4; f.laugh = 1.2; shakeT = 0.4;
+      popup(f.x, f.y - 40, 'CLONE!', '#ff4d5e');
+      sClone();
+      for (const s of hay)
+        if (dist(s.x, s.y, f.x, f.y) < 90){ s.ox = rand(-50,50); s.oy = rand(-50,50); }
+      return;
+    }
+  }
+  burst(x, y, '#e8c15a', 6); // digging dust, no harm
+}
+
+function update(dt){
+  if (state !== 'play') return;
+  elapsed += dt; roundT += dt; timeLeft -= dt;
+  if (timeLeft <= 0){
+    timeLeft = 0; state = 'over'; overRoast = pick(ROASTS); sOver();
+    if (score > high){ high = score; localStorage.setItem(HS_KEY, high); }
+    return;
+  }
+  // keyboard magnet
+  const sp = 320;
+  if (keys['ArrowLeft']) mag.x -= sp * dt;
+  if (keys['ArrowRight']) mag.x += sp * dt;
+  if (keys['ArrowUp']) mag.y -= sp * dt;
+  if (keys['ArrowDown']) mag.y += sp * dt;
+  mag.x = Math.max(24, Math.min(456, mag.x));
+  mag.y = Math.max(190, Math.min(706, mag.y));
+
+  // magnet parts hay
+  let rustled = false;
+  for (const s of hay){
+    const d = dist(s.x, s.y, mag.x, mag.y);
+    if (d < 62){
+      const a = Math.atan2(s.y - mag.y, s.x - mag.x);
+      s.ox = Math.cos(a) * 48; s.oy = Math.sin(a) * 48;
+      rustled = true;
+    }
+    s.ox *= (1 - dt * 0.22); s.oy *= (1 - dt * 0.22); // hay regrows
+    s.sway += dt * 2;
+  }
+  if (rustled && Math.random() < dt * 6) sRustle();
+
+  // needle: grows legs and crawls from round 2, or 15s into round 1
+  if (needle){
+    if (round >= 2 || roundT > 15) needle.moving = true;
+    if (needle.moving){
+      needle.moveT -= dt;
+      if (needle.moveT <= 0){
+        const a = rand(0, 6.28);
+        needle.vx = Math.cos(a) * 26; needle.vy = Math.sin(a) * 26;
+        needle.moveT = rand(0.6, 1.6);
+      }
+      needle.x = Math.max(60, Math.min(420, needle.x + needle.vx * dt));
+      needle.y = Math.max(230, Math.min(660, needle.y + needle.vy * dt));
+      needle.leg += dt * 14;
+      for (const s of hay)
+        if (dist(s.x, s.y, needle.x, needle.y) < 30 && Math.random() < dt * 8)
+          { s.ox = rand(-25,25); s.oy = rand(-25,25); }
+    }
+    // near-miss: magnet close to hidden needle
+    closeCd -= dt;
+    if (coverCount(needle.x, needle.y) > 3 && dist(mag.x, mag.y, needle.x, needle.y) < 75 && closeCd <= 0){
+      popup(needle.x, needle.y - 44, 'SO CLOSE!', '#ffd94d');
+      closeCd = 3;
+    }
+  }
+  for (const f of fakes){ f.bounce += dt * 3; if (f.laugh > 0) f.laugh -= dt; }
+  // golden wheat bonus
+  wheatT -= dt;
+  if (!wheat && wheatT <= 0)
+    wheat = { x: rand(70,410), y: rand(240,650), tw: 0 };
+  if (wheat){
+    wheat.tw += dt * 4;
+    if (dist(mag.x, mag.y, wheat.x, wheat.y) < 30){
+      timeLeft = Math.min(99, timeLeft + 3);
+      burst(wheat.x, wheat.y, '#ffe27a', 18);
+      popup(wheat.x, wheat.y - 30, '+3s', '#ffe27a');
+      sWheat(); wheat = null; wheatT = rand(10,16);
+    }
+  }
+  for (const p of parts){ p.t += dt; p.x += p.vx * dt; p.y += p.vy * dt; p.vy += 300 * dt; }
+  parts = parts.filter(p => p.t < 0.8);
+  for (const p of popups) p.t += dt;
+  popups = popups.filter(p => p.t < 1.4);
+  if (shakeT > 0) shakeT -= dt;
+  if (copyMsg > 0) copyMsg -= dt;
+}
+
+// ---------- drawing ----------
+function drawNeedle(x, y, gold, leg, moving){
+  ctx.save(); ctx.translate(x, y);
+  ctx.rotate(-0.5);
+  // legs when crawling
+  if (moving){
+    ctx.strokeStyle = gold ? '#c9972f' : '#888';
+    ctx.lineWidth = 3;
+    const w = Math.sin(leg) * 7;
+    ctx.beginPath(); ctx.moveTo(-6, 4); ctx.lineTo(-10, 12 + w); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(6, 4); ctx.lineTo(10, 12 - w); ctx.stroke();
+  }
+  ctx.strokeStyle = gold ? '#ffd94d' : '#9aa3ad';
+  ctx.lineWidth = 5; ctx.lineCap = 'round';
+  ctx.beginPath(); ctx.moveTo(-26, 0); ctx.lineTo(26, 0); ctx.stroke();
+  ctx.beginPath(); ctx.arc(-26, 0, 5, 0, 6.29); ctx.stroke(); // eye
+  ctx.fillStyle = gold ? '#fff3b0' : '#c8cdd4';
+  ctx.beginPath(); ctx.moveTo(26, 0); ctx.lineTo(34, -4); ctx.lineTo(34, 4); ctx.closePath(); ctx.fill();
+  if (gold){
+    ctx.shadowColor = '#ffd94d'; ctx.shadowBlur = 18;
+    ctx.strokeStyle = '#ffd94d'; ctx.lineWidth = 2;
+    ctx.beginPath(); ctx.moveTo(-22, 0); ctx.lineTo(22, 0); ctx.stroke();
+    ctx.shadowBlur = 0;
+  }
+  // face: smug for real, angry for clone
+  ctx.fillStyle = '#1a1a2e';
+  if (gold){
+    ctx.beginPath(); ctx.arc(-8, -6, 2.2, 0, 6.29); ctx.fill();
+    ctx.beginPath(); ctx.arc(8, -6, 2.2, 0, 6.29); ctx.fill();
+    ctx.beginPath(); ctx.arc(2, 2, 6, 0.2, Math.PI - 0.5); ctx.stroke();
+  } else {
+    ctx.strokeStyle = '#1a1a2e'; ctx.lineWidth = 2;
+    ctx.beginPath(); ctx.moveTo(-13, -9); ctx.lineTo(-4, -5); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(13, -9); ctx.lineTo(4, -5); ctx.stroke();
+    ctx.beginPath(); ctx.arc(0, 5, 5, Math.PI + 0.4, -0.4); ctx.stroke();
+  }
+  ctx.restore();
+}
+function draw(){
+  ctx.save();
+  if (shakeT > 0) ctx.translate(rand(-6,6), rand(-6,6));
+  // barn background
+  ctx.fillStyle = '#141233'; ctx.fillRect(0, 0, W, H);
+  ctx.fillStyle = '#ffe27a'; ctx.beginPath(); ctx.arc(400, 70, 34, 0, 6.29); ctx.fill();
+  ctx.fillStyle = '#1e1b4b'; ctx.fillRect(0, 150, W, 40); // barn beam
+  ctx.fillStyle = '#2a2560';
+  for (let i = 0; i < 5; i++){ ctx.beginPath(); ctx.arc(60 + i * 90, 60, 22, 0, 6.29); ctx.fill(); }
+  // pile base
+  ctx.fillStyle = '#3a2a10'; ctx.beginPath(); ctx.ellipse(240, 700, 230, 30, 0, 0, 6.29); ctx.fill();
+
+  if (state === 'menu'){
+    ctx.textAlign = 'center';
+    ctx.fillStyle = '#ffd94d'; ctx.font = '900 52px system-ui';
+    ctx.fillText('THE REAL', 240, 250);
+    ctx.fillText('NEEDLE', 240, 310);
+    ctx.fillStyle = '#fff'; ctx.font = '700 22px system-ui';
+    ctx.fillText('One real needle. A pile of clones.', 240, 350);
+    drawNeedle(240, 430, true, 0, false);
+    ctx.fillStyle = '#7dff8a'; ctx.font = '900 26px system-ui';
+    ctx.fillText('TAP TO DIG', 240, 540);
+    ctx.fillStyle = '#aaa'; ctx.font = '16px system-ui';
+    ctx.fillText('Drag magnet to part hay. Tap the GOLD one.', 240, 575);
+    ctx.fillText('Grey + angry = CLONE. Never tap it.', 240, 598);
+    ctx.restore(); return;
+  }
+  if (state === 'pause'){
+    ctx.textAlign = 'center'; ctx.fillStyle = '#fff'; ctx.font = '900 40px system-ui';
+    ctx.fillText('PAUSED', 240, 380);
+    ctx.font = '20px system-ui'; ctx.fillText('Tap II to resume', 240, 420);
+    ctx.restore(); return;
+  }
+  if (state === 'over'){
+    ctx.textAlign = 'center';
+    ctx.fillStyle = '#ff4d5e'; ctx.font = '900 44px system-ui';
+    ctx.fillText('BURIED!', 240, 240);
+    ctx.fillStyle = '#fff'; ctx.font = '20px system-ui';
+    ctx.fillText(overRoast, 240, 285);
+    ctx.font = '900 30px system-ui'; ctx.fillStyle = '#ffd94d';
+    ctx.fillText('SCORE ' + score, 240, 340);
+    ctx.fillStyle = '#7dff8a'; ctx.font = '700 22px system-ui';
+    ctx.fillText('RANK: ' + rankFor(score), 240, 380);
+    ctx.fillStyle = '#aaa'; ctx.font = '18px system-ui';
+    ctx.fillText('Best: ' + high + '  •  Needles: ' + roundFound, 240, 415);
+    ctx.fillStyle = '#35e0ff';
+    ctx.fillRect(90, 560, 140, 50); ctx.fillRect(250, 560, 140, 50);
+    ctx.fillStyle = '#0d0b1e'; ctx.font = '900 20px system-ui';
+    ctx.fillText('PLAY AGAIN', 160, 592); ctx.fillText('COPY', 320, 592);
+    if (copyMsg > 0){ ctx.fillStyle = '#7dff8a'; ctx.font = '18px system-ui'; ctx.fillText('COPIED!', 240, 640); }
+    ctx.restore(); return;
+  }
+  // HUD
+  ctx.textAlign = 'left'; ctx.fillStyle = '#fff'; ctx.font = '900 24px system-ui';
+  ctx.fillText('⭐ ' + score, 14, 34);
+  ctx.fillStyle = '#ffd94d'; ctx.fillText('⏱ ' + Math.ceil(timeLeft), 150, 34);
+  ctx.fillStyle = '#7dff8a'; ctx.fillText('🔥×' + streak, 250, 34);
+  ctx.fillStyle = '#ff9de2'; ctx.fillText('R' + round, 350, 34);
+  ctx.textAlign = 'right'; ctx.fillStyle = '#aaa'; ctx.font = '16px system-ui';
+  ctx.fillText('BEST ' + high, 466, 32);
+  ctx.textAlign = 'center';
+  ctx.fillStyle = '#fff'; ctx.font = '700 18px system-ui';
+  ctx.fillText('Drag to sweep hay. Tap GOLD only.', 240, 62);
+  ctx.fillStyle = '#ff9de2'; ctx.font = '700 17px system-ui';
+  if (round >= 2 || roundT > 15) ctx.fillText('IT RUNS! Catch it!', 240, 86);
+
+  // hay strands (drawn under revealed items? items sit in pile, draw hay first, then items on top when revealed)
+  for (const s of hay){
+    const wob = Math.sin(s.sway) * 3;
+    ctx.strokeStyle = s.col; ctx.lineWidth = 3; ctx.lineCap = 'round';
+    ctx.beginPath();
+    ctx.moveTo(s.x + s.ox - Math.cos(s.ang) * s.len / 2, s.y + s.oy - Math.sin(s.ang) * s.len / 2 + wob);
+    ctx.lineTo(s.x + s.ox + Math.cos(s.ang) * s.len / 2, s.y + s.oy + Math.sin(s.ang) * s.len / 2 - wob);
+    ctx.stroke();
+  }
+  // golden wheat
+  if (wheat){
+    ctx.save(); ctx.translate(wheat.x, wheat.y);
+    ctx.shadowColor = '#ffe27a'; ctx.shadowBlur = 14 + Math.sin(wheat.tw) * 6;
+    ctx.strokeStyle = '#ffe27a'; ctx.lineWidth = 4;
+    ctx.beginPath(); ctx.moveTo(0, 18); ctx.lineTo(0, -18); ctx.stroke();
+    ctx.fillStyle = '#ffe27a';
+    for (let i = 0; i < 5; i++){ ctx.beginPath(); ctx.ellipse(-8, -14 + i * 7, 5, 3, -0.6, 0, 6.29); ctx.fill(); ctx.beginPath(); ctx.ellipse(8, -14 + i * 7, 5, 3, 0.6, 0, 6.29); ctx.fill(); }
+    ctx.restore();
+  }
+  // needles when revealed
+  if (needle && coverCount(needle.x, needle.y) <= 3)
+    drawNeedle(needle.x, needle.y, true, needle.leg, needle.moving);
+  for (const f of fakes){
+    if (coverCount(f.x, f.y) <= 3){
+      const bob = Math.sin(f.bounce) * 3;
+      ctx.save(); ctx.translate(0, bob);
+      if (f.laugh > 0) ctx.translate(rand(-4,4), rand(-4,4));
+      drawNeedle(f.x, f.y, false, 0, false);
+      ctx.restore();
+      if (f.laugh > 0){
+        ctx.fillStyle = '#ff4d5e'; ctx.font = '900 18px system-ui';
+        ctx.fillText('HA!', f.x, f.y - 40);
+      }
+    }
+  }
+  // magnet
+  ctx.save(); ctx.translate(mag.x, mag.y);
+  ctx.strokeStyle = '#ff4d5e'; ctx.lineWidth = 8; ctx.lineCap = 'round';
+  ctx.beginPath(); ctx.arc(0, 0, 20, Math.PI, 0); ctx.stroke();
+  ctx.fillStyle = '#ddd'; ctx.fillRect(-24, -4, 8, 12); ctx.fillRect(16, -4, 8, 12);
+  ctx.fillStyle = 'rgba(255,217,77,.15)';
+  ctx.beginPath(); ctx.arc(0, 0, 62, 0, 6.29); ctx.fill();
+  ctx.restore();
+  // particles + popups
+  for (const p of parts){ ctx.fillStyle = p.col; ctx.globalAlpha = 1 - p.t / 0.8; ctx.beginPath(); ctx.arc(p.x, p.y, p.r, 0, 6.29); ctx.fill(); }
+  ctx.globalAlpha = 1;
+  ctx.textAlign = 'center';
+  for (const p of popups){
+    ctx.globalAlpha = 1 - p.t / 1.4;
+    ctx.fillStyle = p.col; ctx.font = '900 22px system-ui';
+    ctx.fillText(p.txt, p.x, p.y - p.t * 30);
+  }
+  ctx.globalAlpha = 1;
+  ctx.restore();
+}
+
+let last = performance.now();
+function loop(now){
+  const dt = Math.min(0.05, (now - last) / 1000); last = now;
+  update(dt); draw();
+  requestAnimationFrame(loop);
+}
+reset();
+requestAnimationFrame(loop);
+</script>
+</body>
+</html>
