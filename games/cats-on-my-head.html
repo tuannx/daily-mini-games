@@ -1,0 +1,450 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
+<title>CATS ON MY HEAD — Stack the falling cats.</title>
+<style>
+  *{margin:0;padding:0;box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+  html,body{height:100%;background:#0d0b1e;overflow:hidden}
+  body{display:flex;align-items:center;justify-content:center;font-family:system-ui,'Arial Black',Arial,sans-serif;user-select:none;-webkit-user-select:none;touch-action:none}
+  #wrap{position:relative;width:100%;max-width:480px;height:100%;max-height:860px}
+  canvas{display:block;width:100%;height:100%;background:#1a1040}
+  .btn{position:absolute;top:8px;width:38px;height:38px;border:2px solid #35e0ff;border-radius:50%;background:rgba(13,11,30,.7);color:#fff;font-size:17px;line-height:34px;text-align:center;cursor:pointer;z-index:5}
+  #pauseBtn{right:8px} #muteBtn{right:52px}
+</style>
+</head>
+<body>
+<div id="wrap">
+<canvas id="c" width="480" height="760"></canvas>
+<div class="btn" id="muteBtn">♪</div>
+<div class="btn" id="pauseBtn">II</div>
+</div>
+<script>
+'use strict';
+/* CATS ON MY HEAD — stack-the-cats tower catcher.
+   Move to catch falling cats on your head. Cats = glowing halo = CATCH.
+   Dog = angry red face, NO glow = NEVER catch (knocks 2 cats off).
+   Twist: from 12s cats squirm + wear hats; from 30s a crowned BOSS CAT
+   lands and shakes the whole tower; fast moves lean the tower and
+   fling the top cat off, furious. One family, one role, all game. */
+const cv = document.getElementById('c');
+const ctx = cv.getContext('2d');
+const W = 480, H = 760;
+const GAME_URL = 'https://tuannx.github.io/daily-mini-games/games/cats-on-my-head.html';
+const HS_KEY = 'catsonmyhead-highscore';
+const TOT_KEY = 'catsonmyhead-totalcats';
+
+// ---------- audio (WebAudio, self-generated, no assets) ----------
+let AC = null, muted = false;
+function beep(f, d, type, vol, slide){
+  if (muted) return;
+  try {
+    AC = AC || new (window.AudioContext || window.webkitAudioContext)();
+    const o = AC.createOscillator(), g = AC.createGain();
+    o.type = type || 'sine'; o.frequency.value = f;
+    if (slide) o.frequency.exponentialRampToValueAtTime(slide, AC.currentTime + d);
+    g.gain.setValueAtTime(vol || 0.12, AC.currentTime);
+    g.gain.exponentialRampToValueAtTime(0.001, AC.currentTime + d);
+    o.connect(g); g.connect(AC.destination);
+    o.start(); o.stop(AC.currentTime + d);
+  } catch(e){}
+}
+const sMeow = ()=>{ beep(700,.18,'triangle',.10,1100); setTimeout(()=>beep(900,.12,'triangle',.08,600),90); };
+const sCatch = ()=>{ [880,1170].forEach((f,i)=>setTimeout(()=>beep(f,.1,'square',.09),i*60)); };
+const sGold = ()=>{ [1320,1760,2200].forEach((f,i)=>setTimeout(()=>beep(f,.12,'sine',.10),i*60)); };
+const sBark = ()=>{ beep(180,.22,'sawtooth',.14,90); setTimeout(()=>beep(140,.2,'sawtooth',.12,80),130); };
+const sFly = ()=>{ beep(500,.3,'sine',.10,1400); };
+const sOver = ()=>{ [440,330,220,160].forEach((f,i)=>setTimeout(()=>beep(f,.18,'triangle',.11),i*140)); };
+
+// ---------- state ----------
+let state = 'menu'; // menu | play | pause | over
+let score = 0, combo = 0, bestCombo = 0, timeLeft = 60, elapsed = 0;
+let high = +(localStorage.getItem(HS_KEY) || 0);
+let totalCats = +(localStorage.getItem(TOT_KEY) || 0);
+let crownUnlocked = totalCats >= 25, crownJust = false;
+let px = 240, pvx = 0, targetX = 240;
+let stack = []; // {color, face, hat, boss, squirm, born}
+let falling = [], groundCats = [], flyOffs = [], popups = [], bursts = [];
+let spawnT = 0.5, goldT = 14, fishT = 22, bossT = 30, dogT = 8;
+let lean = 0, shakeT = 0, copyMsg = 0, overRoast = '', slowT = 0, bossShakeT = 0;
+let keys = {};
+const CAT_COLORS = ['#ff9d3c','#ffb84d','#c9c9d6','#8fd3ff','#ff7eb6'];
+const FACES = ['happy','sleepy','grumpy'];
+const ROASTS = [
+  'The cats left. They kept the hats.',
+  'Your head is not a hotel.',
+  'The dog is still laughing.',
+  'Tower down. Dignity: also down.',
+  'The cats unionized mid-air.',
+  '0 cats stayed. 100% betrayal.'
+];
+const RANKS = [[0,'CAT ROOKIE'],[15,'CAT HERDER'],[30,'FELINE JUGGLER'],[50,'CAT MAGNET'],[75,'SUPREME CAT THRONE']];
+function rankFor(s){ let r = RANKS[0][1]; RANKS.forEach(rk => { if (s >= rk[0]) r = rk[1]; }); return r; }
+function rand(a, b){ return a + Math.random() * (b - a); }
+function pick(arr){ return arr[Math.floor(Math.random() * arr.length)]; }
+function popup(x, y, txt, col){ popups.push({ x, y, txt, col: col || '#fff', t: 0 }); }
+function burst(x, y, col, n){
+  for (let i = 0; i < (n || 10); i++) bursts.push({ x, y, vx: rand(-120,120), vy: rand(-180,-40), col, t: 0, s: rand(3,7) });
+}
+function reset(){
+  score = 0; combo = 0; bestCombo = 0; timeLeft = 60; elapsed = 0;
+  px = 240; pvx = 0; targetX = 240; stack = []; falling = []; groundCats = [];
+  flyOffs = []; popups = []; bursts = []; lean = 0; shakeT = 0;
+  spawnT = 0.6; goldT = 14; fishT = 22; bossT = 30; dogT = 8; slowT = 0; bossShakeT = 0;
+  crownJust = false;
+}
+function headY(){ return 640; }
+function stackTopY(){ return headY() - 26 - stack.length * 26; }
+
+// ---------- spawning ----------
+function spawnCat(kind){
+  const x = rand(50, W - 50);
+  if (kind === 'dog') falling.push({ kind, x, y: -30, vy: rand(200,240), wob: rand(0,6), angry: true });
+  else if (kind === 'gold') falling.push({ kind, x, y: -30, vy: rand(150,180), wob: rand(0,6) });
+  else if (kind === 'fish') falling.push({ kind, x, y: -30, vy: rand(160,190), wob: rand(0,6) });
+  else if (kind === 'boss') falling.push({ kind, x, y: -40, vy: 170, wob: 0, boss: true, color: '#ffd23f', face: 'boss', hat: 'crown' });
+  else falling.push({ kind: 'cat', x, y: -30, vy: rand(140,175), wob: rand(0,6),
+    color: pick(CAT_COLORS), face: pick(FACES),
+    hat: elapsed > 12 ? (Math.random() < 0.4 ? pick(['party','cap','bow']) : null) : null,
+    squirm: elapsed > 12 });
+}
+
+// ---------- input ----------
+function toX(e){
+  const r = cv.getBoundingClientRect();
+  const cx = (e.touches ? e.touches[0].clientX : e.clientX);
+  return (cx - r.left) * (W / r.width);
+}
+cv.addEventListener('pointerdown', e => {
+  if (state === 'menu'){ reset(); state = 'play'; return; }
+  if (state === 'over'){
+    const r = cv.getBoundingClientRect();
+    const mx = (e.clientX - r.left) * (W / r.width), my = (e.clientY - r.top) * (H / r.height);
+    if (my > 480 && my < 540){ reset(); state = 'play'; return; }
+    if (my > 555 && my < 615){ copyResult(); return; }
+    return;
+  }
+  if (state === 'play'){ targetX = toX(e); }
+});
+cv.addEventListener('pointermove', e => { if (state === 'play') targetX = toX(e); });
+window.addEventListener('keydown', e => { keys[e.key] = true; if (e.key === ' ' && state === 'menu'){ reset(); state = 'play'; } });
+window.addEventListener('keyup', e => { keys[e.key] = false; });
+document.getElementById('pauseBtn').onclick = ()=>{ if (state === 'play') state = 'pause'; else if (state === 'pause') state = 'play'; };
+document.getElementById('muteBtn').onclick = ()=>{ muted = !muted; document.getElementById('muteBtn').textContent = muted ? '✕' : '♪'; };
+function copyResult(){
+  const txt = 'I stacked ' + score + ' cats on my head (' + rankFor(score) + ') and the tower still fell. Play CATS ON MY HEAD: ' + GAME_URL;
+  if (navigator.clipboard) navigator.clipboard.writeText(txt);
+  copyMsg = 2;
+}
+
+// ---------- update ----------
+function update(dt){
+  if (state !== 'play') return;
+  elapsed += dt;
+  timeLeft -= dt;
+  if (slowT > 0) slowT -= dt;
+  if (bossShakeT > 0) bossShakeT -= dt;
+  if (shakeT > 0) shakeT -= dt;
+  if (copyMsg > 0) copyMsg -= dt;
+
+  // player movement: pointer target + arrow keys
+  let want = targetX;
+  if (keys['ArrowLeft'] || keys['a']) want = px - 260 * dt;
+  if (keys['ArrowRight'] || keys['d']) want = px + 260 * dt;
+  want = Math.max(50, Math.min(W - 50, want));
+  const oldPx = px;
+  px += (want - px) * Math.min(1, dt * 14);
+  pvx = (px - oldPx) / Math.max(dt, 0.001);
+  targetX = px;
+
+  // tower lean follows speed + squirm + boss shake
+  let leanTarget = Math.max(-1, Math.min(1, pvx / 300)) * 22;
+  let noise = 0;
+  stack.forEach(c => { if (c.squirm) noise += Math.sin(elapsed * 6 + c.born) * 1.2; });
+  if (bossShakeT > 0) noise += Math.sin(elapsed * 30) * 8;
+  lean += ((leanTarget + noise) - lean) * Math.min(1, dt * 6);
+
+  // tower collapse: lean too far flings the top cat, furious
+  if (Math.abs(lean) > 30 && stack.length > 0){
+    const c = stack.pop();
+    flyOffs.push({ x: px + lean, y: stackTopY(), vx: Math.sign(lean) * rand(160,260), vy: -260, rot: 0, color: c.color, face: 'furious', hat: c.hat, t: 0 });
+    combo = 0; sFly(); popup(px, stackTopY() - 20, 'BETRAYED!', '#ff5d5d');
+    shakeT = 0.3;
+  }
+
+  // spawning
+  const speedMul = 1 + elapsed * 0.012;
+  spawnT -= dt;
+  if (spawnT <= 0){ spawnCat('cat'); spawnT = Math.max(0.42, 0.95 - elapsed * 0.008); }
+  dogT -= dt; if (dogT <= 0){ spawnCat('dog'); dogT = rand(9, 15); }
+  goldT -= dt; if (goldT <= 0){ spawnCat('gold'); goldT = rand(14, 20); }
+  fishT -= dt; if (fishT <= 0){ spawnCat('fish'); fishT = rand(18, 26); }
+  bossT -= dt; if (bossT <= 0 && !stack.some(c => c.boss)){ spawnCat('boss'); bossT = 26; }
+
+  // falling objects
+  const fallMul = slowT > 0 ? 0.45 : 1;
+  for (let i = falling.length - 1; i >= 0; i--){
+    const f = falling[i];
+    f.y += f.vy * speedMul * fallMul * dt;
+    f.x += Math.sin(elapsed * 3 + f.wob) * 12 * dt;
+    const topY = stackTopY();
+    const caught = Math.abs(f.x - px) < 58 && f.y > topY - 14 && f.y < topY + 34;
+    if (caught){
+      if (f.kind === 'dog'){
+        sBark(); shakeT = 0.5; combo = 0;
+        popup(f.x, f.y, 'BAD DOG!', '#ff5d5d');
+        for (let k = 0; k < 2 && stack.length > 0; k++){
+          const c = stack.pop();
+          flyOffs.push({ x: px + rand(-20,20), y: stackTopY(), vx: rand(-220,220), vy: -300, rot: 0, color: c.color, face: 'furious', hat: c.hat, t: 0 });
+        }
+        falling.splice(i, 1);
+        continue;
+      }
+      let pts = f.kind === 'gold' ? 5 : f.kind === 'fish' ? 5 : f.kind === 'boss' ? 5 : 1;
+      score += pts; combo++; bestCombo = Math.max(bestCombo, combo);
+      totalCats += (f.kind === 'cat' || f.kind === 'gold' || f.kind === 'boss') ? 1 : 0;
+      if (!crownUnlocked && totalCats >= 25){ crownUnlocked = true; crownJust = true; popup(px, headY() - 120, 'CROWN UNLOCKED!', '#ffd23f'); }
+      localStorage.setItem(TOT_KEY, totalCats);
+      if (f.kind === 'fish'){ slowT = 3; popup(f.x, f.y - 20, 'SLOW-MO!', '#7dff8a'); }
+      else if (f.kind === 'gold'){ sGold(); popup(f.x, f.y - 20, '+5 GOLD!', '#ffd23f'); }
+      else if (f.kind === 'boss'){ bossShakeT = 6; popup(f.x, f.y - 20, 'BOSS CAT!', '#ffd23f'); }
+      else sCatch();
+      if (f.kind !== 'fish') stack.push({ color: f.color || '#ffb84d', face: f.face || 'happy', hat: f.hat || (f.kind === 'boss' ? 'crown' : null), boss: !!f.boss, squirm: !!f.squirm || !!f.boss, born: elapsed });
+      if (combo > 0 && combo % 5 === 0) popup(px, stackTopY() - 60, 'COMBO x' + combo + '!', '#35e0ff');
+      burst(f.x, topY, f.kind === 'gold' ? '#ffd23f' : '#ff9dcc', 12);
+      if (f.kind === 'cat' || f.kind === 'boss') sMeow();
+      falling.splice(i, 1);
+      continue;
+    }
+    // near-miss: passes just beside the head
+    if (!f.near && f.y > topY + 34 && f.y < topY + 90 && Math.abs(f.x - px) >= 58 && Math.abs(f.x - px) < 82 && f.kind !== 'dog'){
+      f.near = true; popup(f.x, topY - 10, 'SO CLOSE!', '#ffe066');
+    }
+    if (f.y > H + 30){
+      if (f.kind === 'cat' || f.kind === 'gold' || f.kind === 'boss'){
+        combo = 0;
+        groundCats.push({ x: Math.max(40, Math.min(W - 40, f.x)), y: H - 46, color: f.color || '#ffb84d', face: 'furious', hat: f.hat || null, t: 0 });
+        if (groundCats.length > 4) groundCats.shift();
+      }
+      falling.splice(i, 1);
+    }
+  }
+  // fly-offs + ground cats + particles
+  flyOffs.forEach(f => { f.x += f.vx * dt; f.y += f.vy * dt; f.vy += 700 * dt; f.rot += dt * 8; f.t += dt; });
+  flyOffs = flyOffs.filter(f => f.t < 1.4);
+  groundCats.forEach(g => g.t += dt);
+  groundCats = groundCats.filter(g => g.t < 3);
+  bursts.forEach(b => { b.x += b.vx * dt; b.y += b.vy * dt; b.vy += 300 * dt; b.t += dt; });
+  bursts = bursts.filter(b => b.t < 0.7);
+  popups.forEach(p => { p.t += dt; p.y -= 30 * dt; });
+  popups = popups.filter(p => p.t < 1.2);
+
+  if (timeLeft <= 0){
+    state = 'over'; sOver();
+    overRoast = pick(ROASTS);
+    if (score > high){ high = score; localStorage.setItem(HS_KEY, high); }
+  }
+}
+
+// ---------- drawing ----------
+function drawCatBody(x, y, s, color, face, hat, glow, squirm, t, rot){
+  ctx.save();
+  ctx.translate(x, y); if (rot) ctx.rotate(rot);
+  const sq = squirm ? Math.sin(t * 10) * 0.12 : 0;
+  ctx.scale(1 + sq, 1 - sq);
+  if (glow){ ctx.shadowColor = glow; ctx.shadowBlur = 18; }
+  ctx.fillStyle = color;
+  ctx.beginPath(); ctx.ellipse(0, 0, s, s * 0.72, 0, 0, Math.PI * 2); ctx.fill();
+  ctx.shadowBlur = 0;
+  // ears
+  ctx.beginPath(); ctx.moveTo(-s * 0.6, -s * 0.5); ctx.lineTo(-s * 0.35, -s * 1.05); ctx.lineTo(-s * 0.1, -s * 0.55); ctx.closePath(); ctx.fill();
+  ctx.beginPath(); ctx.moveTo(s * 0.6, -s * 0.5); ctx.lineTo(s * 0.35, -s * 1.05); ctx.lineTo(s * 0.1, -s * 0.55); ctx.closePath(); ctx.fill();
+  // tail
+  ctx.strokeStyle = color; ctx.lineWidth = s * 0.28; ctx.lineCap = 'round';
+  ctx.beginPath(); ctx.moveTo(s * 0.9, s * 0.2); ctx.quadraticCurveTo(s * 1.4, s * 0.1, s * 1.35, -s * 0.4); ctx.stroke();
+  // face
+  ctx.fillStyle = '#1a1030'; ctx.font = 'bold ' + Math.round(s * 0.72) + 'px system-ui'; ctx.textAlign = 'center';
+  let eyes = '•  •';
+  if (face === 'sleepy') eyes = '–  –';
+  if (face === 'grumpy' || face === 'furious') eyes = '>  <';
+  if (face === 'boss') eyes = '★  ★';
+  ctx.fillText(eyes, 0, -s * 0.05);
+  ctx.font = 'bold ' + Math.round(s * 0.5) + 'px system-ui';
+  let mouth = 'w';
+  if (face === 'furious' || face === 'grumpy') mouth = '≧';
+  if (face === 'sleepy') mouth = 'u';
+  ctx.fillText(mouth, 0, s * 0.42);
+  // hat
+  if (hat === 'party'){ ctx.fillStyle = '#ff5d8f'; ctx.beginPath(); ctx.moveTo(-s * 0.3, -s * 0.85); ctx.lineTo(0, -s * 1.5); ctx.lineTo(s * 0.3, -s * 0.85); ctx.closePath(); ctx.fill(); }
+  if (hat === 'cap'){ ctx.fillStyle = '#35e0ff'; ctx.beginPath(); ctx.ellipse(0, -s * 0.85, s * 0.45, s * 0.2, 0, 0, Math.PI * 2); ctx.fill(); }
+  if (hat === 'bow'){ ctx.fillStyle = '#ff5d5d'; ctx.beginPath(); ctx.ellipse(-s * 0.2, -s * 0.9, s * 0.22, s * 0.14, -0.4, 0, Math.PI * 2); ctx.fill(); ctx.beginPath(); ctx.ellipse(s * 0.2, -s * 0.9, s * 0.22, s * 0.14, 0.4, 0, Math.PI * 2); ctx.fill(); }
+  if (hat === 'crown'){ ctx.fillStyle = '#ffd23f'; ctx.beginPath(); ctx.moveTo(-s * 0.4, -s * 0.85); ctx.lineTo(-s * 0.4, -s * 1.25); ctx.lineTo(-s * 0.2, -s * 1.0); ctx.lineTo(0, -s * 1.35); ctx.lineTo(s * 0.2, -s * 1.0); ctx.lineTo(s * 0.4, -s * 1.25); ctx.lineTo(s * 0.4, -s * 0.85); ctx.closePath(); ctx.fill(); }
+  ctx.restore();
+}
+function drawDog(x, y, t){
+  ctx.save(); ctx.translate(x, y);
+  ctx.fillStyle = '#b04a5a';
+  ctx.beginPath(); ctx.ellipse(0, 0, 30, 22, 0, 0, Math.PI * 2); ctx.fill();
+  ctx.beginPath(); ctx.ellipse(-22, -8, 10, 16, -0.4, 0, Math.PI * 2); ctx.fill();
+  ctx.beginPath(); ctx.ellipse(22, -8, 10, 16, 0.4, 0, Math.PI * 2); ctx.fill();
+  ctx.fillStyle = '#1a1030'; ctx.font = 'bold 20px system-ui'; ctx.textAlign = 'center';
+  ctx.fillText('>  <', 0, -2);
+  ctx.font = 'bold 16px system-ui'; ctx.fillText('≧', 0, 16);
+  ctx.strokeStyle = '#ff5d5d'; ctx.lineWidth = 3;
+  ctx.beginPath(); ctx.moveTo(-14, -26); ctx.lineTo(-8, -34); ctx.lineTo(-2, -26); ctx.lineTo(4, -34); ctx.lineTo(10, -26); ctx.stroke();
+  ctx.restore();
+}
+function drawFish(x, y, t){
+  ctx.save(); ctx.translate(x, y); ctx.shadowColor = '#35e0ff'; ctx.shadowBlur = 20;
+  ctx.fillStyle = '#35e0ff';
+  ctx.beginPath(); ctx.ellipse(0, 0, 22, 12, 0, 0, Math.PI * 2); ctx.fill();
+  ctx.beginPath(); ctx.moveTo(-20, 0); ctx.lineTo(-34, -12); ctx.lineTo(-34, 12); ctx.closePath(); ctx.fill();
+  ctx.shadowBlur = 0; ctx.fillStyle = '#0d0b1e'; ctx.beginPath(); ctx.arc(8, -3, 3, 0, Math.PI * 2); ctx.fill();
+  ctx.restore();
+}
+function drawPlayer(t){
+  const y = headY();
+  ctx.save();
+  // body
+  ctx.fillStyle = '#7c5cff';
+  ctx.beginPath(); ctx.ellipse(px, y + 52, 46, 44, 0, 0, Math.PI * 2); ctx.fill();
+  // arms up holding the stack
+  ctx.strokeStyle = '#7c5cff'; ctx.lineWidth = 14; ctx.lineCap = 'round';
+  ctx.beginPath(); ctx.moveTo(px - 38, y + 40); ctx.quadraticCurveTo(px - 58, y - 10, px - 40, y - 24); ctx.stroke();
+  ctx.beginPath(); ctx.moveTo(px + 38, y + 40); ctx.quadraticCurveTo(px + 58, y - 10, px + 40, y - 24); ctx.stroke();
+  // head
+  ctx.fillStyle = '#ffcf9e';
+  ctx.beginPath(); ctx.ellipse(px, y, 30, 28, 0, 0, Math.PI * 2); ctx.fill();
+  ctx.fillStyle = '#1a1030'; ctx.font = 'bold 16px system-ui'; ctx.textAlign = 'center';
+  const strain = stack.length > 8 ? '>  <' : '•  •';
+  ctx.fillText(strain, px, y - 2);
+  ctx.font = 'bold 12px system-ui';
+  ctx.fillText(stack.length > 8 ? 'o' : 'u', px, y + 14);
+  if (crownUnlocked){
+    ctx.fillStyle = '#ffd23f';
+    ctx.beginPath(); ctx.moveTo(px - 16, y - 24); ctx.lineTo(px - 16, y - 40); ctx.lineTo(px - 8, y - 30); ctx.lineTo(px, y - 42); ctx.lineTo(px + 8, y - 30); ctx.lineTo(px + 16, y - 40); ctx.lineTo(px + 16, y - 24); ctx.closePath(); ctx.fill();
+  }
+  ctx.restore();
+}
+function draw(){
+  ctx.save();
+  if (shakeT > 0) ctx.translate(rand(-6, 6), rand(-6, 6));
+  // sky
+  const g = ctx.createLinearGradient(0, 0, 0, H);
+  g.addColorStop(0, '#241a5e'); g.addColorStop(0.6, '#1a1040'); g.addColorStop(1, '#12082e');
+  ctx.fillStyle = g; ctx.fillRect(0, 0, W, H);
+  // sun with face + drifting clouds + birds (moving background objects)
+  const sunX = 70 + Math.sin(elapsed * 0.2) * 8;
+  ctx.fillStyle = '#ffd23f'; ctx.shadowColor = '#ffd23f'; ctx.shadowBlur = 30;
+  ctx.beginPath(); ctx.arc(sunX, 80, 34, 0, Math.PI * 2); ctx.fill(); ctx.shadowBlur = 0;
+  ctx.fillStyle = '#1a1030'; ctx.font = 'bold 15px system-ui'; ctx.textAlign = 'center';
+  ctx.fillText('•  •', sunX, 80); ctx.font = 'bold 11px system-ui'; ctx.fillText('u', sunX, 94);
+  for (let i = 0; i < 3; i++){
+    const cx = ((elapsed * (10 + i * 4) + i * 170) % (W + 120)) - 60;
+    ctx.fillStyle = 'rgba(255,255,255,.14)';
+    ctx.beginPath(); ctx.ellipse(cx, 120 + i * 60, 42, 16, 0, 0, Math.PI * 2); ctx.fill();
+    ctx.beginPath(); ctx.ellipse(cx + 24, 126 + i * 60, 28, 12, 0, 0, Math.PI * 2); ctx.fill();
+  }
+  for (let i = 0; i < 2; i++){
+    const bx = ((elapsed * 26 + i * 240) % (W + 40)) - 20;
+    ctx.strokeStyle = 'rgba(255,255,255,.5)'; ctx.lineWidth = 3; ctx.lineCap = 'round';
+    ctx.beginPath(); ctx.moveTo(bx, 200 + i * 80); ctx.quadraticCurveTo(bx + 8, 192 + i * 80, bx + 16, 200 + i * 80); ctx.stroke();
+  }
+  // ground
+  ctx.fillStyle = '#241a5e'; ctx.fillRect(0, H - 30, W, 30);
+  ctx.fillStyle = '#35e0ff'; ctx.fillRect(0, H - 30, W, 3);
+
+  if (state === 'menu'){
+    ctx.fillStyle = '#fff'; ctx.textAlign = 'center';
+    ctx.font = '900 44px system-ui'; ctx.fillText('CATS ON', 240, 210);
+    ctx.font = '900 44px system-ui'; ctx.fillText('MY HEAD', 240, 260);
+    ctx.font = 'bold 20px system-ui'; ctx.fillStyle = '#ffe066';
+    ctx.fillText('Catch cats. Dodge dogs.', 240, 300);
+    drawCatBody(240, 400, 34, '#ff9d3c', 'happy', 'party', '#ffb84d', false, 0, 0);
+    drawCatBody(160, 470, 26, '#8fd3ff', 'sleepy', null, '#8fd3ff', false, 0, -0.2);
+    drawCatBody(320, 470, 26, '#ff7eb6', 'grumpy', 'bow', '#ff7eb6', false, 0, 0.2);
+    ctx.fillStyle = '#94a3b8'; ctx.font = 'bold 17px system-ui';
+    ctx.fillText('TAP TO PLAY', 240, 580);
+    ctx.fillStyle = '#7dff8a'; ctx.font = 'bold 15px system-ui';
+    ctx.fillText('BEST: ' + high + (crownUnlocked ? '  👑 CROWN ON' : ''), 240, 615);
+    ctx.restore(); return;
+  }
+
+  // falling
+  falling.forEach(f => {
+    if (f.kind === 'dog') drawDog(f.x, f.y, elapsed);
+    else if (f.kind === 'fish') drawFish(f.x, f.y, elapsed);
+    else if (f.kind === 'gold') drawCatBody(f.x, f.y, 26, '#ffd23f', 'happy', 'crown', '#ffd23f', false, elapsed, 0);
+    else if (f.kind === 'boss') drawCatBody(f.x, f.y, 40, '#ffd23f', 'boss', 'crown', '#ffd23f', true, elapsed, 0);
+    else drawCatBody(f.x, f.y, 24, f.color, f.face, f.hat, f.color, f.squirm, elapsed + f.wob, 0);
+  });
+  // stack (bottom cat first, wobble grows with height)
+  stack.forEach((c, i) => {
+    const y = headY() - 26 - i * 26;
+    const wob = lean * (i + 1) / Math.max(1, stack.length) + (c.squirm ? Math.sin(elapsed * 9 + c.born) * 2.5 : 0);
+    drawCatBody(px + wob, y, c.boss ? 30 : 24, c.color, c.face, c.hat, c.color, c.squirm, elapsed + c.born, 0);
+  });
+  drawPlayer(elapsed);
+  // ground cats glaring at you
+  groundCats.forEach(g => {
+    ctx.globalAlpha = Math.max(0, 1 - g.t / 3);
+    drawCatBody(g.x, g.y, 22, g.color, 'furious', g.hat, null, false, 0, 0);
+    ctx.globalAlpha = 1;
+  });
+  // fly-offs
+  flyOffs.forEach(f => drawCatBody(f.x, f.y, 24, f.color, 'furious', f.hat, null, false, 0, f.rot));
+  // particles
+  bursts.forEach(b => { ctx.fillStyle = b.col; ctx.globalAlpha = Math.max(0, 1 - b.t / 0.7); ctx.fillRect(b.x, b.y, b.s, b.s); ctx.globalAlpha = 1; });
+  // popups
+  ctx.textAlign = 'center';
+  popups.forEach(p => { ctx.font = '900 24px system-ui'; ctx.fillStyle = p.col; ctx.globalAlpha = Math.max(0, 1 - p.t / 1.2); ctx.fillText(p.txt, p.x, p.y); ctx.globalAlpha = 1; });
+
+  // HUD
+  ctx.fillStyle = '#fff'; ctx.textAlign = 'left'; ctx.font = '900 26px system-ui';
+  ctx.fillText('🐈 ' + score, 14, 36);
+  ctx.textAlign = 'center'; ctx.fillStyle = combo >= 5 ? '#35e0ff' : '#94a3b8'; ctx.font = '900 20px system-ui';
+  ctx.fillText(combo >= 2 ? 'COMBO x' + combo : '', 240, 34);
+  ctx.textAlign = 'right'; ctx.fillStyle = timeLeft <= 10 ? '#ff5d5d' : '#fff'; ctx.font = '900 26px system-ui';
+  ctx.fillText(Math.ceil(timeLeft) + 's', W - 14, 36);
+  if (slowT > 0){ ctx.textAlign = 'center'; ctx.fillStyle = '#7dff8a'; ctx.font = '900 18px system-ui'; ctx.fillText('SLOW-MO', 240, 60); }
+
+  if (state === 'pause'){
+    ctx.fillStyle = 'rgba(0,0,0,.6)'; ctx.fillRect(0, 0, W, H);
+    ctx.fillStyle = '#fff'; ctx.textAlign = 'center'; ctx.font = '900 40px system-ui'; ctx.fillText('PAUSED', 240, 380);
+  }
+  if (state === 'over'){
+    ctx.fillStyle = 'rgba(0,0,0,.65)'; ctx.fillRect(0, 0, W, H);
+    ctx.fillStyle = '#fff'; ctx.textAlign = 'center';
+    ctx.font = '900 40px system-ui'; ctx.fillText('TOWER DOWN!', 240, 220);
+    ctx.font = 'bold 20px system-ui'; ctx.fillStyle = '#ffe066';
+    ctx.fillText(overRoast, 240, 260);
+    ctx.font = '900 30px system-ui'; ctx.fillStyle = '#fff';
+    ctx.fillText('SCORE ' + score, 240, 330);
+    ctx.font = 'bold 20px system-ui'; ctx.fillStyle = '#35e0ff';
+    ctx.fillText(rankFor(score), 240, 365);
+    ctx.font = 'bold 16px system-ui'; ctx.fillStyle = '#94a3b8';
+    ctx.fillText('BEST ' + high + ' · BEST COMBO x' + bestCombo, 240, 395);
+    if (crownJust){ ctx.fillStyle = '#ffd23f'; ctx.font = 'bold 18px system-ui'; ctx.fillText('👑 CROWN UNLOCKED!', 240, 425); }
+    ctx.fillStyle = '#35e0ff'; ctx.fillRect(90, 480, 300, 60);
+    ctx.fillStyle = '#0d0b1e'; ctx.font = '900 22px system-ui'; ctx.fillText('PLAY AGAIN', 240, 518);
+    ctx.fillStyle = '#ff5d8f'; ctx.fillRect(90, 555, 300, 60);
+    ctx.fillStyle = '#fff'; ctx.font = '900 20px system-ui'; ctx.fillText('COPY RESULT', 240, 593);
+    if (copyMsg > 0){ ctx.fillStyle = '#7dff8a'; ctx.font = 'bold 18px system-ui'; ctx.fillText('COPIED!', 240, 650); }
+  }
+  ctx.restore();
+}
+
+// ---------- loop ----------
+let last = performance.now();
+function loop(now){
+  const dt = Math.min(0.05, (now - last) / 1000);
+  last = now;
+  update(dt);
+  draw();
+  requestAnimationFrame(loop);
+}
+requestAnimationFrame(loop);
+</script>
+</body>
+</html>

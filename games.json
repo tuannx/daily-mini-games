@@ -258,5 +258,14 @@
     "mechanic": "Claw-machine revenge catcher (miss morphs plush angry)",
     "tagline": "Grab the cute ones. Miss once — it comes back ANGRY.",
     "title": "CLAW BACK!"
+  },
+  {
+    "date": "2026-10-30",
+    "day": 30,
+    "emoji": "🐈",
+    "file": "games/cats-on-my-head.html",
+    "mechanic": "Stack-the-cats tower catcher (wobble physics, squirm escalation)",
+    "tagline": "Stack the falling cats. They squirm, they judge, one wears a crown.",
+    "title": "CATS ON MY HEAD"
   }
 ]
