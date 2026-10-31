@@ -1,0 +1,455 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+<title>TRICK OR TREAT: THE DOORS LIE — Day 31</title>
+<style>
+  *{margin:0;padding:0;box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+  body{background:#12081f;display:flex;flex-direction:column;align-items:center;justify-content:center;min-height:100vh;font-family:system-ui,sans-serif;overflow:hidden}
+  #wrap{position:relative;width:min(100vw,460px)}
+  canvas{display:block;width:100%;background:#1b0f2e;border-radius:14px;touch-action:manipulation}
+  .btn{position:absolute;left:50%;transform:translateX(-50%);background:#ff6b1a;color:#fff;border:3px solid #ffd23f;border-radius:999px;padding:12px 28px;font-size:20px;font-weight:900;letter-spacing:1px;cursor:pointer;box-shadow:0 4px 0 #b33a00}
+  .btn:active{transform:translateX(-50%) translateY(3px);box-shadow:0 1px 0 #b33a00}
+  #startBtn{bottom:110px}
+  #againBtn{bottom:96px;display:none}
+  #copyBtn{bottom:34px;display:none;background:#7b2ff7;border-color:#c084fc;box-shadow:0 4px 0 #4c1d95;font-size:15px;padding:9px 20px}
+  #copyBtn:active{box-shadow:0 1px 0 #4c1d95}
+  #topbar{width:min(100vw,460px);display:flex;justify-content:space-between;padding:8px 10px;color:#ffd23f;font-weight:800;font-size:14px}
+  #topbar button{background:none;border:2px solid #ffd23f;color:#ffd23f;border-radius:8px;padding:4px 10px;font-weight:800;cursor:pointer}
+  a{color:#c084fc;font-size:13px;margin-top:6px;text-decoration:none}
+</style>
+</head>
+<body>
+<div id="topbar"><span>🎃 DAY 31 · TRICK OR TREAT</span><span><button id="muteBtn">🔊</button> <button id="pauseBtn">⏸</button></span></div>
+<div id="wrap">
+<canvas id="c" width="460" height="640"></canvas>
+<button class="btn" id="startBtn">🎃 KNOCK!</button>
+<button class="btn" id="againBtn">🔁 AGAIN!</button>
+<button class="btn" id="copyBtn">📋 COPY RESULT</button>
+</div>
+<a href="../index.html">← All daily games</a>
+<script>
+"use strict";
+const cv=document.getElementById('c'), ctx=cv.getContext('2d');
+const W=460,H=640;
+let muted=false, paused=false;
+let state='menu'; // menu | peek | shuffle | pick | reveal | over
+let doors=[], candyIdx=-1, fakeIdx=-1, golden=false;
+let score=0, best=+(localStorage.getItem('totdl_best')||0);
+let combo=0, bestCombo=0, tricks=0, lives=3, timeLeft=60, round=0;
+let popup='', popupT=0, shake=0, particles=[], bats=[];
+let shuffleQ=[], shuffleT=0, revealT=0, fakeT=0, phaseT=0;
+let goldBag = localStorage.getItem('totdl_goldbag')==='1';
+let lastResult='';
+
+// ---------- audio (WebAudio, self-generated) ----------
+let AC=null;
+function beep(f,d,type,vol){ if(muted) return; try{
+  AC=AC||new (window.AudioContext||window.webkitAudioContext)();
+  const o=AC.createOscillator(), g=AC.createGain();
+  o.type=type||'square'; o.frequency.value=f;
+  g.gain.setValueAtTime(vol||0.12,AC.currentTime);
+  g.gain.exponentialRampToValueAtTime(0.001,AC.currentTime+d);
+  o.connect(g); g.connect(AC.destination); o.start(); o.stop(AC.currentTime+d);
+}catch(e){} }
+function knockSnd(){ beep(180,0.09,'square',0.15); setTimeout(()=>beep(150,0.09,'square',0.15),120); }
+function popSnd(){ beep(660,0.12,'sine',0.15); setTimeout(()=>beep(990,0.15,'sine',0.12),70); }
+function booSnd(){ beep(220,0.35,'sawtooth',0.14); setTimeout(()=>beep(110,0.4,'sawtooth',0.14),120); }
+function goldSnd(){ [880,1100,1320].forEach((f,i)=>setTimeout(()=>beep(f,0.14,'triangle',0.14),i*80)); }
+
+// ---------- helpers ----------
+const R=(a,b)=>a+Math.random()*(b-a);
+const ri=(n)=>Math.floor(Math.random()*n);
+function doorCount(){ return score>=12?5:(score>=5?4:3); }
+function rankTitle(s){ return s>=15?'PUMPKIN KING':s>=10?'TREAT HUNTER':s>=5?'PORCH PIRATE':'CANDY ROOKIE'; }
+function setPopup(t){ popup=t; popupT=1.1; }
+function burst(x,y,color,n){ for(let i=0;i<(n||14);i++) particles.push({x,y,vx:R(-2.4,2.4),vy:R(-3.4,-0.6),life:R(0.5,1),color}); }
+
+function layoutDoors(n){
+  const gap=14, totalW=W-40, dw=(totalW-gap*(n-1))/n;
+  doors=[];
+  for(let i=0;i<n;i++){
+    const x=20+i*(dw+gap);
+    doors.push({x,tx:x,w:dw,y:300,h:190,open:0,face:'?',swap:0,faceT:0});
+  }
+}
+function startRound(){
+  round++;
+  const n=doorCount();
+  layoutDoors(n);
+  candyIdx=ri(n);
+  fakeIdx=-1; golden=false;
+  // fake candy (ghost in disguise) from round 5 on, on a non-candy door
+  if(round>=5 && Math.random()<0.55){
+    const others=doors.map((_,i)=>i).filter(i=>i!==candyIdx);
+    fakeIdx=others[ri(others.length)];
+  }
+  if(Math.random()<0.12) golden=true;
+  state='peek'; phaseT=0.95;
+}
+function startShuffle(){
+  state='shuffle';
+  window.__swapIdx=-1;
+  const swaps = score>=12?5:(score>=5?4:3);
+  shuffleQ=[];
+  for(let i=0;i<swaps;i++){
+    let a=ri(doors.length), b=ri(doors.length);
+    if(a===b) b=(b+1)%doors.length;
+    shuffleQ.push([a,b]);
+  }
+  shuffleT=0;
+}
+function pick(i){
+  if(state!=='pick') return;
+  knockSnd();
+  const d=doors[i];
+  d.open=1;
+  state='reveal'; revealT=0; fakeT=0;
+  if(i===candyIdx){
+    popSnd(); if(golden) goldSnd();
+    const gain=golden?5:1+Math.min(combo,4);
+    score+=gain; combo++; bestCombo=Math.max(bestCombo,combo);
+    burst(d.x+d.w/2, d.y+60, golden?'#ffd23f':'#ff6b1a', golden?30:16);
+    setPopup(golden?'GOLDEN!':(combo>=3?'COMBO x'+combo:'GOTCHA!'));
+  } else if(i===fakeIdx){
+    // candy morphs into ghost: 0.6s transition, 4 signals change
+    fakeT=0.0001;
+    setPopup('UH OH...');
+  } else {
+    booSnd(); tricks++; lives--; combo=0; shake=8;
+    burst(d.x+d.w/2, d.y+60, '#a855f7', 18);
+    const adj = Math.abs(i-candyIdx)===1;
+    setPopup(adj?'SO CLOSE!':'BOO!');
+    if(lives<=0){ endGame('THE GHOSTS STOLE YOUR BAG!'); return; }
+  }
+}
+function endGame(line){
+  state='over';
+  if(score>best){ best=score; localStorage.setItem('totdl_best',best); }
+  if(score>=15 && !goldBag){ goldBag=true; localStorage.setItem('totdl_goldbag','1'); }
+  lastResult='I scored '+score+' candy in TRICK OR TREAT: THE DOORS LIE — the doors lied '+tricks+' times! Rank: '+rankTitle(score)+'. Play: https://tuannx.github.io/daily-mini-games/games/trick-or-treat-doors-lie.html';
+  document.getElementById('againBtn').style.display='block';
+  document.getElementById('copyBtn').style.display='block';
+  document.getElementById('startBtn').style.display='none';
+  window.__overLine=line;
+}
+function startGame(){
+  score=0; combo=0; tricks=0; lives=3; timeLeft=60; round=0;
+  document.getElementById('startBtn').style.display='none';
+  document.getElementById('againBtn').style.display='none';
+  document.getElementById('copyBtn').style.display='none';
+  startRound();
+}
+document.getElementById('startBtn').onclick=startGame;
+document.getElementById('againBtn').onclick=startGame;
+document.getElementById('copyBtn').onclick=()=>{
+  try{ navigator.clipboard.writeText(lastResult); }catch(e){}
+  document.getElementById('copyBtn').textContent='✅ COPIED!';
+  setTimeout(()=>document.getElementById('copyBtn').textContent='📋 COPY RESULT',1200);
+};
+document.getElementById('muteBtn').onclick=(e)=>{ muted=!muted; e.target.textContent=muted?'🔇':'🔊'; };
+document.getElementById('pauseBtn').onclick=(e)=>{ if(state==='menu'||state==='over')return; paused=!paused; e.target.textContent=paused?'▶':'⏸'; };
+cv.addEventListener('pointerdown',e=>{
+  if(paused) return;
+  const r=cv.getBoundingClientRect();
+  const x=(e.clientX-r.left)*(W/r.width), y=(e.clientY-r.top)*(H/r.height);
+  if(state==='pick'){
+    for(let i=0;i<doors.length;i++){
+      const d=doors[i];
+      if(x>=d.x && x<=d.x+d.w && y>=d.y-40 && y<=d.y+d.h){ pick(i); return; }
+    }
+  }
+});
+window.addEventListener('keydown',e=>{
+  if(e.key>='1' && e.key<='5'){ const i=+e.key-1; if(i<doors.length) pick(i); }
+  if(e.key==='r'||e.key==='R'){ if(state==='over') startGame(); }
+  if(e.key===' '){ if(state==='menu') startGame(); }
+});
+
+// ---------- draw ----------
+function face(ctx,x,y,r,mood){
+  ctx.fillStyle='#fff';
+  ctx.beginPath(); ctx.arc(x-r*0.35,y-r*0.1,r*0.16,0,7); ctx.arc(x+r*0.35,y-r*0.1,r*0.16,0,7); ctx.fill();
+  ctx.fillStyle='#1b0f2e';
+  if(mood==='angry'){
+    ctx.beginPath(); ctx.arc(x-r*0.35,y-r*0.05,r*0.07,0,7); ctx.arc(x+r*0.35,y-r*0.05,r*0.07,0,7); ctx.fill();
+    ctx.strokeStyle='#1b0f2e'; ctx.lineWidth=3;
+    ctx.beginPath(); ctx.moveTo(x-r*0.55,y-r*0.35); ctx.lineTo(x-r*0.15,y-r*0.2); ctx.moveTo(x+r*0.55,y-r*0.35); ctx.lineTo(x+r*0.15,y-r*0.2); ctx.stroke();
+    ctx.beginPath(); ctx.arc(x,y+r*0.35,r*0.28,Math.PI,0); ctx.stroke();
+  } else if(mood==='scared'){
+    ctx.beginPath(); ctx.arc(x-r*0.35,y-r*0.05,r*0.08,0,7); ctx.arc(x+r*0.35,y-r*0.05,r*0.08,0,7); ctx.fill();
+    ctx.beginPath(); ctx.arc(x,y+r*0.35,r*0.18,0,7); ctx.fill();
+  } else {
+    ctx.beginPath(); ctx.arc(x-r*0.35,y-r*0.05,r*0.07,0,7); ctx.arc(x+r*0.35,y-r*0.05,r*0.07,0,7); ctx.fill();
+    ctx.beginPath(); ctx.arc(x,y+r*0.25,r*0.3,0,Math.PI); ctx.strokeStyle='#1b0f2e'; ctx.lineWidth=3; ctx.stroke();
+  }
+}
+function drawCandy(x,y,r,t,gold){
+  const pulse=1+Math.sin(t*6)*0.08;
+  ctx.save(); ctx.translate(x,y); ctx.scale(pulse,pulse);
+  ctx.shadowColor=gold?'#ffd23f':'#ff8c42'; ctx.shadowBlur=22;
+  ctx.fillStyle=gold?'#ffd23f':'#ff6b1a';
+  ctx.beginPath(); ctx.arc(0,0,r,0,7); ctx.fill();
+  ctx.shadowBlur=0;
+  ctx.fillStyle='rgba(255,255,255,0.85)';
+  ctx.beginPath(); ctx.arc(-r*0.35,-r*0.35,r*0.25,0,7); ctx.fill();
+  face(ctx,0,0,r*0.9,'happy');
+  ctx.restore();
+}
+function drawGhost(x,y,r,t){
+  const wob=Math.sin(t*8)*4;
+  ctx.save(); ctx.translate(x,y+wob);
+  ctx.fillStyle='#c084fc';
+  ctx.beginPath();
+  ctx.moveTo(0,-r);
+  ctx.arc(0,0,r,Math.PI,0);
+  ctx.lineTo(r,-r*0.2);
+  for(let i=0;i<3;i++){ ctx.lineTo(r-(i+0.5)*(2*r/3), r*0.7); ctx.lineTo(r-(i+1)*(2*r/3), r*0.2); }
+  ctx.closePath(); ctx.fill();
+  face(ctx,0,-r*0.1,r*0.9,'angry');
+  ctx.restore();
+}
+function drawDoor(d,t,isCandy,isFake){
+  const cx=d.x+d.w/2;
+  // house body
+  ctx.fillStyle='#2d1b4e';
+  ctx.fillRect(d.x-4,d.y-46,d.w+8,d.h+46);
+  ctx.fillStyle='#ff6b1a';
+  ctx.beginPath(); ctx.moveTo(d.x-10,d.y-40); ctx.lineTo(cx,d.y-90); ctx.lineTo(d.x+d.w+10,d.y-40); ctx.closePath(); ctx.fill();
+  // door frame
+  ctx.fillStyle='#3b2366';
+  ctx.fillRect(d.x,d.y,d.w,d.h);
+  // open reveal
+  const openAmt=d.open;
+  if(openAmt>0){
+    ctx.fillStyle='#0f0518';
+    ctx.fillRect(d.x+6,d.y+6,d.w-12,d.h-12);
+    if(isCandy && state!=='reveal'){ drawCandy(cx,d.y+d.h/2,26,t,false); }
+    if(state==='reveal' && isCandy){ drawCandy(cx,d.y+d.h/2-10,30,t,golden); }
+    if(state==='reveal' && isFake){
+      if(fakeT<0.6){
+        // morph transition: orange->purple, happy->angry, round->wavy
+        const k=fakeT/0.6;
+        ctx.save(); ctx.translate(cx,d.y+d.h/2);
+        ctx.fillStyle=k<0.5?'#ff6b1a':'#a855f7';
+        ctx.shadowColor=k<0.5?'#ff8c42':'#c084fc'; ctx.shadowBlur=20;
+        ctx.beginPath(); ctx.arc(0,0,26+8*k,0,7); ctx.fill(); ctx.shadowBlur=0;
+        face(ctx,0,0,24,k<0.5?'happy':'angry');
+        ctx.restore();
+      } else { drawGhost(cx,d.y+d.h/2,30,t); }
+    }
+    if(state==='reveal' && !isCandy && !isFake && d.open){ drawGhost(cx,d.y+d.h/2,30,t); }
+  }
+  // door panel (slides as it opens)
+  const pw=d.w-12-(openAmt*(d.w-24));
+  if(pw>4){
+    ctx.fillStyle='#7b2ff7';
+    ctx.fillRect(d.x+6,d.y+6,pw,d.h-12);
+    ctx.fillStyle='#ffd23f';
+    ctx.beginPath(); ctx.arc(d.x+6+pw-14,d.y+d.h/2,5,0,7); ctx.fill();
+    // door face: peeking eye when closed during peek phase
+    if(state==='peek' && isCandy){
+      ctx.fillStyle='#fff';
+      ctx.beginPath(); ctx.arc(cx,d.y+60,10,0,7); ctx.fill();
+      ctx.fillStyle='#1b0f2e'; ctx.beginPath(); ctx.arc(cx+3,d.y+60,4,0,7); ctx.fill();
+    }
+  }
+  // house number
+  ctx.fillStyle='#ffd23f'; ctx.font='bold 15px system-ui'; ctx.textAlign='center';
+  ctx.fillText(String(doors.indexOf(d)+1), cx, d.y+d.h-12);
+}
+function drawKid(t){
+  const x=W/2, y=H-58;
+  ctx.save(); ctx.translate(x, y+Math.sin(t*4)*2);
+  // bag (gold if unlocked)
+  ctx.fillStyle=goldBag?'#ffd23f':'#7b2ff7';
+  ctx.beginPath(); ctx.arc(-52,6,20,0,7); ctx.fill();
+  ctx.fillStyle='#fff'; ctx.font='bold 15px system-ui'; ctx.textAlign='center';
+  ctx.fillText(score, -52, 11);
+  // body
+  ctx.fillStyle='#f5f5f5';
+  ctx.beginPath(); ctx.arc(0,0,26,0,7); ctx.fill();
+  face(ctx,0,-2,24, state==='reveal'&&lives<=1?'scared':'happy');
+  // pumpkin hat
+  ctx.fillStyle='#ff6b1a';
+  ctx.beginPath(); ctx.arc(0,-28,14,Math.PI,0); ctx.fill();
+  ctx.fillStyle='#22c55e'; ctx.fillRect(-2,-42,4,10);
+  ctx.restore();
+}
+function drawScene(t){
+  ctx.save();
+  if(shake>0){ ctx.translate(R(-shake,shake),R(-shake,shake)); shake*=0.85; if(shake<0.4)shake=0; }
+  // sky
+  const g=ctx.createLinearGradient(0,0,0,H);
+  g.addColorStop(0,'#1b0f2e'); g.addColorStop(0.7,'#2d1b4e'); g.addColorStop(1,'#12081f');
+  ctx.fillStyle=g; ctx.fillRect(0,0,W,H);
+  // moon + clouds
+  ctx.fillStyle='#ffd23f'; ctx.beginPath(); ctx.arc(W-60,70,30,0,7); ctx.fill();
+  ctx.fillStyle='rgba(255,255,255,0.08)';
+  ctx.beginPath(); ctx.ellipse(90+((t*6)%560)-40,60,50,16,0,0,7); ctx.fill();
+  // bats
+  for(const b of bats){
+    ctx.fillStyle='#0f0518';
+    const flap=Math.sin(t*14+b.ph)*6;
+    ctx.beginPath();
+    ctx.moveTo(b.x-12,b.y+flap); ctx.quadraticCurveTo(b.x,b.y-8,b.x+12,b.y+flap);
+    ctx.quadraticCurveTo(b.x,b.y+6,b.x-12,b.y+flap); ctx.fill();
+  }
+  // ground
+  ctx.fillStyle='#241243'; ctx.fillRect(0,490,W,150);
+  // pumpkins bobbing
+  for(let i=0;i<3;i++){
+    const px=50+i*170, bob=Math.sin(t*2+i)*4;
+    ctx.fillStyle='#ff6b1a';
+    ctx.beginPath(); ctx.ellipse(px,540+bob,26,20,0,0,7); ctx.fill();
+    ctx.fillStyle='#22c55e'; ctx.fillRect(px-2,516+bob,4,10);
+    ctx.fillStyle='#1b0f2e';
+    ctx.beginPath(); ctx.arc(px-8,538+bob,3,0,7); ctx.arc(px+8,538+bob,3,0,7); ctx.fill();
+  }
+  // doors
+  doors.forEach((d,i)=>drawDoor(d,t,i===candyIdx,i===fakeIdx));
+  // particles
+  particles=particles.filter(p=>p.life>0);
+  for(const p of particles){
+    p.x+=p.vx; p.y+=p.vy; p.vy+=0.12; p.life-=0.016;
+    ctx.globalAlpha=Math.max(p.life,0); ctx.fillStyle=p.color;
+    ctx.fillRect(p.x,p.y,6,6);
+  }
+  ctx.globalAlpha=1;
+  drawKid(t);
+  // HUD
+  ctx.fillStyle='#ffd23f'; ctx.font='bold 19px system-ui'; ctx.textAlign='left';
+  ctx.fillText('🍬 '+score, 16, 32);
+  ctx.textAlign='center';
+  ctx.fillText('⏱ '+Math.ceil(timeLeft), W/2, 32);
+  ctx.textAlign='right';
+  ctx.fillText('👻'.repeat(Math.max(lives,0))||'💀', W-16, 32);
+  if(combo>=2){ ctx.textAlign='center'; ctx.fillStyle='#ff6b1a'; ctx.font='bold 17px system-ui'; ctx.fillText('COMBO x'+combo, W/2, 56); }
+  // popup
+  if(popupT>0){
+    ctx.textAlign='center'; ctx.font='900 34px system-ui';
+    ctx.fillStyle='#ffd23f'; ctx.strokeStyle='#12081f'; ctx.lineWidth=6;
+    ctx.strokeText(popup, W/2, 220); ctx.fillText(popup, W/2, 220);
+  }
+  // overlays
+  if(state==='menu'){
+    ctx.fillStyle='rgba(18,8,31,0.72)'; ctx.fillRect(0,0,W,H);
+    ctx.textAlign='center'; ctx.fillStyle='#ffd23f'; ctx.font='900 34px system-ui';
+    ctx.fillText('TRICK OR TREAT', W/2, 200);
+    ctx.fillStyle='#ff6b1a'; ctx.font='900 26px system-ui';
+    ctx.fillText('THE DOORS LIE', W/2, 235);
+    ctx.fillStyle='#fff'; ctx.font='bold 17px system-ui';
+    ctx.fillText('Knock. Guess. Don\'t trust candy.', W/2, 270);
+    ctx.font='15px system-ui'; ctx.fillStyle='#c084fc';
+    ctx.fillText('Watch the candy. Doors shuffle.', W/2, 296);
+    ctx.fillText('One candy is a ghost in disguise.', W/2, 318);
+    ctx.fillStyle='#ffd23f'; ctx.font='bold 15px system-ui';
+    ctx.fillText('BEST: '+best+' 🍬'+(goldBag?'  ·  GOLD BAG UNLOCKED':'  ·  15+ unlocks GOLD BAG'), W/2, 350);
+    ctx.fillStyle='#fff'; ctx.font='13px system-ui';
+    ctx.fillText('Tap a door · Keys 1-5', W/2, 560);
+  }
+  if(state==='over'){
+    ctx.fillStyle='rgba(18,8,31,0.78)'; ctx.fillRect(0,0,W,H);
+    ctx.textAlign='center'; ctx.fillStyle='#ff6b1a'; ctx.font='900 30px system-ui';
+    ctx.fillText('GAME OVER', W/2, 190);
+    ctx.fillStyle='#fff'; ctx.font='bold 18px system-ui';
+    ctx.fillText(window.__overLine||'TIME UP!', W/2, 224);
+    ctx.fillStyle='#ffd23f'; ctx.font='900 40px system-ui';
+    ctx.fillText(score+' 🍬', W/2, 280);
+    ctx.fillStyle='#c084fc'; ctx.font='bold 19px system-ui';
+    ctx.fillText(rankTitle(score), W/2, 312);
+    ctx.fillStyle='#fff'; ctx.font='15px system-ui';
+    ctx.fillText('Best combo x'+bestCombo+' · Tricks: '+tricks+' · Best: '+best, W/2, 340);
+    if(goldBag) { ctx.fillStyle='#ffd23f'; ctx.fillText('🎒 GOLD BAG!', W/2, 366); }
+  }
+  if(paused){
+    ctx.fillStyle='rgba(0,0,0,0.5)'; ctx.fillRect(0,0,W,H);
+    ctx.fillStyle='#fff'; ctx.font='900 36px system-ui'; ctx.textAlign='center';
+    ctx.fillText('PAUSED', W/2, H/2);
+  }
+  ctx.restore();
+}
+
+// ---------- loop ----------
+for(let i=0;i<5;i++) bats.push({x:R(0,W),y:R(30,140),ph:R(0,6)});
+let last=performance.now();
+function loop(now){
+  const dt=Math.min((now-last)/1000,0.05); last=now;
+  const t=now/1000;
+  if(!paused){
+    if(popupT>0) popupT-=dt;
+    if(state==='peek'){
+      phaseT-=dt;
+      doors[candyIdx].open=0.75; // peek: door mostly open, candy visible behind panel edge
+      if(phaseT<=0){ doors.forEach(d=>d.open=0); startShuffle(); }
+    }
+    if(state==='shuffle'){
+      shuffleT+=dt;
+      const stepDur = score>=12?0.32:(score>=5?0.4:0.5);
+      const idx=Math.floor(shuffleT/stepDur);
+      if(idx<shuffleQ.length){
+        const [a,b]=shuffleQ[idx];
+        const da=doors[a], db=doors[b];
+        if(window.__swapIdx!==idx){ window.__swapIdx=idx; window.__swapFrom=[da.x,db.x]; }
+        const k=(shuffleT-idx*stepDur)/stepDur;
+        // swap current positions (not original tx) so chained swaps animate correctly
+        da.x=window.__swapFrom[0]+(window.__swapFrom[1]-window.__swapFrom[0])*k;
+        db.x=window.__swapFrom[1]+(window.__swapFrom[0]-window.__swapFrom[1])*k;
+      } else {
+        // commit swaps
+        for(const [a,b] of shuffleQ){
+          const tmp=doors[a].tx; doors[a].tx=doors[b].tx; doors[b].tx=tmp;
+        }
+        doors.forEach(d=>d.x=d.tx);
+        // candyIdx follows the door object: find which door position now holds candy
+        // doors array order is positional; candy tracked by object identity:
+        // (we shuffled positions, not array order, so track via stored door ref)
+        state='pick';
+      }
+    }
+    if(state==='pick'){
+      timeLeft-=dt;
+      if(timeLeft<=0){ timeLeft=0; endGame('TIME UP! BAG CHECK!'); }
+    }
+    if(state==='reveal'){
+      revealT+=dt;
+      if(fakeT>0){
+        fakeT+=dt;
+        if(fakeT>=0.6 && !window.__fakeDone){
+          window.__fakeDone=true; booSnd(); shake=8;
+          score=Math.max(0,score-2); combo=0;
+          burst(doors[fakeIdx].x+doors[fakeIdx].w/2, 360, '#a855f7', 22);
+          setPopup('TRICKED!');
+        }
+        if(fakeT>=1.5){ window.__fakeDone=false; doors.forEach(dd=>dd.open=0); startRound(); }
+      } else if(revealT>=0.95){
+        doors.forEach(dd=>dd.open=0);
+        if(state==='reveal') startRound();
+      }
+    }
+  }
+  drawScene(t);
+  requestAnimationFrame(loop);
+}
+// NOTE: candy tracking across shuffle — positions shuffle but doors array order is
+// positional; candyIdx refers to array index, so after a swap we must swap indices too.
+const _origStartShuffle = startShuffle;
+startShuffle = function(){
+  // wrap: after shuffle completes, candyIdx must follow the door that held it.
+  // We implement tracking by tagging the candy door object before shuffling.
+  doors[candyIdx]._hasCandy=true;
+  doors.forEach((d,i)=>{ if(i!==candyIdx) d._hasCandy=false; });
+  _origStartShuffle();
+  const _check=setInterval(()=>{
+    if(state==='pick'){
+      clearInterval(_check);
+      candyIdx=doors.findIndex(d=>d._hasCandy);
+    }
+    if(state==='menu'||state==='over') clearInterval(_check);
+  },50);
+};
+requestAnimationFrame(loop);
+</script>
+</body>
+</html>

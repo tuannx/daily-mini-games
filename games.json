@@ -267,5 +267,14 @@
     "mechanic": "Stack-the-cats tower catcher (wobble physics, squirm escalation)",
     "tagline": "Stack the falling cats. They squirm, they judge, one wears a crown.",
     "title": "CATS ON MY HEAD"
+  },
+  {
+    "date": "2026-10-31",
+    "day": 31,
+    "emoji": "🎃",
+    "file": "games/trick-or-treat-doors-lie.html",
+    "mechanic": "Door-shuffle trick-or-treat (candy hides, doors shuffle, fake candy morphs ghost)",
+    "tagline": "The candy hides. The doors shuffle. One candy is a ghost in disguise.",
+    "title": "TRICK OR TREAT: THE DOORS LIE"
   }
 ]
