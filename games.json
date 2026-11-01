@@ -276,5 +276,14 @@
     "mechanic": "Door-shuffle trick-or-treat (candy hides, doors shuffle, fake candy morphs ghost)",
     "tagline": "The candy hides. The doors shuffle. One candy is a ghost in disguise.",
     "title": "TRICK OR TREAT: THE DOORS LIE"
+  },
+  {
+    "date": "2026-11-01",
+    "day": 32,
+    "emoji": "🐶",
+    "file": "games/dance-dog-single-paw.html",
+    "mechanic": "Beat-tap dance battle (dog judges misses, red beats lie)",
+    "tagline": "Keep the beat or the dog judges you. Red beats are a trap.",
+    "title": "DANCE DOG: SINGLE PAW"
   }
 ]
