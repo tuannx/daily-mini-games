@@ -1,0 +1,453 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
+<title>LOOK BUSY! — Slack hard. Boss is coming!</title>
+<style>
+  *{margin:0;padding:0;box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+  html,body{height:100%;background:#0d0b1e;overflow:hidden}
+  body{display:flex;align-items:center;justify-content:center;font-family:system-ui,'Arial Black',Arial,sans-serif;user-select:none;-webkit-user-select:none;touch-action:none}
+  #wrap{position:relative;width:100%;max-width:480px;height:100%;max-height:860px}
+  canvas{display:block;width:100%;height:100%;background:#14102a}
+  .btn{position:absolute;top:8px;width:38px;height:38px;border:2px solid #35e0ff;border-radius:50%;background:rgba(13,11,30,.7);color:#fff;font-size:17px;line-height:34px;text-align:center;cursor:pointer;z-index:5}
+  #pauseBtn{right:8px} #muteBtn{right:52px}
+</style>
+</head>
+<body>
+<div id="wrap">
+<canvas id="c" width="480" height="760"></canvas>
+<div class="btn" id="muteBtn">♪</div>
+<div class="btn" id="pauseBtn">II</div>
+</div>
+<script>
+'use strict';
+/* LOOK BUSY! — slack-off survival.
+   TAP = slack (play games on your monitor, score points).
+   HOLD = look busy (fake spreadsheet) — the ONLY safe move while the boss watches.
+   Boss cycle: away -> PEEK warning (!) -> WATCHING (don't tap! hold!) -> leaves.
+   Twist: from 15s fake-out re-peeks; from 30s a snitch coworker points (suspicion starts half);
+   from 45s the gold CEO watches (suspicion rises 2x). Rare golden coffee = 5s free slack x2.
+   One family, one role: gold glow = coffee bonus only; red angry face = boss danger only;
+   stars = points only. 3 strikes = FIRED. 60s run. */
+const cv = document.getElementById('c');
+const ctx = cv.getContext('2d');
+const W = 480, H = 760;
+const GAME_URL = 'https://tuannx.github.io/daily-mini-games/games/look-busy.html';
+const HS_KEY = 'lookbusy-highscore';
+const MUG_KEY = 'lookbusy-gold-mug';
+
+// ---------- audio (WebAudio, self-generated, no assets) ----------
+let AC = null, muted = false;
+function beep(f, d, type, vol, slide){
+  if (muted) return;
+  try {
+    AC = AC || new (window.AudioContext || window.webkitAudioContext)();
+    const o = AC.createOscillator(), g = AC.createGain();
+    o.type = type || 'sine'; o.frequency.value = f;
+    if (slide) o.frequency.exponentialRampToValueAtTime(slide, AC.currentTime + d);
+    g.gain.setValueAtTime(vol || 0.12, AC.currentTime);
+    g.gain.exponentialRampToValueAtTime(0.001, AC.currentTime + d);
+    o.connect(g); g.connect(AC.destination);
+    o.start(); o.stop(AC.currentTime + d);
+  } catch(e){}
+}
+const sTap = ()=>{ beep(700,.07,'square',.07,900); };
+const sBusy = ()=>{ beep(300,.06,'sine',.05); };
+const sAlarm = ()=>{ [880,660,880].forEach((f,i)=>setTimeout(()=>beep(f,.12,'square',.10),i*130)); };
+const sCaught = ()=>{ beep(200,.4,'sawtooth',.15,70); };
+const sCoffee = ()=>{ [1046,1318,1568,2093].forEach((f,i)=>setTimeout(()=>beep(f,.12,'sine',.10),i*60)); };
+const sClose = ()=>{ [660,880,1100].forEach((f,i)=>setTimeout(()=>beep(f,.1,'triangle',.10),i*70)); };
+const sOver = ()=>{ [440,330,220,160].forEach((f,i)=>setTimeout(()=>beep(f,.18,'triangle',.11),i*140)); };
+const sStart = ()=>{ [523,659,784].forEach((f,i)=>setTimeout(()=>beep(f,.1,'sine',.10),i*70)); };
+
+// ---------- state ----------
+let state = 'start'; // start | play | pause | over
+let score = 0, high = +(localStorage.getItem(HS_KEY) || 0);
+let goldMug = localStorage.getItem(MUG_KEY) === '1';
+let combo = 0, bestCombo = 0, lives = 3, timeLeft = 60, elapsed = 0;
+let suspicion = 0, bossPhase = 'away', bossT = 0, bossX = 520, bossIsCEO = false;
+let snitchOn = false, fakeoutQueued = false, coffeeT = 0, coffeeActive = false;
+let stars = [], papers = [], confetti = [], popups = [];
+let workerFace = 'chill', workerBob = 0, plantShake = 0, mugSteam = 0;
+let holding = false, holdStart = 0, busyTick = 0;
+let copyMsg = 0, overRoast = '', mugJust = false, coffeeSpawnT = 14, nextAway = 4;
+let flashT = 0, caughtT = 0;
+
+const ROASTS = [
+  'HR saw everything.',
+  'Your screen was NOT a spreadsheet.',
+  'Fired. The plant saw it too.',
+  'Boss: "We need to talk."',
+  'Security is walking over.'
+];
+function rankFor(s){
+  if (s >= 150) return 'CEO OF SLACK';
+  if (s >= 90) return 'SLACK ARTIST';
+  if (s >= 40) return 'CUBICLE GHOST';
+  return 'FIRED INTERN';
+}
+function popup(x, y, txt, col){ popups.push({x, y, txt, col: col || '#fff', t: 1.2}); }
+function burst(x, y, n, col){
+  for (let i = 0; i < n; i++) stars.push({x, y, vx: (Math.random()-0.5)*260, vy: -Math.random()*220-60, t: .8, col: col || '#ffd23f'});
+}
+function reset(){
+  score = 0; combo = 0; bestCombo = 0; lives = 3; timeLeft = 60; elapsed = 0;
+  suspicion = 0; bossPhase = 'away'; bossT = 0; bossX = 520; bossIsCEO = false;
+  snitchOn = false; fakeoutQueued = false; coffeeT = 0; coffeeActive = false;
+  stars = []; papers = []; confetti = []; popups = [];
+  workerFace = 'chill'; copyMsg = 0; mugJust = false; coffeeSpawnT = 13 + Math.random()*8; nextAway = 3.5 + Math.random()*2;
+  flashT = 0; caughtT = 0; holding = false;
+}
+function startGame(){ reset(); state = 'play'; sStart(); }
+function endGame(){
+  state = 'over';
+  overRoast = ROASTS[Math.floor(Math.random()*ROASTS.length)];
+  if (score > high){ high = score; localStorage.setItem(HS_KEY, String(high)); }
+  if (score >= 120 && !goldMug){ goldMug = true; mugJust = true; localStorage.setItem(MUG_KEY, '1'); }
+  sOver();
+}
+function caught(){
+  lives--; combo = 0; caughtT = 1.0; flashT = .35; workerFace = 'busted';
+  sCaught();
+  popup(240, 300, 'BUSTED!', '#ff4757');
+  for (let i = 0; i < 12; i++) papers.push({x: 240 + (Math.random()-0.5)*120, y: 420, vx: (Math.random()-0.5)*300, vy: -Math.random()*200-40, r: Math.random()*Math.PI, t: 1.4});
+  plantShake = 1;
+  bossPhase = 'leaving'; bossT = 0; suspicion = 0; snitchOn = false;
+  if (lives <= 0){ setTimeout(endGame, 900); }
+}
+function slackTap(){
+  if (coffeeActive){ score += 2; popup(240, 260, 'x2!', '#ffd23f'); }
+  else score += 1;
+  combo++; if (combo > bestCombo) bestCombo = combo;
+  if (combo > 0 && combo % 10 === 0) popup(240, 300, combo + ' COMBO!', '#35e0ff');
+  burst(240 + (Math.random()-0.5)*160, 330, 5);
+  workerFace = 'chill'; sTap();
+}
+function onPress(){
+  if (state === 'start'){ startGame(); return; }
+  if (state === 'over'){
+    // copy zone: lower third copies, otherwise restart
+    startGame(); return;
+  }
+  if (state !== 'play') return;
+  holding = true; holdStart = performance.now();
+}
+function onRelease(x, y){
+  if (state !== 'play'){ holding = false; return; }
+  const dur = performance.now() - holdStart;
+  holding = false;
+  if (dur < 200){
+    // quick tap = slack
+    if (bossPhase === 'watching'){ caught(); return; }
+    if (coffeeActive || bossPhase === 'away' || bossPhase === 'peek' || bossPhase === 'leaving') slackTap();
+  }
+}
+function onCopyTap(x, y){
+  if (state !== 'over') return;
+  // copy button zone
+  if (x > 120 && x < 360 && y > 560 && y < 610){
+    const txt = 'I slacked ' + score + ' pts, rank ' + rankFor(score) + ' in LOOK BUSY! ' + GAME_URL;
+    try {
+      if (navigator.clipboard) navigator.clipboard.writeText(txt);
+      else { const ta = document.createElement('textarea'); ta.value = txt; document.body.appendChild(ta); ta.select(); document.execCommand('copy'); ta.remove(); }
+    } catch(e){}
+    copyMsg = 2; return true;
+  }
+  return false;
+}
+cv.addEventListener('pointerdown', e => {
+  const r = cv.getBoundingClientRect();
+  const x = (e.clientX - r.left) * W / r.width, y = (e.clientY - r.top) * H / r.height;
+  if (state === 'over' && onCopyTap(x, y)) return;
+  onPress();
+});
+cv.addEventListener('pointerup', e => {
+  const r = cv.getBoundingClientRect();
+  onRelease((e.clientX - r.left) * W / r.width, (e.clientY - r.top) * H / r.height);
+});
+cv.addEventListener('pointercancel', ()=>{ holding = false; });
+window.addEventListener('keydown', e => {
+  if (e.code === 'Space'){ e.preventDefault(); if (!holding) onPress(); }
+});
+window.addEventListener('keyup', e => {
+  if (e.code === 'Space'){ e.preventDefault(); onRelease(0, 0); }
+});
+document.getElementById('muteBtn').onclick = e => { e.stopPropagation(); muted = !muted; document.getElementById('muteBtn').textContent = muted ? 'X' : '♪'; };
+document.getElementById('pauseBtn').onclick = e => {
+  e.stopPropagation();
+  if (state === 'play') state = 'pause';
+  else if (state === 'pause') state = 'play';
+};
+
+// ---------- boss cycle ----------
+function bossUpdate(dt){
+  bossT += dt;
+  if (bossPhase === 'away'){
+    bossX = 520;
+    if (bossT >= nextAway){
+      bossPhase = 'peek'; bossT = 0; sAlarm();
+      // CEO chance from 45s, snitch from 30s
+      bossIsCEO = elapsed >= 45 && Math.random() < 0.35;
+      snitchOn = elapsed >= 30 && Math.random() < 0.6;
+      if (snitchOn) suspicion = 40;
+    }
+  } else if (bossPhase === 'peek'){
+    bossX = 400;
+    if (bossT >= 1.1){ bossPhase = 'watching'; bossT = 0; }
+  } else if (bossPhase === 'watching'){
+    bossX = 330;
+    const rate = (bossIsCEO ? 55 : 30) + Math.min(25, elapsed * 0.4);
+    if (holding){ suspicion = Math.max(0, suspicion - rate * 1.6 * dt); if (Math.random() < 0.3) busyTick += dt; }
+    else suspicion += rate * dt;
+    workerFace = holding ? 'busy' : 'panic';
+    if (suspicion >= 100){ caught(); return; }
+    const watchDur = Math.max(2.2, 4.2 - elapsed * 0.02);
+    if (bossT >= watchDur){
+      if (suspicion >= 75){ score += 10; popup(240, 300, 'SO CLOSE!', '#ffd23f'); sClose(); burst(240, 300, 10); }
+      bossPhase = 'leaving'; bossT = 0; suspicion = 0; snitchOn = false; workerFace = 'chill';
+      // fake-out from 15s: 40% instant re-peek
+      if (elapsed >= 15 && Math.random() < 0.4) fakeoutQueued = true;
+    }
+  } else if (bossPhase === 'leaving'){
+    bossX += 260 * dt;
+    if (bossX >= 520){
+      if (fakeoutQueued){ fakeoutQueued = false; bossPhase = 'peek'; bossT = 0; sAlarm(); bossIsCEO = false; }
+      else { bossPhase = 'away'; bossT = 0; nextAway = Math.max(2.2, 5.5 - elapsed * 0.04) + Math.random() * 2; }
+    }
+  }
+  // coffee event: intern drops golden coffee, 5s free slack
+  if (!coffeeActive){
+    coffeeSpawnT -= dt;
+    if (coffeeSpawnT <= 0 && bossPhase !== 'watching'){
+      coffeeActive = true; coffeeT = 5; sCoffee(); popup(240, 300, 'COFFEE BREAK!', '#ffd23f');
+    }
+  } else {
+    coffeeT -= dt;
+    if (coffeeT <= 0){ coffeeActive = false; coffeeSpawnT = 16 + Math.random() * 10; }
+  }
+}
+
+// ---------- update ----------
+let last = performance.now();
+function update(dt){
+  if (state !== 'play') return;
+  elapsed += dt; timeLeft -= dt;
+  workerBob += dt * 3; mugSteam += dt; if (plantShake > 0) plantShake -= dt;
+  if (caughtT > 0) caughtT -= dt;
+  if (flashT > 0) flashT -= dt;
+  if (holding && bossPhase !== 'watching' && Math.random() < dt * 4) sBusy();
+  bossUpdate(dt);
+  for (const s of stars){ s.x += s.vx * dt; s.y += s.vy * dt; s.vy += 300 * dt; s.t -= dt; }
+  stars = stars.filter(s => s.t > 0);
+  for (const p of papers){ p.x += p.vx * dt; p.y += p.vy * dt; p.vy += 240 * dt; p.r += dt * 4; p.t -= dt; }
+  papers = papers.filter(p => p.t > 0);
+  for (const p of popups) p.t -= dt;
+  popups = popups.filter(p => p.t > 0);
+  if (timeLeft <= 0) endGame();
+}
+
+// ---------- draw helpers ----------
+function face(x, y, r, mood, col){
+  ctx.fillStyle = col; ctx.beginPath(); ctx.arc(x, y, r, 0, Math.PI * 2); ctx.fill();
+  ctx.fillStyle = '#1a1a2e';
+  if (mood === 'angry'){ // > < eyes, zigzag mouth
+    ctx.font = 'bold ' + Math.round(r * 0.7) + 'px system-ui'; ctx.textAlign = 'center';
+    ctx.fillText('>', x - r * 0.4, y - r * 0.05); ctx.fillText('<', x + r * 0.4, y - r * 0.05);
+    ctx.beginPath(); ctx.moveTo(x - r * 0.45, y + r * 0.5); ctx.lineTo(x - r * 0.15, y + r * 0.3); ctx.lineTo(x + r * 0.15, y + r * 0.5); ctx.lineTo(x + r * 0.45, y + r * 0.3); ctx.strokeStyle = '#1a1a2e'; ctx.lineWidth = 3; ctx.stroke();
+  } else if (mood === 'panic'){
+    ctx.font = 'bold ' + Math.round(r * 0.75) + 'px system-ui'; ctx.textAlign = 'center';
+    ctx.fillText('o', x - r * 0.4, y - r * 0.1); ctx.fillText('o', x + r * 0.4, y - r * 0.1);
+    ctx.beginPath(); ctx.arc(x, y + r * 0.45, r * 0.22, 0, Math.PI * 2); ctx.stroke();
+  } else if (mood === 'busted'){
+    ctx.font = 'bold ' + Math.round(r * 0.7) + 'px system-ui'; ctx.textAlign = 'center';
+    ctx.fillText('X', x - r * 0.4, y); ctx.fillText('X', x + r * 0.4, y);
+    ctx.beginPath(); ctx.arc(x, y + r * 0.5, r * 0.2, Math.PI, 0); ctx.stroke();
+  } else if (mood === 'busy'){
+    ctx.font = 'bold ' + Math.round(r * 0.6) + 'px system-ui'; ctx.textAlign = 'center';
+    ctx.fillText('•', x - r * 0.4, y); ctx.fillText('•', x + r * 0.4, y);
+    ctx.beginPath(); ctx.moveTo(x - r * 0.3, y + r * 0.45); ctx.lineTo(x + r * 0.3, y + r * 0.45); ctx.stroke();
+  } else if (mood === 'grin'){
+    ctx.font = 'bold ' + Math.round(r * 0.7) + 'px system-ui'; ctx.textAlign = 'center';
+    ctx.fillText('^', x - r * 0.4, y - r * 0.1); ctx.fillText('^', x + r * 0.4, y - r * 0.1);
+    ctx.beginPath(); ctx.arc(x, y + r * 0.25, r * 0.4, 0.15 * Math.PI, 0.85 * Math.PI); ctx.stroke();
+  } else { // chill
+    ctx.font = 'bold ' + Math.round(r * 0.7) + 'px system-ui'; ctx.textAlign = 'center';
+    ctx.fillText('◡', x - r * 0.4, y - r * 0.1); ctx.fillText('◡', x + r * 0.4, y - r * 0.1);
+    ctx.beginPath(); ctx.arc(x, y + r * 0.25, r * 0.35, 0.15 * Math.PI, 0.85 * Math.PI); ctx.stroke();
+  }
+}
+function draw(){
+  ctx.clearRect(0, 0, W, H);
+  // office background: wall, window, clock
+  const g = ctx.createLinearGradient(0, 0, 0, H);
+  g.addColorStop(0, '#1b1740'); g.addColorStop(1, '#14102a');
+  ctx.fillStyle = g; ctx.fillRect(0, 0, W, H);
+  ctx.fillStyle = '#241f52'; ctx.fillRect(30, 60, 130, 110); // window
+  ctx.fillStyle = '#7dd3fc'; ctx.fillRect(40, 70, 110, 90);
+  ctx.fillStyle = '#fde68a'; ctx.beginPath(); ctx.arc(120, 95, 16, 0, Math.PI * 2); ctx.fill();
+  // clock (ticks faster as time runs out)
+  ctx.fillStyle = '#fff'; ctx.beginPath(); ctx.arc(400, 110, 26, 0, Math.PI * 2); ctx.fill();
+  ctx.strokeStyle = '#1a1a2e'; ctx.lineWidth = 2; ctx.beginPath();
+  const ang = (timeLeft / 60) * Math.PI * 2 - Math.PI / 2;
+  ctx.moveTo(400, 110); ctx.lineTo(400 + Math.cos(ang) * 20, 110 + Math.sin(ang) * 20); ctx.stroke();
+  // floor
+  ctx.fillStyle = '#2a2358'; ctx.fillRect(0, 560, W, 200);
+  // plant (shakes when busted)
+  const px = 60 + (plantShake > 0 ? Math.sin(performance.now() / 30) * 4 : 0);
+  ctx.fillStyle = '#b45309'; ctx.fillRect(px - 18, 480, 36, 55);
+  ctx.fillStyle = '#22c55e';
+  for (let i = 0; i < 5; i++){
+    const a = -Math.PI / 2 + (i - 2) * 0.4 + Math.sin(workerBob + i) * 0.08;
+    ctx.beginPath(); ctx.ellipse(px + Math.cos(a) * 30, 480 + Math.sin(a) * 30, 10, 22, a, 0, Math.PI * 2); ctx.fill();
+  }
+  // snitch coworker (points when boss watches from 30s)
+  if (snitchOn && bossPhase === 'watching'){
+    ctx.fillStyle = '#7c3aed'; ctx.beginPath(); ctx.arc(90, 300, 30, 0, Math.PI * 2); ctx.fill();
+    face(90, 300, 30, 'grin', '#7c3aed');
+    ctx.strokeStyle = '#fcd34d'; ctx.lineWidth = 6; ctx.beginPath(); ctx.moveTo(118, 310); ctx.lineTo(175, 330); ctx.stroke();
+    ctx.fillStyle = '#fcd34d'; ctx.font = 'bold 15px system-ui'; ctx.textAlign = 'left'; ctx.fillText('HE DID IT!', 60, 260);
+  }
+  // boss (doorway right)
+  if (bossPhase !== 'away'){
+    const bx = bossX;
+    ctx.fillStyle = '#7f1d1d'; ctx.fillRect(bx - 10, 120, 90, 190); // door frame
+    const mood = bossPhase === 'watching' ? 'angry' : 'grin';
+    const col = bossIsCEO ? '#f59e0b' : '#ef4444';
+    face(bx + 35, 190, 42, mood, col);
+    ctx.fillStyle = col; ctx.fillRect(bx - 5, 232, 80, 90); // suit
+    ctx.fillStyle = '#fff'; ctx.fillRect(bx + 20, 232, 30, 40); // shirt
+    if (bossPhase === 'peek'){
+      ctx.fillStyle = '#ff4757'; ctx.beginPath(); ctx.arc(bx - 5, 130, 22, 0, Math.PI * 2); ctx.fill();
+      ctx.fillStyle = '#fff'; ctx.font = 'bold 26px system-ui'; ctx.textAlign = 'center'; ctx.fillText('!', bx - 5, 139);
+    }
+    if (bossIsCEO){ ctx.fillStyle = '#ffd23f'; ctx.font = 'bold 13px system-ui'; ctx.fillText('CEO', bx + 35, 105); }
+  }
+  // desk + worker
+  ctx.fillStyle = '#4a3728'; ctx.fillRect(110, 470, 260, 20);
+  ctx.fillStyle = '#3a2b1e'; ctx.fillRect(120, 490, 16, 70); ctx.fillRect(344, 490, 16, 70);
+  // monitor: game screen while slacking, spreadsheet while busy/holding
+  const busy = holding || bossPhase === 'watching';
+  ctx.fillStyle = '#0f172a'; ctx.fillRect(175, 340, 130, 95);
+  if (busy){
+    ctx.fillStyle = '#e0f2fe';
+    ctx.fillRect(183, 348, 114, 79);
+    ctx.fillStyle = '#64748b';
+    for (let r = 0; r < 4; r++) ctx.fillRect(190, 356 + r * 16, 60 + (r % 2) * 30, 6);
+    ctx.fillStyle = '#22c55e'; ctx.fillRect(190, 356, 30, 8);
+  } else {
+    ctx.fillStyle = '#312e81'; ctx.fillRect(183, 348, 114, 79);
+    ctx.fillStyle = '#f472b6'; ctx.beginPath(); ctx.arc(215 + Math.sin(workerBob) * 12, 385, 14, 0, Math.PI * 2); ctx.fill();
+    ctx.fillStyle = '#ffd23f'; ctx.beginPath(); ctx.arc(270, 375 + Math.cos(workerBob) * 8, 10, 0, Math.PI * 2); ctx.fill();
+    ctx.fillStyle = '#fff'; ctx.font = 'bold 13px system-ui'; ctx.textAlign = 'center'; ctx.fillText('GAME!', 240, 420);
+  }
+  // worker body + head (bobs; squash when caught)
+  const squash = caughtT > 0 ? 1 - caughtT * 0.3 : 1;
+  const wy = 445 + Math.sin(workerBob) * 2;
+  ctx.fillStyle = '#2563eb'; ctx.fillRect(215, wy, 50, 30);
+  const mood = bossPhase === 'watching' ? workerFace : (coffeeActive ? 'grin' : 'chill');
+  face(240, wy - 22 * squash, 30 * squash + 8, mood, '#fbbf24');
+  // golden coffee mug (glows only as bonus; gold mug cosmetic if unlocked)
+  const mugCol = coffeeActive ? '#ffd23f' : (goldMug ? '#f59e0b' : '#ef4444');
+  if (coffeeActive){ ctx.shadowColor = '#ffd23f'; ctx.shadowBlur = 20; }
+  ctx.fillStyle = mugCol; ctx.fillRect(315, 450, 26, 22);
+  ctx.shadowBlur = 0;
+  ctx.strokeStyle = 'rgba(255,255,255,.5)'; ctx.lineWidth = 2;
+  ctx.beginPath(); ctx.moveTo(322, 446 - Math.sin(mugSteam * 3) * 2); ctx.quadraticCurveTo(326, 440, 322, 434); ctx.stroke();
+  // intern delivering coffee (during coffee break)
+  if (coffeeActive){
+    ctx.fillStyle = '#ec4899'; ctx.beginPath(); ctx.arc(120, 300 + Math.sin(workerBob) * 3, 22, 0, Math.PI * 2); ctx.fill();
+    face(120, 300 + Math.sin(workerBob) * 3, 22, 'grin', '#ec4899');
+    ctx.fillStyle = '#fff'; ctx.font = 'bold 13px system-ui'; ctx.textAlign = 'center'; ctx.fillText('FREE!', 120, 262);
+  }
+  // flying stars / papers
+  for (const s of stars){ ctx.globalAlpha = Math.max(0, s.t); ctx.fillStyle = s.col; ctx.font = 'bold 18px system-ui'; ctx.textAlign = 'center'; ctx.fillText('★', s.x, s.y); }
+  ctx.globalAlpha = 1;
+  for (const p of papers){
+    ctx.save(); ctx.translate(p.x, p.y); ctx.rotate(p.r);
+    ctx.fillStyle = '#fff'; ctx.fillRect(-14, -10, 28, 20); ctx.fillStyle = '#94a3b8';
+    ctx.fillRect(-9, -5, 18, 2); ctx.fillRect(-9, 0, 12, 2); ctx.restore();
+  }
+  // HUD
+  ctx.fillStyle = '#fff'; ctx.textAlign = 'left'; ctx.font = 'bold 20px system-ui';
+  ctx.fillText('★ ' + score, 16, 34);
+  ctx.fillStyle = '#f87171'; ctx.textAlign = 'right';
+  ctx.fillText('♥'.repeat(Math.max(0, lives)), W - 110, 34);
+  ctx.fillStyle = '#35e0ff'; ctx.textAlign = 'center'; ctx.font = 'bold 20px system-ui';
+  ctx.fillText(Math.max(0, Math.ceil(timeLeft)) + 's', W / 2, 34);
+  if (combo >= 5){ ctx.fillStyle = '#ffd23f'; ctx.font = 'bold 16px system-ui'; ctx.fillText(combo + ' COMBO', W / 2, 58); }
+  // suspicion bar while boss watches
+  if (bossPhase === 'watching' || bossPhase === 'peek'){
+    ctx.fillStyle = 'rgba(0,0,0,.5)'; ctx.fillRect(90, 600, 300, 22);
+    ctx.fillStyle = suspicion > 70 ? '#ef4444' : '#f59e0b'; ctx.fillRect(92, 602, 296 * Math.min(1, suspicion / 100), 18);
+    ctx.fillStyle = '#fff'; ctx.font = 'bold 14px system-ui'; ctx.textAlign = 'center';
+    ctx.fillText(bossPhase === 'peek' ? 'BOSS INCOMING — HOLD TO LOOK BUSY!' : (holding ? 'LOOKING BUSY...' : 'HOLD! DON\'T TAP!'), 240, 617);
+  }
+  // big action hint
+  if (state === 'play' && bossPhase === 'away'){
+    ctx.fillStyle = coffeeActive ? '#ffd23f' : '#35e0ff';
+    ctx.font = 'bold 24px system-ui'; ctx.textAlign = 'center';
+    ctx.fillText(coffeeActive ? 'TAP! TAP! FREE SLACK!' : 'TAP TO SLACK!', 240, 650);
+  }
+  // popups
+  for (const p of popups){
+    ctx.globalAlpha = Math.min(1, p.t);
+    ctx.fillStyle = p.col; ctx.font = 'bold 26px system-ui'; ctx.textAlign = 'center';
+    ctx.fillText(p.txt, p.x, p.y - (1.2 - p.t) * 30);
+  }
+  ctx.globalAlpha = 1;
+  if (flashT > 0){ ctx.fillStyle = 'rgba(239,68,68,' + (flashT * 0.8) + ')'; ctx.fillRect(0, 0, W, H); }
+  // screens
+  if (state === 'start'){
+    ctx.fillStyle = 'rgba(10,8,30,.82)'; ctx.fillRect(0, 0, W, H);
+    ctx.fillStyle = '#ffd23f'; ctx.font = 'bold 52px system-ui'; ctx.textAlign = 'center';
+    ctx.fillText('LOOK BUSY!', 240, 220);
+    ctx.fillStyle = '#fff'; ctx.font = 'bold 22px system-ui';
+    ctx.fillText('Slack hard. Boss is coming!', 240, 265);
+    ctx.fillStyle = '#35e0ff'; ctx.font = 'bold 19px system-ui';
+    ctx.fillText('TAP = slack   HOLD = look busy', 240, 330);
+    ctx.fillStyle = '#94a3b8'; ctx.font = '16px system-ui';
+    ctx.fillText('When the boss watches: DON\'T TAP.', 240, 360);
+    ctx.fillText('Hold down or get busted. 3 strikes = fired.', 240, 385);
+    ctx.fillStyle = '#ffd23f'; ctx.font = 'bold 24px system-ui';
+    ctx.fillText('TAP TO START', 240, 470);
+    ctx.fillStyle = '#94a3b8'; ctx.font = '15px system-ui';
+    ctx.fillText('Best: ' + high, 240, 510);
+    if (goldMug) ctx.fillText('🏆 Gold mug unlocked!', 240, 535);
+  }
+  if (state === 'pause'){
+    ctx.fillStyle = 'rgba(10,8,30,.8)'; ctx.fillRect(0, 0, W, H);
+    ctx.fillStyle = '#fff'; ctx.font = 'bold 34px system-ui'; ctx.textAlign = 'center'; ctx.fillText('PAUSED', 240, 380);
+  }
+  if (state === 'over'){
+    ctx.fillStyle = 'rgba(10,8,30,.88)'; ctx.fillRect(0, 0, W, H);
+    ctx.fillStyle = '#ff4757'; ctx.font = 'bold 46px system-ui'; ctx.textAlign = 'center';
+    ctx.fillText("YOU'RE FIRED!", 240, 200);
+    ctx.fillStyle = '#fff'; ctx.font = 'bold 20px system-ui';
+    ctx.fillText(overRoast, 240, 240);
+    ctx.fillStyle = '#ffd23f'; ctx.font = 'bold 30px system-ui';
+    ctx.fillText('Score: ' + score, 240, 300);
+    ctx.fillStyle = '#35e0ff'; ctx.font = 'bold 22px system-ui';
+    ctx.fillText('Rank: ' + rankFor(score), 240, 340);
+    ctx.fillStyle = '#94a3b8'; ctx.font = '16px system-ui';
+    ctx.fillText('Best combo: ' + bestCombo + '   Best: ' + high, 240, 375);
+    if (mugJust){ ctx.fillStyle = '#ffd23f'; ctx.font = 'bold 18px system-ui'; ctx.fillText('🏆 GOLD MUG UNLOCKED!', 240, 410); }
+    ctx.fillStyle = '#22c55e'; ctx.fillRect(120, 560, 240, 50);
+    ctx.fillStyle = '#fff'; ctx.font = 'bold 20px system-ui';
+    ctx.fillText(copyMsg > 0 ? 'COPIED!' : 'COPY RESULT', 240, 592);
+    ctx.fillStyle = '#35e0ff'; ctx.font = 'bold 22px system-ui';
+    ctx.fillText('TAP TO SLACK AGAIN', 240, 670);
+  }
+}
+function loop(now){
+  const dt = Math.min(0.05, (now - last) / 1000);
+  last = now;
+  if (state === 'play') update(dt);
+  else if (copyMsg > 0) copyMsg -= dt;
+  draw();
+  requestAnimationFrame(loop);
+}
+requestAnimationFrame(loop);
+</script>
+</body>
+</html>

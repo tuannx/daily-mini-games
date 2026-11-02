@@ -1,289 +1,298 @@
 [
-  {
-    "date": "2026-10-02",
-    "day": 1,
-    "emoji": "💠",
-    "file": "games/neon-dash.html",
-    "mechanic": "One-tap endless runner",
-    "tagline": "Tap to jump, double-jump to survive. Speed never stops rising.",
-    "title": "Neon Dash"
-  },
-  {
-    "date": "2026-10-03",
-    "day": 2,
-    "emoji": "🫧",
-    "file": "games/neon-merge.html",
-    "mechanic": "Drop & merge physics puzzle",
-    "tagline": "Drop the orbs, merge the glow. Don't let the stack breach the line.",
-    "title": "Neon Merge"
-  },
-  {
-    "date": "2026-10-04",
-    "day": 3,
-    "emoji": "🏃",
-    "file": "games/the-button-runs-away.html",
-    "mechanic": "Rage-bait chase clicker",
-    "tagline": "It's ONE button. It has cardio. It has trauma. Catch it.",
-    "title": "The Button Runs Away"
-  },
-  {
-    "date": "2026-10-05",
-    "day": 4,
-    "emoji": "🥴",
-    "file": "games/gravity-is-drunk.html",
-    "mechanic": "Gravity-flip dodger",
-    "tagline": "Gravity is wasted. Planets flip. Socks fly. You fall UP.",
-    "title": "Gravity Is Drunk"
-  },
-  {
-    "date": "2026-10-06",
-    "day": 5,
-    "emoji": "🥚",
-    "file": "games/egg-ceo-commute.html",
-    "mechanic": "Physics balance commute",
-    "tagline": "Your boss is an egg. On your roof. Don't scramble him.",
-    "title": "Egg CEO Commute"
-  },
-  {
-    "date": "2026-10-07",
-    "day": 6,
-    "emoji": "🐍",
-    "file": "games/snake-but-the-food-runs.html",
-    "mechanic": "Fleeing-food snake",
-    "tagline": "Classic snake, but the apple has legs — and a revenge arc.",
-    "title": "Snake, But the Food Runs"
-  },
-  {
-    "date": "2026-10-08",
-    "day": 7,
-    "emoji": "⌨️",
-    "file": "games/keyboard-is-lying.html",
-    "mechanic": "Lying-keys typer",
-    "tagline": "Your keyboard is lying. Pop green. Dodge red. Trust nothing.",
-    "title": "Keyboard Is Lying"
-  },
-  {
-    "date": "2026-10-09",
-    "day": 8,
-    "emoji": "🔘",
-    "file": "games/absolutely-no-reason-button.html",
-    "mechanic": "No-reason clicker",
-    "tagline": "One button. Zero reasons. It dodges, clones, hires a lawyer.",
-    "title": "Absolutely No Reason Button"
-  },
-  {
-    "date": "2026-10-09",
-    "day": 9,
-    "emoji": "💥",
-    "file": "games/wreck-the-tower/index.html",
-    "mechanic": "3D physics demolition (Rust WASM)",
-    "tagline": "Six cannonballs, one grumpy boss block, jelly + exploding bricks. Real 3D physics — wreck it.",
-    "title": "Wreck the Tower"
-  },
-  {
-    "date": "2026-10-10",
-    "day": 10,
-    "emoji": "🍿",
-    "file": "games/popcorn-panic.html",
-    "mechanic": "Popping catch chaos",
-    "tagline": "Catch the glowing pops, dodge the furious red kernels — then the pan flips your controls.",
-    "title": "Popcorn Panic"
-  },
-  {
-    "date": "2026-10-11",
-    "day": 11,
-    "emoji": "🪜",
-    "file": "games/the-ladder-hates-you.html",
-    "mechanic": "Rage-bait one-tap climber",
-    "tagline": "Tap to climb. You can't move sideways — but the rungs can. They hold grudges.",
-    "title": "The Ladder Hates You"
-  },
-  {
-    "date": "2026-10-12",
-    "day": 12,
-    "emoji": "💼",
-    "file": "games/hire-the-weirdos.html",
-    "mechanic": "HR sorting panic",
-    "tagline": "You're the boss. Hire the weirdos — until corporate flips the rules. Karen vetoes.",
-    "title": "Hire the Weirdos"
-  },
-  {
-    "date": "2026-10-13",
-    "day": 13,
-    "emoji": "🐱",
-    "file": "games/brush-behind-its-back.html",
-    "mechanic": "Suspicion-tap brusher",
-    "tagline": "Brush the cat. Stop when it turns. It always turns."
-  },
-  {
-    "date": "2026-10-14",
-    "day": 14,
-    "emoji": "🕹️",
-    "file": "games/game-hopper.html",
-    "mechanic": "Genre-swap arcade (whack→catch→dodge)",
-    "tagline": "Every 15 seconds it becomes a NEW game. Glowing = good. Angry red = death. Keep up.",
-    "title": "Game Hopper"
-  },
-  {
-    "date": "2026-10-15",
-    "day": 15,
-    "emoji": "📎",
-    "file": "games/the-tutorial-is-possessed.html",
-    "mechanic": "Lying-tutorial tap chaos",
-    "tagline": "Skippy the tutorial helps you pop stars. At 15 seconds he starts lying. TRUST ME!",
-    "title": "The Tutorial Is Possessed"
-  },
-  {
-    "date": "2026-10-16",
-    "day": 16,
-    "emoji": "💨",
-    "file": "games/speed-per-step-no-brakes.html",
-    "mechanic": "Faster-every-step runner",
-    "tagline": "Every step makes you faster. Coffee is the only brake. Run, fool, RUN.",
-    "title": "NO BRAKES"
-  },
-  {
-    "date": "2026-10-17",
-    "day": 17,
-    "emoji": "😴",
-    "file": "games/snooze-heist.html",
-    "mechanic": "Swat-the-hazard nap defense",
-    "tagline": "Nap through your shift. Sheep are gold, the boss is awake. And when the eye sweeps: DO NOTHING.",
-    "title": "Snooze Heist"
-  },
-  {
-    "date": "2026-10-18",
-    "day": 18,
-    "emoji": "🔨",
-    "file": "games/the-rules-were-made-up.html",
-    "mechanic": "Arbitrary-elimination Q&A (rules invented after you answer)",
-    "tagline": "Tap YES or NO. Rules invented AFTER. Survive the gavel.",
-    "title": "The Rules Were Made Up"
-  },
-  {
-    "date": "2026-10-19",
-    "day": 19,
-    "emoji": "🧱",
-    "file": "games/flat-out.html",
-    "mechanic": "Squish-the-bots Tetris dropper",
-    "tagline": "Tetris, but the stickmen dodge. Flatten them. They unionized.",
-    "title": "FLAT OUT"
-  },
-  {
-    "date": "2026-10-20",
-    "day": 20,
-    "emoji": "🎬",
-    "file": "games/five-second-apocalypse.html",
-    "mechanic": "5-second AAA minesweeper-ish tap survival",
-    "tagline": "A $200M AAA epic in 5-second bursts. The tutorial NPC is no help at all.",
-    "title": "FIVE-SECOND APOCALYPSE"
-  },
-  {
-    "date": "2026-10-21",
-    "day": 21,
-    "emoji": "🎂",
-    "file": "games/cake-run.html",
-    "mechanic": "Wobbly-cake balance delivery",
-    "tagline": "Balance the cake. Flawless streaks stack MORE layers. You did this to yourself.",
-    "title": "CAKE RUN"
-  },
-  {
-    "date": "2026-10-22",
-    "day": 22,
-    "emoji": "⛏️",
-    "file": "games/down-payment.html",
-    "mechanic": "Hold-to-drill digger",
-    "tagline": "Dig deep. Sell shinies. The lava pockets woke up — and they swim.",
-    "title": "DOWN PAYMENT"
-  },
-  {
-    "date": "2026-10-23",
-    "day": 23,
-    "emoji": "📱",
-    "file": "games/flip-only.html",
-    "mechanic": "Tap-to-flip phone climber",
-    "tagline": "This phone can't walk. It can only flip. Climb the Trashlands.",
-    "title": "FLIP ONLY"
-  },
-  {
-    "date": "2026-10-24",
-    "day": 24,
-    "emoji": "🛗",
-    "file": "games/wrong-floor.html",
-    "mechanic": "Elevator door-slam defense",
-    "tagline": "You are the elevator. GLOW = friend, RED + ANGRY = slam the doors. 3 monsters in and your shift is over.",
-    "title": "WRONG FLOOR!"
-  },
-  {
-    "date": "2026-10-25",
-    "day": 25,
-    "emoji": "🍬",
-    "file": "games/candy-tax.html",
-    "mechanic": "Hold-to-steal candy heist",
-    "tagline": "Steal candy from your own kid. Eyes flutter? FREEZE. The dog knows everything.",
-    "title": "CANDY TAX"
-  },
-  {
-    "date": "2026-10-26",
-    "day": 26,
-    "emoji": "🤖",
-    "file": "games/roomba-rampage.html",
-    "mechanic": "Steer-the-Roomba dust chase (cats ride you)",
-    "tagline": "Suck the dust. Dodge the cats. One WILL ride you.",
-    "title": "ROOMBA RAMPAGE"
-  },
-  {
-    "date": "2026-10-27",
-    "day": 27,
-    "emoji": "🪰",
-    "file": "games/swat-the-fly.html",
-    "mechanic": "Tap-to-swat fly chase (flies dodge, helmet boss, twins)",
-    "tagline": "Swat the smug flies. NEVER swat the bee — the union stings back.",
-    "title": "SWAT THE FLY"
-  },
-  {
-    "date": "2026-10-29",
-    "day": 29,
-    "emoji": "🪡",
-    "file": "games/the-real-needle.html",
-    "mechanic": "Sweep-the-haystack needle hunt (clones bite, real needle runs)",
-    "tagline": "One real needle. A pile of clones. Dig — but don't poke a fake.",
-    "title": "THE REAL NEEDLE"
-  },
-  {
-    "date": "2026-10-28",
-    "day": 28,
-    "emoji": "🧸",
-    "file": "games/claw-back.html",
-    "mechanic": "Claw-machine revenge catcher (miss morphs plush angry)",
-    "tagline": "Grab the cute ones. Miss once — it comes back ANGRY.",
-    "title": "CLAW BACK!"
-  },
-  {
-    "date": "2026-10-30",
-    "day": 30,
-    "emoji": "🐈",
-    "file": "games/cats-on-my-head.html",
-    "mechanic": "Stack-the-cats tower catcher (wobble physics, squirm escalation)",
-    "tagline": "Stack the falling cats. They squirm, they judge, one wears a crown.",
-    "title": "CATS ON MY HEAD"
-  },
-  {
-    "date": "2026-10-31",
-    "day": 31,
-    "emoji": "🎃",
-    "file": "games/trick-or-treat-doors-lie.html",
-    "mechanic": "Door-shuffle trick-or-treat (candy hides, doors shuffle, fake candy morphs ghost)",
-    "tagline": "The candy hides. The doors shuffle. One candy is a ghost in disguise.",
-    "title": "TRICK OR TREAT: THE DOORS LIE"
-  },
-  {
-    "date": "2026-11-01",
-    "day": 32,
-    "emoji": "🐶",
-    "file": "games/dance-dog-single-paw.html",
-    "mechanic": "Beat-tap dance battle (dog judges misses, red beats lie)",
-    "tagline": "Keep the beat or the dog judges you. Red beats are a trap.",
-    "title": "DANCE DOG: SINGLE PAW"
-  }
+ {
+  "date": "2026-10-02",
+  "day": 1,
+  "emoji": "💠",
+  "file": "games/neon-dash.html",
+  "mechanic": "One-tap endless runner",
+  "tagline": "Tap to jump, double-jump to survive. Speed never stops rising.",
+  "title": "Neon Dash"
+ },
+ {
+  "date": "2026-10-03",
+  "day": 2,
+  "emoji": "🫧",
+  "file": "games/neon-merge.html",
+  "mechanic": "Drop & merge physics puzzle",
+  "tagline": "Drop the orbs, merge the glow. Don't let the stack breach the line.",
+  "title": "Neon Merge"
+ },
+ {
+  "date": "2026-10-04",
+  "day": 3,
+  "emoji": "🏃",
+  "file": "games/the-button-runs-away.html",
+  "mechanic": "Rage-bait chase clicker",
+  "tagline": "It's ONE button. It has cardio. It has trauma. Catch it.",
+  "title": "The Button Runs Away"
+ },
+ {
+  "date": "2026-10-05",
+  "day": 4,
+  "emoji": "🥴",
+  "file": "games/gravity-is-drunk.html",
+  "mechanic": "Gravity-flip dodger",
+  "tagline": "Gravity is wasted. Planets flip. Socks fly. You fall UP.",
+  "title": "Gravity Is Drunk"
+ },
+ {
+  "date": "2026-10-06",
+  "day": 5,
+  "emoji": "🥚",
+  "file": "games/egg-ceo-commute.html",
+  "mechanic": "Physics balance commute",
+  "tagline": "Your boss is an egg. On your roof. Don't scramble him.",
+  "title": "Egg CEO Commute"
+ },
+ {
+  "date": "2026-10-07",
+  "day": 6,
+  "emoji": "🐍",
+  "file": "games/snake-but-the-food-runs.html",
+  "mechanic": "Fleeing-food snake",
+  "tagline": "Classic snake, but the apple has legs — and a revenge arc.",
+  "title": "Snake, But the Food Runs"
+ },
+ {
+  "date": "2026-10-08",
+  "day": 7,
+  "emoji": "⌨️",
+  "file": "games/keyboard-is-lying.html",
+  "mechanic": "Lying-keys typer",
+  "tagline": "Your keyboard is lying. Pop green. Dodge red. Trust nothing.",
+  "title": "Keyboard Is Lying"
+ },
+ {
+  "date": "2026-10-09",
+  "day": 8,
+  "emoji": "🔘",
+  "file": "games/absolutely-no-reason-button.html",
+  "mechanic": "No-reason clicker",
+  "tagline": "One button. Zero reasons. It dodges, clones, hires a lawyer.",
+  "title": "Absolutely No Reason Button"
+ },
+ {
+  "date": "2026-10-09",
+  "day": 9,
+  "emoji": "💥",
+  "file": "games/wreck-the-tower/index.html",
+  "mechanic": "3D physics demolition (Rust WASM)",
+  "tagline": "Six cannonballs, one grumpy boss block, jelly + exploding bricks. Real 3D physics — wreck it.",
+  "title": "Wreck the Tower"
+ },
+ {
+  "date": "2026-10-10",
+  "day": 10,
+  "emoji": "🍿",
+  "file": "games/popcorn-panic.html",
+  "mechanic": "Popping catch chaos",
+  "tagline": "Catch the glowing pops, dodge the furious red kernels — then the pan flips your controls.",
+  "title": "Popcorn Panic"
+ },
+ {
+  "date": "2026-10-11",
+  "day": 11,
+  "emoji": "🪜",
+  "file": "games/the-ladder-hates-you.html",
+  "mechanic": "Rage-bait one-tap climber",
+  "tagline": "Tap to climb. You can't move sideways — but the rungs can. They hold grudges.",
+  "title": "The Ladder Hates You"
+ },
+ {
+  "date": "2026-10-12",
+  "day": 12,
+  "emoji": "💼",
+  "file": "games/hire-the-weirdos.html",
+  "mechanic": "HR sorting panic",
+  "tagline": "You're the boss. Hire the weirdos — until corporate flips the rules. Karen vetoes.",
+  "title": "Hire the Weirdos"
+ },
+ {
+  "date": "2026-10-13",
+  "day": 13,
+  "emoji": "🐱",
+  "file": "games/brush-behind-its-back.html",
+  "mechanic": "Suspicion-tap brusher",
+  "tagline": "Brush the cat. Stop when it turns. It always turns."
+ },
+ {
+  "date": "2026-10-14",
+  "day": 14,
+  "emoji": "🕹️",
+  "file": "games/game-hopper.html",
+  "mechanic": "Genre-swap arcade (whack→catch→dodge)",
+  "tagline": "Every 15 seconds it becomes a NEW game. Glowing = good. Angry red = death. Keep up.",
+  "title": "Game Hopper"
+ },
+ {
+  "date": "2026-10-15",
+  "day": 15,
+  "emoji": "📎",
+  "file": "games/the-tutorial-is-possessed.html",
+  "mechanic": "Lying-tutorial tap chaos",
+  "tagline": "Skippy the tutorial helps you pop stars. At 15 seconds he starts lying. TRUST ME!",
+  "title": "The Tutorial Is Possessed"
+ },
+ {
+  "date": "2026-10-16",
+  "day": 16,
+  "emoji": "💨",
+  "file": "games/speed-per-step-no-brakes.html",
+  "mechanic": "Faster-every-step runner",
+  "tagline": "Every step makes you faster. Coffee is the only brake. Run, fool, RUN.",
+  "title": "NO BRAKES"
+ },
+ {
+  "date": "2026-10-17",
+  "day": 17,
+  "emoji": "😴",
+  "file": "games/snooze-heist.html",
+  "mechanic": "Swat-the-hazard nap defense",
+  "tagline": "Nap through your shift. Sheep are gold, the boss is awake. And when the eye sweeps: DO NOTHING.",
+  "title": "Snooze Heist"
+ },
+ {
+  "date": "2026-10-18",
+  "day": 18,
+  "emoji": "🔨",
+  "file": "games/the-rules-were-made-up.html",
+  "mechanic": "Arbitrary-elimination Q&A (rules invented after you answer)",
+  "tagline": "Tap YES or NO. Rules invented AFTER. Survive the gavel.",
+  "title": "The Rules Were Made Up"
+ },
+ {
+  "date": "2026-10-19",
+  "day": 19,
+  "emoji": "🧱",
+  "file": "games/flat-out.html",
+  "mechanic": "Squish-the-bots Tetris dropper",
+  "tagline": "Tetris, but the stickmen dodge. Flatten them. They unionized.",
+  "title": "FLAT OUT"
+ },
+ {
+  "date": "2026-10-20",
+  "day": 20,
+  "emoji": "🎬",
+  "file": "games/five-second-apocalypse.html",
+  "mechanic": "5-second AAA minesweeper-ish tap survival",
+  "tagline": "A $200M AAA epic in 5-second bursts. The tutorial NPC is no help at all.",
+  "title": "FIVE-SECOND APOCALYPSE"
+ },
+ {
+  "date": "2026-10-21",
+  "day": 21,
+  "emoji": "🎂",
+  "file": "games/cake-run.html",
+  "mechanic": "Wobbly-cake balance delivery",
+  "tagline": "Balance the cake. Flawless streaks stack MORE layers. You did this to yourself.",
+  "title": "CAKE RUN"
+ },
+ {
+  "date": "2026-10-22",
+  "day": 22,
+  "emoji": "⛏️",
+  "file": "games/down-payment.html",
+  "mechanic": "Hold-to-drill digger",
+  "tagline": "Dig deep. Sell shinies. The lava pockets woke up — and they swim.",
+  "title": "DOWN PAYMENT"
+ },
+ {
+  "date": "2026-10-23",
+  "day": 23,
+  "emoji": "📱",
+  "file": "games/flip-only.html",
+  "mechanic": "Tap-to-flip phone climber",
+  "tagline": "This phone can't walk. It can only flip. Climb the Trashlands.",
+  "title": "FLIP ONLY"
+ },
+ {
+  "date": "2026-10-24",
+  "day": 24,
+  "emoji": "🛗",
+  "file": "games/wrong-floor.html",
+  "mechanic": "Elevator door-slam defense",
+  "tagline": "You are the elevator. GLOW = friend, RED + ANGRY = slam the doors. 3 monsters in and your shift is over.",
+  "title": "WRONG FLOOR!"
+ },
+ {
+  "date": "2026-10-25",
+  "day": 25,
+  "emoji": "🍬",
+  "file": "games/candy-tax.html",
+  "mechanic": "Hold-to-steal candy heist",
+  "tagline": "Steal candy from your own kid. Eyes flutter? FREEZE. The dog knows everything.",
+  "title": "CANDY TAX"
+ },
+ {
+  "date": "2026-10-26",
+  "day": 26,
+  "emoji": "🤖",
+  "file": "games/roomba-rampage.html",
+  "mechanic": "Steer-the-Roomba dust chase (cats ride you)",
+  "tagline": "Suck the dust. Dodge the cats. One WILL ride you.",
+  "title": "ROOMBA RAMPAGE"
+ },
+ {
+  "date": "2026-10-27",
+  "day": 27,
+  "emoji": "🪰",
+  "file": "games/swat-the-fly.html",
+  "mechanic": "Tap-to-swat fly chase (flies dodge, helmet boss, twins)",
+  "tagline": "Swat the smug flies. NEVER swat the bee — the union stings back.",
+  "title": "SWAT THE FLY"
+ },
+ {
+  "date": "2026-10-29",
+  "day": 29,
+  "emoji": "🪡",
+  "file": "games/the-real-needle.html",
+  "mechanic": "Sweep-the-haystack needle hunt (clones bite, real needle runs)",
+  "tagline": "One real needle. A pile of clones. Dig — but don't poke a fake.",
+  "title": "THE REAL NEEDLE"
+ },
+ {
+  "date": "2026-10-28",
+  "day": 28,
+  "emoji": "🧸",
+  "file": "games/claw-back.html",
+  "mechanic": "Claw-machine revenge catcher (miss morphs plush angry)",
+  "tagline": "Grab the cute ones. Miss once — it comes back ANGRY.",
+  "title": "CLAW BACK!"
+ },
+ {
+  "date": "2026-10-30",
+  "day": 30,
+  "emoji": "🐈",
+  "file": "games/cats-on-my-head.html",
+  "mechanic": "Stack-the-cats tower catcher (wobble physics, squirm escalation)",
+  "tagline": "Stack the falling cats. They squirm, they judge, one wears a crown.",
+  "title": "CATS ON MY HEAD"
+ },
+ {
+  "date": "2026-10-31",
+  "day": 31,
+  "emoji": "🎃",
+  "file": "games/trick-or-treat-doors-lie.html",
+  "mechanic": "Door-shuffle trick-or-treat (candy hides, doors shuffle, fake candy morphs ghost)",
+  "tagline": "The candy hides. The doors shuffle. One candy is a ghost in disguise.",
+  "title": "TRICK OR TREAT: THE DOORS LIE"
+ },
+ {
+  "date": "2026-11-01",
+  "day": 32,
+  "emoji": "🐶",
+  "file": "games/dance-dog-single-paw.html",
+  "mechanic": "Beat-tap dance battle (dog judges misses, red beats lie)",
+  "tagline": "Keep the beat or the dog judges you. Red beats are a trap.",
+  "title": "DANCE DOG: SINGLE PAW"
+ },
+ {
+  "date": "2026-11-02",
+  "day": 33,
+  "emoji": "💼",
+  "file": "games/look-busy.html",
+  "mechanic": "Slack-off survival (tap to slack, hold to look busy, boss fake-outs + snitch + CEO)",
+  "tagline": "Slack off, dodge the boss, blame the intern.",
+  "title": "LOOK BUSY!"
+ }
 ]
