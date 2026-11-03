@@ -1,0 +1,503 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
+<title>GRANNY LOST HER TEETH — Granny sneezed. Catch her teeth!</title>
+<style>
+  *{margin:0;padding:0;box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+  html,body{height:100%;background:#0d0b1e;overflow:hidden}
+  body{display:flex;align-items:center;justify-content:center;font-family:system-ui,'Arial Black',Arial,sans-serif;user-select:none;-webkit-user-select:none;touch-action:none}
+  #wrap{position:relative;width:100%;max-width:480px;height:100%;max-height:860px}
+  canvas{display:block;width:100%;height:100%;background:#1a1030}
+  .btn{position:absolute;top:8px;width:38px;height:38px;border:2px solid #35e0ff;border-radius:50%;background:rgba(13,11,30,.7);color:#fff;font-size:17px;line-height:34px;text-align:center;cursor:pointer;z-index:5}
+  #pauseBtn{right:8px} #muteBtn{right:52px}
+</style>
+</head>
+<body>
+<div id="wrap">
+<canvas id="c" width="480" height="760"></canvas>
+<div class="btn" id="muteBtn">♪</div>
+<div class="btn" id="pauseBtn">II</div>
+</div>
+<script>
+'use strict';
+/* GRANNY LOST HER TEETH — slingshot denture rescue.
+   DRAG the denture back, RELEASE to fling it into Granny's mouth.
+   Arrows aim, SPACE shoots. Twist: 15s Granny sneezes (mouth snaps shut),
+   30s wind gusts bend shots, 45s an angry dog dashes in to eat dentures.
+   Gold glow = golden grill denture (3x) ONLY. Red angry face = dog ONLY.
+   3 lost dentures or 60s ends the run. */
+const cv = document.getElementById('c');
+const ctx = cv.getContext('2d');
+const W = 480, H = 760;
+const GAME_URL = 'https://tuannx.github.io/daily-mini-games/games/granny-lost-her-teeth.html';
+const HS_KEY = 'granny-highscore';
+const GRILL_KEY = 'granny-gold-grill';
+
+let AC = null, muted = false;
+function beep(f, d, type, vol, slide){
+  if (muted) return;
+  try {
+    AC = AC || new (window.AudioContext || window.webkitAudioContext)();
+    const o = AC.createOscillator(), g = AC.createGain();
+    o.type = type || 'sine'; o.frequency.value = f;
+    if (slide) o.frequency.exponentialRampToValueAtTime(slide, AC.currentTime + d);
+    g.gain.setValueAtTime(vol || 0.12, AC.currentTime);
+    g.gain.exponentialRampToValueAtTime(0.001, AC.currentTime + d);
+    o.connect(g); g.connect(AC.destination);
+    o.start(); o.stop(AC.currentTime + d);
+  } catch(e){}
+}
+const sShoot = ()=>{ beep(300,.15,'square',.10,900); };
+const sHit = ()=>{ [880,1174,1568].forEach((f,i)=>setTimeout(()=>beep(f,.12,'triangle',.11),i*60)); };
+const sMiss = ()=>{ beep(220,.35,'sawtooth',.12,60); };
+const sDog = ()=>{ [500,400,300].forEach((f,i)=>setTimeout(()=>beep(f,.12,'sawtooth',.11),i*90)); };
+const sGold = ()=>{ [1318,1568,2093,2637].forEach((f,i)=>setTimeout(()=>beep(f,.1,'sine',.10),i*55)); };
+const sSneeze = ()=>{ beep(900,.25,'square',.10,300); };
+const sOver = ()=>{ [440,330,220,160].forEach((f,i)=>setTimeout(()=>beep(f,.18,'triangle',.11),i*140)); };
+const sStart = ()=>{ [523,659,784].forEach((f,i)=>setTimeout(()=>beep(f,.1,'sine',.10),i*70)); };
+const sClose = ()=>{ [660,880,1100].forEach((f,i)=>setTimeout(()=>beep(f,.1,'triangle',.10),i*70)); };
+
+let state = 'start'; // start | play | pause | over
+let score = 0, high = +(localStorage.getItem(HS_KEY) || 0);
+let grill = localStorage.getItem(GRILL_KEY) === '1';
+let combo = 0, bestCombo = 0, strikes = 0, timeLeft = 60, elapsed = 0;
+let granny = {x: 240, y: 150, vx: 60, face: 'happy', sneezeT: 0, sneezeCycle: 3.5, closedT: 0, warnT: 0};
+let dent = null; // flying denture
+let nextGolden = false, dentCount = 0;
+let dragging = false, dragX = 0, dragY = 0;
+let aimAngle = -Math.PI/2, aimUsed = false;
+let dog = {active: false, x: -80, y: 430, vx: 0, t: 0, next: 8};
+let wind = 0, leaves = [], stars = [], shards = [], popups = [], puffs = [];
+let catTail = 0, chairRock = 0, copyMsg = 0, overRoast = '', grillJust = false, nearMissDone = false, shotN = 0;
+
+const ROASTS = [
+  'Granny now eats soup. Forever.',
+  'The dog filed for custody.',
+  'Teeth: 0. Dignity: also 0.',
+  'Granny is gumming it tonight.',
+  'The floor has more teeth than Granny.'
+];
+function rankFor(s){
+  if (s >= 200) return "GRANNY'S HERO";
+  if (s >= 120) return 'DENTURE WHISPERER';
+  if (s >= 50) return 'TOOTH FAIRY INTERN';
+  return 'GUMMY NEWBIE';
+}
+function popup(x, y, txt, col){ popups.push({x, y, txt, col: col || '#fff', t: 1.2}); }
+function burst(x, y, n, col){
+  for (let i = 0; i < n; i++) stars.push({x, y, vx: (Math.random()-0.5)*280, vy: -Math.random()*240-60, t: .9, col: col || '#ffd23f'});
+}
+function newDenture(){
+  dentCount++;
+  const goldenChance = grill ? 0.3 : 0.16;
+  nextGolden = (dentCount % 6 === 0) || (Math.random() < goldenChance);
+  dent = null; dragging = false; nearMissDone = false;
+}
+function reset(){
+  score = 0; combo = 0; bestCombo = 0; strikes = 0; timeLeft = 60; elapsed = 0;
+  granny = {x: 240, y: 150, vx: 60, face: 'happy', sneezeT: 0, sneezeCycle: 3.5, closedT: 0, warnT: 0};
+  dog = {active: false, x: -80, y: 430, vx: 0, t: 0, next: 8};
+  wind = 0; leaves = []; stars = []; shards = []; popups = []; puffs = [];
+  copyMsg = 0; grillJust = false; dentCount = 0; shotN = 0; aimAngle = -Math.PI/2;
+  newDenture();
+}
+function startGame(){ reset(); state = 'play'; sStart(); }
+function endGame(){
+  state = 'over';
+  overRoast = ROASTS[Math.floor(Math.random()*ROASTS.length)];
+  if (score > high){ high = score; localStorage.setItem(HS_KEY, String(high)); }
+  if (score >= 150 && !grill){ grill = true; grillJust = true; localStorage.setItem(GRILL_KEY, '1'); }
+  sOver();
+}
+function loseDenture(why){
+  strikes++; combo = 0;
+  granny.face = 'sad';
+  setTimeout(()=>{ if (state === 'play') granny.face = 'happy'; }, 900);
+  if (why === 'dog'){ popup(240, 380, 'DOG ATE IT!', '#ff4757'); sDog(); }
+  else { popup(240, 620, 'CRACK!', '#ff4757'); sMiss(); }
+  for (let i = 0; i < 10; i++) shards.push({x: 240, y: why === 'dog' ? 430 : 700, vx: (Math.random()-0.5)*300, vy: -Math.random()*200, r: Math.random()*Math.PI, t: 1.1});
+  dent = null;
+  if (strikes >= 3){ setTimeout(endGame, 800); }
+  else newDenture();
+}
+function mouthOpen(){ return granny.closedT <= 0; }
+function launch(vx, vy){
+  dent = {x: 240, y: 640, vx: vx, vy: vy, rot: 0, golden: nextGolden};
+  shotN++;
+  sShoot();
+}
+function slingPos(){
+  if (dragging) return {x: 240 + (dragX - 240) * 0.35, y: 640 + (dragY - 640) * 0.35};
+  return {x: 240, y: 640};
+}
+function onDown(x, y){
+  if (state === 'start'){ startGame(); return; }
+  if (state === 'over'){
+    if (x > 140 && x < 340 && y > 520 && y < 575){ startGame(); }
+    else if (x > 140 && x < 340 && y > 590 && y < 640){
+      const txt = 'I scored ' + score + ' flinging Granny\'s teeth! ' + GAME_URL;
+      try { navigator.clipboard.writeText(txt); } catch(e){}
+      copyMsg = 2; sClose();
+    }
+    return;
+  }
+  if (state !== 'play') return;
+  if (!dent){ dragging = true; dragX = x; dragY = y; }
+}
+function onMove(x, y){ if (dragging){ dragX = x; dragY = y; } }
+function onUp(){
+  if (!dragging || state !== 'play') { dragging = false; return; }
+  dragging = false;
+  const px = dragX - 240, py = dragY - 640;
+  const len = Math.hypot(px, py);
+  if (len < 20) return; // too weak, denture stays
+  const k = Math.min(len, 190) / 190;
+  const v = 380 + k * 620;
+  const inv = Math.hypot(px, py) || 1;
+  launch(-px / inv * v, -py / inv * v);
+}
+function canvasPos(e){
+  const r = cv.getBoundingClientRect();
+  return {x: (e.clientX - r.left) * W / r.width, y: (e.clientY - r.top) * H / r.height};
+}
+cv.addEventListener('pointerdown', e => { const p = canvasPos(e); onDown(p.x, p.y); });
+cv.addEventListener('pointermove', e => { const p = canvasPos(e); onMove(p.x, p.y); });
+cv.addEventListener('pointerup', onUp);
+cv.addEventListener('pointercancel', ()=>{ dragging = false; });
+document.getElementById('muteBtn').onclick = ()=>{ muted = !muted; document.getElementById('muteBtn').textContent = muted ? '×' : '♪'; };
+document.getElementById('pauseBtn').onclick = ()=>{
+  if (state === 'play'){ state = 'pause'; }
+  else if (state === 'pause'){ state = 'play'; }
+};
+window.addEventListener('keydown', e => {
+  if (state === 'play' && !dent){
+    if (e.key === 'ArrowLeft'){ aimAngle = Math.max(-Math.PI * 0.85, aimAngle - 0.12); aimUsed = true; e.preventDefault(); }
+    if (e.key === 'ArrowRight'){ aimAngle = Math.min(-Math.PI * 0.15, aimAngle + 0.12); aimUsed = true; e.preventDefault(); }
+    if (e.key === ' '){ launch(Math.cos(aimAngle) * 800, Math.sin(aimAngle) * 800); e.preventDefault(); }
+  }
+  if (e.key === ' ' && state === 'start'){ startGame(); e.preventDefault(); }
+  if (e.key === ' ' && state === 'over'){ startGame(); e.preventDefault(); }
+});
+
+function update(dt){
+  if (state !== 'play') return;
+  elapsed += dt; timeLeft -= dt;
+  catTail += dt; chairRock += dt;
+  if (timeLeft <= 0){ timeLeft = 0; endGame(); return; }
+  // granny drift + speed escalation
+  const speed = 60 + Math.min(140, elapsed * 2.2);
+  granny.x += granny.vx * dt;
+  if (granny.x > 390){ granny.x = 390; granny.vx = -speed; }
+  if (granny.x < 90){ granny.x = 90; granny.vx = speed; }
+  if (Math.random() < dt * 0.4) granny.vx = (Math.random() < 0.5 ? -1 : 1) * speed;
+  // sneeze cycle from 15s
+  if (elapsed >= 15){
+    granny.sneezeT += dt;
+    if (granny.sneezeT > granny.sneezeCycle){
+      granny.sneezeT = 0; granny.warnT = 0.55; granny.sneezeCycle = 2.8 + Math.random() * 1.4;
+    }
+    if (granny.warnT > 0){ granny.warnT -= dt; if (granny.warnT <= 0){ granny.closedT = 0.9; granny.face = 'sneeze'; sSneeze(); puffs.push({x: granny.x, y: granny.y - 10, t: 0.8}); } }
+    if (granny.closedT > 0){ granny.closedT -= dt; if (granny.closedT <= 0) granny.face = 'happy'; }
+  }
+  // wind from 30s
+  if (elapsed >= 30){
+    wind = Math.sin(elapsed * 0.7) * 70;
+    if (Math.random() < dt * 6) leaves.push({x: wind > 0 ? -10 : 490, y: 200 + Math.random() * 400, vx: wind * 1.6, t: 2.5, r: Math.random() * Math.PI});
+  } else wind = 0;
+  // dog from 45s
+  if (elapsed >= 45){
+    dog.next -= dt;
+    if (dog.next <= 0 && !dog.active){
+      dog.active = true; dog.x = -80; dog.vx = 300 + Math.random() * 80; dog.t = 0;
+    }
+    if (dog.active){
+      dog.x += dog.vx * dt; dog.t += dt;
+      if (dog.x > 560){ dog.active = false; dog.next = 6 + Math.random() * 4; }
+    }
+  }
+  // flying denture physics
+  if (dent){
+    dent.vy += 900 * dt;
+    dent.vx += wind * dt;
+    dent.x += dent.vx * dt; dent.y += dent.vy * dt;
+    dent.rot += dt * 6;
+    const mx = granny.x, my = granny.y + 28;
+    const dx = dent.x - mx, dy = dent.y - my;
+    const dist = Math.hypot(dx, dy);
+    if (dist < 46){
+      if (mouthOpen()){
+        const pts = (10 + combo * 2) * (dent.golden ? 3 : 1);
+        score += pts; combo++; bestCombo = Math.max(bestCombo, combo);
+        granny.face = 'laugh';
+        popup(mx, my - 50, '+' + pts, dent.golden ? '#ffd23f' : '#7CFC98');
+        if (dent.golden) sGold(); else sHit();
+        burst(mx, my, 16, dent.golden ? '#ffd23f' : '#ff8fb3');
+        setTimeout(()=>{ if (state === 'play') granny.face = 'happy'; }, 700);
+        dent = null; newDenture();
+        return;
+      } else {
+        // bounced off shut mouth
+        dent.vy = Math.abs(dent.vy) * 0.5 + 150; dent.vx *= -0.4;
+        popup(mx, my - 50, 'SHUT!', '#ff4757');
+      }
+    }
+    if (!nearMissDone && dent.y < my + 40 && dist > 46 && dist < 95){
+      nearMissDone = true; score += 2; popup(mx, my - 50, 'SO CLOSE!', '#35e0ff'); sClose();
+    }
+    if (dog.active && Math.hypot(dent.x - dog.x, dent.y - dog.y) < 48){
+      dent = null; loseDenture('dog'); return;
+    }
+    if (dent.y > 720 || dent.x < -20 || dent.x > 500){
+      if (dent.y > 720) loseDenture('floor'); else { dent = null; newDenture(); }
+      return;
+    }
+  }
+  // particles
+  stars = stars.filter(p => (p.t -= dt) > 0);
+  stars.forEach(p => { p.x += p.vx * dt; p.y += p.vy * dt; p.vy += 300 * dt; });
+  shards = shards.filter(p => (p.t -= dt) > 0);
+  shards.forEach(p => { p.x += p.vx * dt; p.y += p.vy * dt; p.vy += 500 * dt; p.r += dt * 5; });
+  leaves = leaves.filter(p => (p.t -= dt) > 0);
+  leaves.forEach(p => { p.x += p.vx * dt; p.r += dt * 3; });
+  popups = popups.filter(p => (p.t -= dt) > 0);
+  puffs = puffs.filter(p => (p.t -= dt) > 0);
+  if (copyMsg > 0) copyMsg -= dt;
+}
+
+function drawGranny(){
+  const g = granny, x = g.x, y = g.y;
+  // rocking chair back + body
+  ctx.fillStyle = '#6b4a2f';
+  ctx.fillRect(x - 52, y + 10, 104, 12);
+  ctx.fillStyle = '#8b5a3b';
+  ctx.beginPath(); ctx.arc(x, y + 52, 52, Math.PI, 0); ctx.fill();
+  // head
+  ctx.fillStyle = '#ffdbac';
+  ctx.beginPath(); ctx.arc(x, y, 44, 0, Math.PI * 2); ctx.fill();
+  // bun
+  ctx.fillStyle = '#e8e8e8';
+  ctx.beginPath(); ctx.arc(x, y - 44, 18, 0, Math.PI * 2); ctx.fill();
+  // glasses
+  ctx.strokeStyle = '#222'; ctx.lineWidth = 3;
+  ctx.beginPath(); ctx.arc(x - 18, y - 8, 13, 0, Math.PI * 2); ctx.stroke();
+  ctx.beginPath(); ctx.arc(x + 18, y - 8, 13, 0, Math.PI * 2); ctx.stroke();
+  ctx.beginPath(); ctx.moveTo(x - 5, y - 8); ctx.lineTo(x + 5, y - 8); ctx.stroke();
+  // eyes by face
+  ctx.fillStyle = '#222';
+  if (g.face === 'sneeze'){
+    ctx.font = 'bold 16px Arial'; ctx.textAlign = 'center';
+    ctx.fillText('>  <', x, y - 2);
+  } else if (g.face === 'sad'){
+    ctx.font = 'bold 18px Arial'; ctx.fillText('•  •', x, y - 2);
+    ctx.beginPath(); ctx.moveTo(x - 24, y - 18); ctx.lineTo(x - 12, y - 14); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(x + 24, y - 18); ctx.lineTo(x + 12, y - 14); ctx.stroke();
+  } else if (g.face === 'laugh'){
+    ctx.font = 'bold 18px Arial'; ctx.fillText('^  ^', x, y - 2);
+  } else {
+    ctx.beginPath(); ctx.arc(x - 18, y - 6, 3.5, 0, Math.PI * 2); ctx.fill();
+    ctx.beginPath(); ctx.arc(x + 18, y - 6, 3.5, 0, Math.PI * 2); ctx.fill();
+  }
+  // mouth = target
+  if (mouthOpen()){
+    ctx.fillStyle = '#7a1020';
+    ctx.beginPath(); ctx.ellipse(x, y + 28, 26, 18, 0, 0, Math.PI * 2); ctx.fill();
+    ctx.fillStyle = '#fff';
+    for (let i = -2; i <= 2; i++) ctx.fillRect(x + i * 9 - 4, y + 14, 8, 10);
+    ctx.strokeStyle = '#ffd23f'; ctx.lineWidth = 2; ctx.setLineDash([5, 5]);
+    ctx.beginPath(); ctx.ellipse(x, y + 28, 32, 24, 0, 0, Math.PI * 2); ctx.stroke();
+    ctx.setLineDash([]);
+  } else {
+    ctx.strokeStyle = '#222'; ctx.lineWidth = 4;
+    ctx.beginPath(); ctx.moveTo(x - 20, y + 28); ctx.lineTo(x + 20, y + 28); ctx.stroke();
+  }
+  if (g.warnT > 0){
+    ctx.fillStyle = '#ff4757'; ctx.font = '900 26px Arial'; ctx.textAlign = 'center';
+    ctx.fillText('!', x, y - 58);
+  }
+}
+function drawDentureShape(x, y, rot, golden, scale){
+  ctx.save(); ctx.translate(x, y); ctx.rotate(rot); ctx.scale(scale, scale);
+  if (golden){
+    ctx.shadowColor = '#ffd23f'; ctx.shadowBlur = 18;
+  }
+  ctx.fillStyle = golden ? '#ffd23f' : '#ffffff';
+  ctx.beginPath(); ctx.ellipse(0, 0, 26, 14, 0, 0, Math.PI * 2); ctx.fill();
+  ctx.shadowBlur = 0;
+  ctx.fillStyle = golden ? '#c9a227' : '#ffb6c1';
+  ctx.beginPath(); ctx.ellipse(0, 6, 24, 8, 0, 0, Math.PI); ctx.fill();
+  ctx.fillStyle = golden ? '#8a6d00' : '#222';
+  for (let i = -2; i <= 2; i++) ctx.fillRect(i * 9 - 3, -12, 6, 10);
+  ctx.restore();
+}
+function drawDog(){
+  if (!dog.active) return;
+  const x = dog.x, y = dog.y, bob = Math.sin(dog.t * 22) * 4;
+  ctx.fillStyle = '#c98a4b';
+  ctx.beginPath(); ctx.ellipse(x, y + bob, 42, 22, 0, 0, Math.PI * 2); ctx.fill();
+  ctx.beginPath(); ctx.arc(x + 38, y - 14 + bob, 18, 0, Math.PI * 2); ctx.fill();
+  ctx.fillStyle = '#8a5a2b';
+  ctx.beginPath(); ctx.moveTo(x + 26, y - 28 + bob); ctx.lineTo(x + 32, y - 44 + bob); ctx.lineTo(x + 40, y - 28 + bob); ctx.fill();
+  // angry red face
+  ctx.fillStyle = '#ff4757'; ctx.font = '900 20px Arial'; ctx.textAlign = 'center';
+  ctx.fillText('><', x + 38, y - 10 + bob);
+  ctx.strokeStyle = '#222'; ctx.lineWidth = 3;
+  ctx.beginPath(); ctx.moveTo(x + 28, y - 22 + bob); ctx.lineTo(x + 38, y - 18 + bob); ctx.stroke();
+  ctx.beginPath(); ctx.moveTo(x + 50, y - 22 + bob); ctx.lineTo(x + 40, y - 18 + bob); ctx.stroke();
+  ctx.fillStyle = '#222';
+  ctx.fillRect(x - 38, y + 12 + bob, 8, 18); ctx.fillRect(x + 22, y + 12 + bob, 8, 18);
+}
+function draw(){
+  ctx.clearRect(0, 0, W, H);
+  // sky + room
+  const grad = ctx.createLinearGradient(0, 0, 0, H);
+  grad.addColorStop(0, '#241a44'); grad.addColorStop(0.55, '#1a1030'); grad.addColorStop(1, '#12081f');
+  ctx.fillStyle = grad; ctx.fillRect(0, 0, W, H);
+  // wallpaper dots
+  ctx.fillStyle = 'rgba(255,255,255,0.05)';
+  for (let i = 0; i < 8; i++) for (let j = 0; j < 4; j++) ctx.fillRect(20 + i * 60, 30 + j * 60, 4, 4);
+  // window + moon
+  ctx.fillStyle = '#ffd23f'; ctx.beginPath(); ctx.arc(420, 60, 22, 0, Math.PI * 2); ctx.fill();
+  // cat watching (judging)
+  const tail = Math.sin(catTail * 3) * 12;
+  ctx.fillStyle = '#3a3a4d';
+  ctx.beginPath(); ctx.ellipse(60, 690, 34, 18, 0, 0, Math.PI * 2); ctx.fill();
+  ctx.beginPath(); ctx.arc(60, 662, 20, 0, Math.PI * 2); ctx.fill();
+  ctx.fillStyle = '#ffd23f'; ctx.font = 'bold 13px Arial'; ctx.textAlign = 'center';
+  ctx.fillText('¬  ¬', 60, 664);
+  ctx.strokeStyle = '#3a3a4d'; ctx.lineWidth = 5;
+  ctx.beginPath(); ctx.moveTo(90, 692); ctx.quadraticCurveTo(110 + tail, 680, 104, 660); ctx.stroke();
+  // plant
+  ctx.fillStyle = '#2e8b57';
+  for (let i = 0; i < 5; i++){
+    const sway = Math.sin(catTail * 2 + i) * 4;
+    ctx.beginPath(); ctx.ellipse(430 + sway, 640 - i * 8, 8, 26, sway * 0.05, 0, Math.PI * 2); ctx.fill();
+  }
+  ctx.fillStyle = '#b5651d'; ctx.fillRect(412, 660, 36, 30);
+  // floor
+  ctx.fillStyle = '#2a1a3e'; ctx.fillRect(0, 700, W, 60);
+  ctx.fillStyle = '#3a2560'; ctx.fillRect(0, 700, W, 4);
+  // wind leaves
+  leaves.forEach(p => {
+    ctx.fillStyle = '#7CFC98'; ctx.save(); ctx.translate(p.x, p.y); ctx.rotate(p.r);
+    ctx.fillRect(-6, -3, 12, 6); ctx.restore();
+  });
+  if (elapsed >= 30 && Math.abs(wind) > 10){
+    ctx.fillStyle = '#35e0ff'; ctx.font = '900 18px Arial'; ctx.textAlign = 'center';
+    ctx.fillText(wind > 0 ? 'WIND >>>' : '<<< WIND', 240, 230);
+  }
+  drawGranny();
+  drawDog();
+  // slingshot
+  const sp = slingPos();
+  ctx.strokeStyle = '#8b5a3b'; ctx.lineWidth = 8; ctx.lineCap = 'round';
+  ctx.beginPath(); ctx.moveTo(210, 700); ctx.lineTo(240, 660); ctx.lineTo(270, 700); ctx.stroke();
+  if (!dent && state === 'play'){
+    ctx.strokeStyle = '#ff4757'; ctx.lineWidth = 3;
+    ctx.beginPath(); ctx.moveTo(218, 668); ctx.lineTo(sp.x, sp.y); ctx.lineTo(262, 668); ctx.stroke();
+    drawDentureShape(sp.x, sp.y, dragging ? 0.3 : 0, nextGolden, dragging ? 1 : 1);
+  }
+  // trajectory preview
+  if (dragging && !dent){
+    const px = dragX - 240, py = dragY - 640, len = Math.hypot(px, py) || 1;
+    const k = Math.min(len, 190) / 190, v = 380 + k * 620;
+    let tx = sp.x, ty = sp.y, tvx = -px / len * v, tvy = -py / len * v;
+    ctx.fillStyle = 'rgba(255,255,255,0.6)';
+    for (let i = 0; i < 14; i++){
+      tvy += 900 * (1/30); tx += tvx * (1/30); ty += tvy * (1/30);
+      ctx.beginPath(); ctx.arc(tx, ty, 4, 0, Math.PI * 2); ctx.fill();
+    }
+  }
+  if (aimUsed && !dent && !dragging && state === 'play'){
+    ctx.strokeStyle = 'rgba(255,255,255,0.7)'; ctx.lineWidth = 3;
+    ctx.beginPath(); ctx.moveTo(240, 640);
+    ctx.lineTo(240 + Math.cos(aimAngle) * 70, 640 + Math.sin(aimAngle) * 70); ctx.stroke();
+  }
+  if (dent) drawDentureShape(dent.x, dent.y, dent.rot, dent.golden, 1);
+  // particles
+  stars.forEach(p => { ctx.fillStyle = p.col; ctx.fillRect(p.x - 3, p.y - 3, 6, 6); });
+  shards.forEach(p => {
+    ctx.save(); ctx.translate(p.x, p.y); ctx.rotate(p.r);
+    ctx.fillStyle = '#fff'; ctx.fillRect(-6, -4, 12, 8); ctx.restore();
+  });
+  puffs.forEach(p => {
+    ctx.fillStyle = 'rgba(255,255,255,' + (p.t * 0.8).toFixed(2) + ')';
+    ctx.font = '900 22px Arial'; ctx.textAlign = 'center'; ctx.fillText('ACHOO!', granny.x, granny.y - 70);
+  });
+  popups.forEach(p => {
+    ctx.globalAlpha = Math.min(1, p.t);
+    ctx.fillStyle = p.col; ctx.font = '900 26px Arial'; ctx.textAlign = 'center';
+    ctx.fillText(p.txt, p.x, p.y); ctx.globalAlpha = 1;
+  });
+  // HUD
+  ctx.fillStyle = '#fff'; ctx.textAlign = 'left'; ctx.font = '900 22px Arial';
+  ctx.fillText('★ ' + score, 14, 34);
+  ctx.fillStyle = '#ffd23f'; ctx.font = '700 15px Arial';
+  ctx.fillText('BEST ' + high + '   x' + combo, 14, 56);
+  ctx.fillStyle = '#fff'; ctx.textAlign = 'right'; ctx.font = '900 22px Arial';
+  ctx.fillText(Math.ceil(timeLeft) + 's', 466, 34);
+  ctx.fillStyle = '#ff8fb3'; ctx.font = '700 15px Arial';
+  let teeth = '';
+  for (let i = 0; i < 3 - strikes; i++) teeth += '🦷';
+  ctx.fillText(teeth, 466, 56);
+  if (grill){ ctx.fillStyle = '#ffd23f'; ctx.font = '700 13px Arial'; ctx.fillText('GOLD GRILL ✓', 466, 76); }
+
+  if (state === 'start'){
+    ctx.fillStyle = 'rgba(13,11,30,0.78)'; ctx.fillRect(0, 0, W, H);
+    ctx.textAlign = 'center';
+    ctx.fillStyle = '#ffd23f'; ctx.font = '900 44px Arial';
+    ctx.fillText('GRANNY LOST', 240, 220);
+    ctx.fillText('HER TEETH', 240, 270);
+    ctx.font = '900 60px Arial'; ctx.fillText('👵', 240, 350);
+    ctx.fillStyle = '#fff'; ctx.font = '700 20px Arial';
+    ctx.fillText('Granny sneezed. Catch her teeth!', 240, 400);
+    ctx.fillStyle = '#35e0ff'; ctx.font = '900 20px Arial';
+    ctx.fillText('DRAG • RELEASE • DON\'T FEED DOG', 240, 440);
+    ctx.fillStyle = '#7CFC98'; ctx.font = '900 26px Arial';
+    ctx.fillText('TAP TO PLAY', 240, 520);
+    ctx.fillStyle = '#aaa'; ctx.font = '700 15px Arial';
+    ctx.fillText('Best: ' + high + (grill ? '   GOLD GRILL ✓' : ''), 240, 560);
+  }
+  if (state === 'pause'){
+    ctx.fillStyle = 'rgba(13,11,30,0.7)'; ctx.fillRect(0, 0, W, H);
+    ctx.fillStyle = '#fff'; ctx.textAlign = 'center'; ctx.font = '900 40px Arial';
+    ctx.fillText('PAUSED', 240, 380);
+  }
+  if (state === 'over'){
+    ctx.fillStyle = 'rgba(13,11,30,0.85)'; ctx.fillRect(0, 0, W, H);
+    ctx.textAlign = 'center';
+    ctx.fillStyle = '#ff4757'; ctx.font = '900 40px Arial';
+    ctx.fillText('GUMMY NOW!', 240, 220);
+    ctx.fillStyle = '#fff'; ctx.font = '700 19px Arial';
+    ctx.fillText(overRoast, 240, 260);
+    ctx.fillStyle = '#ffd23f'; ctx.font = '900 30px Arial';
+    ctx.fillText('★ ' + score + '  •  BEST ' + high, 240, 320);
+    ctx.fillStyle = '#7CFC98'; ctx.font = '900 20px Arial';
+    ctx.fillText(rankFor(score), 240, 360);
+    ctx.fillStyle = '#aaa'; ctx.font = '700 15px Arial';
+    ctx.fillText('Best combo x' + bestCombo + '   Shots: ' + shotN, 240, 390);
+    if (grillJust){ ctx.fillStyle = '#ffd23f'; ctx.font = '900 20px Arial'; ctx.fillText('UNLOCKED: GOLD GRILL!', 240, 430); }
+    ctx.fillStyle = '#35e0ff';
+    ctx.fillRect(140, 520, 200, 55);
+    ctx.fillStyle = '#0d0b1e'; ctx.font = '900 22px Arial';
+    ctx.fillText('PLAY AGAIN', 240, 556);
+    ctx.fillStyle = '#ffd23f';
+    ctx.fillRect(140, 590, 200, 50);
+    ctx.fillStyle = '#0d0b1e'; ctx.font = '900 19px Arial';
+    ctx.fillText('COPY RESULT', 240, 622);
+    if (copyMsg > 0){ ctx.fillStyle = '#7CFC98'; ctx.font = '900 18px Arial'; ctx.fillText('COPIED!', 240, 665); }
+  }
+}
+let last = performance.now();
+function loop(now){
+  const dt = Math.min(0.05, (now - last) / 1000);
+  last = now;
+  update(dt);
+  draw();
+  requestAnimationFrame(loop);
+}
+requestAnimationFrame(loop);
+</script>
+</body>
+</html>
