@@ -1,0 +1,449 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
+<title>POP PANIC! — Pop it. It multiplies. Oops.</title>
+<style>
+  *{margin:0;padding:0;box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+  html,body{height:100%;background:#0d0b1e;overflow:hidden}
+  body{display:flex;align-items:center;justify-content:center;font-family:system-ui,'Arial Black',Arial,sans-serif;user-select:none;-webkit-user-select:none;touch-action:none}
+  #wrap{position:relative;width:100%;max-width:480px;height:100%;max-height:860px}
+  canvas{display:block;width:100%;height:100%;background:#160a2e}
+  .btn{position:absolute;top:8px;width:38px;height:38px;border:2px solid #35e0ff;border-radius:50%;background:rgba(13,11,30,.7);color:#fff;font-size:17px;line-height:34px;text-align:center;cursor:pointer;z-index:5}
+  #pauseBtn{right:8px} #muteBtn{right:52px}
+</style>
+</head>
+<body>
+<div id="wrap">
+<canvas id="c" width="480" height="760"></canvas>
+<div class="btn" id="muteBtn">♪</div>
+<div class="btn" id="pauseBtn">II</div>
+</div>
+<script>
+'use strict';
+/* POP PANIC! — tap a ball, it splits into TWO smaller, faster balls.
+   Big -> 2 medium -> 2 small -> gone. Clear the swarm before the
+   count hits 30 or the 60s clock runs out.
+   Twist: 15s balls get ANGRY + faster; 30s a purple DODGER star dodges
+   your first tap; 45s a crowned MEGA ball drops and splits into 4.
+   GOLD glow = golden ball ONLY (pops instantly, no split, +50, freezes
+   the swarm 2s). BOOM button pops every small ball (limited bombs). */
+const cv = document.getElementById('c');
+const ctx = cv.getContext('2d');
+const W = 480, H = 760;
+const GAME_URL = 'https://tuannx.github.io/daily-mini-games/games/pop-panic.html';
+const HS_KEY = 'poppanic-highscore';
+const RAINBOW_KEY = 'poppanic-rainbow';
+
+let AC = null, muted = false;
+function beep(f, d, type, vol, slide){
+  if (muted) return;
+  try {
+    AC = AC || new (window.AudioContext || window.webkitAudioContext)();
+    const o = AC.createOscillator(), g = AC.createGain();
+    o.type = type || 'sine'; o.frequency.value = f;
+    if (slide) o.frequency.exponentialRampToValueAtTime(slide, AC.currentTime + d);
+    g.gain.setValueAtTime(vol || 0.12, AC.currentTime);
+    g.gain.exponentialRampToValueAtTime(0.001, AC.currentTime + d);
+    o.connect(g); g.connect(AC.destination);
+    o.start(); o.stop(AC.currentTime + d);
+  } catch(e){}
+}
+const sPop = ()=>{ beep(500,.12,'square',.11,1000); };
+const sSplit = ()=>{ [700,500].forEach((f,i)=>setTimeout(()=>beep(f,.09,'sawtooth',.09),i*70)); };
+const sGold = ()=>{ [1318,1568,2093,2637].forEach((f,i)=>setTimeout(()=>beep(f,.1,'sine',.10),i*55)); };
+const sMiss = ()=>{ beep(200,.15,'sine',.08,120); };
+const sBoom = ()=>{ beep(150,.4,'sawtooth',.14,40); };
+const sDodge = ()=>{ beep(900,.12,'square',.09,1400); };
+const sOver = ()=>{ [440,330,220,160].forEach((f,i)=>setTimeout(()=>beep(f,.18,'triangle',.11),i*140)); };
+const sStart = ()=>{ [523,659,784].forEach((f,i)=>setTimeout(()=>beep(f,.1,'sine',.10),i*70)); };
+const sWarn = ()=>{ beep(880,.2,'square',.10,660); };
+
+let state = 'start'; // start | play | pause | over
+let score = 0, high = +(localStorage.getItem(HS_KEY) || 0);
+let rainbow = localStorage.getItem(RAINBOW_KEY) === '1';
+let combo = 0, bestCombo = 0, comboT = 0, pops = 0;
+let timeLeft = 60, elapsed = 0, freezeT = 0, swarmWarned = false;
+let balls = [], parts = [], popups = [], rings = [];
+let spawnT = 0, goldT = 9, dodgeT = 0, megaDropped = false;
+let bombs = 1, bombsEarned = 1, overTitle = '', overRoast = '', copyMsg = 0;
+let rainbowJust = false, cross = {x: 240, y: 380, show: false};
+
+const ROASTS = [
+  'They outnumbered you. They always do.',
+  'You popped 1. They made 2. Math wins.',
+  'The balls have filed a complaint.',
+  'Swarm 1, Human 0. Rematch?',
+  'You were out-popped by rubber.'
+];
+const TIERS = [
+  {r: 46, col: '#35e0ff', dark: '#0e7fa3', pts: 10},
+  {r: 30, col: '#ff5da2', dark: '#b81e63', pts: 15},
+  {r: 19, col: '#ff9f2e', dark: '#c25e00', pts: 20}
+];
+function rankFor(s){
+  if (s >= 500) return 'BALL BOSS';
+  if (s >= 300) return 'SWARM WHISPERER';
+  if (s >= 150) return 'SPLIT SURVIVOR';
+  return 'POP ROOKIE';
+}
+function popup(x, y, txt, col){ popups.push({x, y, txt, col: col || '#fff', t: 1.1}); }
+function burst(x, y, col, n){
+  for (let i = 0; i < (n || 14); i++)
+    parts.push({x, y, vx: (Math.random()-0.5)*340, vy: -Math.random()*260-40, t: .8, col: col});
+}
+function mkBall(tier, x, y, kind){
+  const t = TIERS[tier];
+  const a = Math.random() * Math.PI * 2, sp = 90 + Math.random() * 70;
+  return {tier, kind: kind || 'ball', x, y,
+    vx: Math.cos(a) * sp, vy: Math.sin(a) * sp - 60,
+    r: t.r, squash: 0, dodgeUsed: false, wob: Math.random() * 6.28};
+}
+function reset(){
+  score = 0; combo = 0; bestCombo = 0; comboT = 0; pops = 0;
+  timeLeft = 60; elapsed = 0; freezeT = 0; swarmWarned = false;
+  balls = []; parts = []; popups = []; rings = [];
+  spawnT = 8; goldT = 9; dodgeT = 0; megaDropped = false;
+  bombs = 1; bombsEarned = 1; copyMsg = 0; rainbowJust = false;
+  for (let i = 0; i < 3; i++)
+    balls.push(mkBall(0, 90 + i * 150, 200 + (i % 2) * 120));
+}
+function startGame(){ reset(); state = 'play'; sStart(); }
+function endGame(title){
+  state = 'over'; overTitle = title;
+  overRoast = ROASTS[Math.floor(Math.random()*ROASTS.length)];
+  if (score > high){ high = score; localStorage.setItem(HS_KEY, String(high)); }
+  if (score >= 250 && !rainbow){ rainbow = true; rainbowJust = true; localStorage.setItem(RAINBOW_KEY, '1'); }
+  sOver();
+}
+function popBall(b, idx, x, y){
+  balls.splice(idx, 1);
+  pops++; combo++; bestCombo = Math.max(bestCombo, combo); comboT = 1.2;
+  const t = TIERS[b.tier];
+  if (b.kind === 'gold'){
+    score += 50; freezeT = 2; popup(b.x, b.y - b.r - 8, '+50 FROZEN!', '#ffd23f');
+    burst(b.x, b.y, '#ffd23f', 22); sGold();
+    return;
+  }
+  if (b.kind === 'dodger' && !b.dodgeUsed){
+    // should never reach here (dodge handled in tap), safety: treat as pop
+  }
+  const pts = t.pts + combo * 2;
+  score += pts;
+  popup(b.x, b.y - b.r - 6, '+' + pts, '#7CFC98');
+  burst(b.x, b.y, rainbow ? '#ff5da2' : t.col, 14);
+  rings.push({x: b.x, y: b.y, r: b.r, t: .35});
+  if (b.kind === 'mega'){
+    for (let i = 0; i < 4; i++){
+      const nb = mkBall(1, b.x + (i % 2 ? 34 : -34), b.y + (i < 2 ? -20 : 20));
+      nb.vx = (i % 2 ? 1 : -1) * (160 + Math.random() * 60);
+      nb.vy = (i < 2 ? -1 : 1) * 180;
+      balls.push(nb);
+    }
+    popup(b.x, b.y - 70, 'IT SPLIT x4!', '#ff4757'); sSplit();
+  } else if (b.tier < 2){
+    for (let i = 0; i < 2; i++){
+      const nb = mkBall(b.tier + 1, b.x + (i ? 14 : -14), b.y);
+      nb.vx = (i ? 1 : -1) * (150 + Math.random() * 80);
+      nb.vy = -160 - Math.random() * 80;
+      balls.push(nb);
+    }
+    sSplit();
+  } else {
+    sPop();
+  }
+  if (pops === 30 && bombsEarned < 2){ bombs++; bombsEarned = 2; popup(240, 660, 'BONUS BOMB!', '#ffd23f'); }
+}
+function tapAt(x, y){
+  if (state === 'start'){ startGame(); return; }
+  if (state === 'over'){
+    if (x > 140 && x < 340 && y > 520 && y < 575){ startGame(); }
+    else if (x > 140 && x < 340 && y > 590 && y < 640){
+      const txt = 'I popped ' + pops + ' balls for ' + score + ' pts in POP PANIC — and they still multiplied! ' + GAME_URL;
+      try { navigator.clipboard.writeText(txt); } catch(e){}
+      copyMsg = 2; sPop();
+    }
+    return;
+  }
+  if (state !== 'play') return;
+  // BOOM button (bottom-right circle)
+  const bx = 420, by = 690;
+  if (Math.hypot(x - bx, y - by) < 46 && bombs > 0){
+    bombs--; sBoom();
+    const smalls = balls.filter(b => b.tier === 2 && b.kind === 'ball');
+    smalls.forEach(b => { score += 20; burst(b.x, b.y, '#ff9f2e', 8); });
+    balls = balls.filter(b => !(b.tier === 2 && b.kind === 'ball'));
+    popup(240, 600, 'BOOM!', '#ff4757');
+    combo = 0;
+    return;
+  }
+  // find topmost ball under tap (smallest first = hardest, fair)
+  let hit = -1, hitD = 1e9;
+  balls.forEach((b, i) => {
+    const d = Math.hypot(x - b.x, y - b.y);
+    if (d <= b.r + 6 && d < hitD){ hit = i; hitD = d; }
+  });
+  if (hit >= 0){
+    const b = balls[hit];
+    if (b.kind === 'dodger' && !b.dodgeUsed){
+      b.dodgeUsed = true;
+      b.x = Math.max(50, Math.min(430, b.x + (b.x < 240 ? 150 : -150)));
+      b.y = Math.max(120, Math.min(560, b.y - 110));
+      b.vx *= -1.6; b.vy = -220;
+      popup(b.x, b.y - 40, 'TOO SLOW!', '#c084fc'); sDodge();
+      combo = 0;
+      return;
+    }
+    popBall(b, hit, x, y);
+  } else {
+    // near-miss: tap just outside a ball
+    let near = false;
+    balls.forEach(b => {
+      const d = Math.hypot(x - b.x, y - b.y);
+      if (d <= b.r + 20) near = true;
+    });
+    if (near){ score += 2; popup(x, y - 14, 'SO CLOSE!', '#35e0ff'); }
+    else sMiss();
+    combo = 0;
+  }
+}
+function canvasPos(e){
+  const r = cv.getBoundingClientRect();
+  return {x: (e.clientX - r.left) * W / r.width, y: (e.clientY - r.top) * H / r.height};
+}
+cv.addEventListener('pointerdown', e => { const p = canvasPos(e); tapAt(p.x, p.y); });
+document.getElementById('muteBtn').onclick = ()=>{ muted = !muted; document.getElementById('muteBtn').textContent = muted ? '×' : '♪'; };
+document.getElementById('pauseBtn').onclick = ()=>{
+  if (state === 'play') state = 'pause';
+  else if (state === 'pause') state = 'play';
+};
+window.addEventListener('keydown', e => {
+  cross.show = true;
+  if (e.key === 'ArrowLeft') cross.x = Math.max(20, cross.x - 24);
+  if (e.key === 'ArrowRight') cross.x = Math.min(460, cross.x + 24);
+  if (e.key === 'ArrowUp') cross.y = Math.max(80, cross.y - 24);
+  if (e.key === 'ArrowDown') cross.y = Math.min(700, cross.y + 24);
+  if (e.key === ' '){ tapAt(cross.x, cross.y); e.preventDefault(); }
+  if (e.key === ' ' && state === 'start'){ startGame(); e.preventDefault(); }
+  if (e.key === ' ' && state === 'over'){ startGame(); e.preventDefault(); }
+});
+
+function update(dt){
+  if (state !== 'play') return;
+  elapsed += dt; timeLeft -= dt;
+  if (comboT > 0){ comboT -= dt; if (comboT <= 0) combo = 0; }
+  if (copyMsg > 0) copyMsg -= dt;
+  if (timeLeft <= 0){ timeLeft = 0; endGame('TIME UP!'); return; }
+  const angry = elapsed >= 15;
+  const speedK = angry ? 1.35 : 1;
+  // escalation spawns
+  spawnT -= dt;
+  if (spawnT <= 0){ spawnT = 8; if (balls.length < 26) balls.push(mkBall(0, 60 + Math.random() * 360, 140)); }
+  goldT -= dt;
+  if (goldT <= 0){
+    goldT = 11 + Math.random() * 5;
+    const g = mkBall(1, 60 + Math.random() * 360, 160); g.kind = 'gold'; balls.push(g);
+  }
+  if (elapsed >= 30){
+    dodgeT -= dt;
+    if (dodgeT <= 0){
+      dodgeT = 13;
+      if (!balls.some(b => b.kind === 'dodger')){
+        const d = mkBall(1, 240, 200); d.kind = 'dodger'; d.r = 34; balls.push(d);
+      }
+    }
+  }
+  if (elapsed >= 45 && !megaDropped){
+    megaDropped = true;
+    const m = mkBall(0, 240, 120); m.kind = 'mega'; m.r = 64; m.vy = 40; balls.push(m);
+    popup(240, 200, 'MEGA BALL!', '#ff4757'); sWarn();
+  }
+  if (balls.length >= 25 && !swarmWarned){ swarmWarned = true; popup(240, 300, 'SWARM SOON!', '#ff4757'); sWarn(); }
+  if (balls.length >= 30){ endGame('SWARMED!'); return; }
+  // physics
+  balls.forEach(b => {
+    if (freezeT > 0) return;
+    b.wob += dt * 6;
+    b.vy += 480 * dt;
+    b.x += b.vx * speedK * dt; b.y += b.vy * dt;
+    if (b.x < b.r){ b.x = b.r; b.vx = Math.abs(b.vx); b.squash = 1; }
+    if (b.x > W - b.r){ b.x = W - b.r; b.vx = -Math.abs(b.vx); b.squash = 1; }
+    if (b.y > H - 60 - b.r){ b.y = H - 60 - b.r; b.vy = -Math.abs(b.vy) * 0.88; b.squash = 1; }
+    if (b.y < b.r){ b.y = b.r; b.vy = Math.abs(b.vy); }
+    if (b.squash > 0) b.squash = Math.max(0, b.squash - dt * 5);
+  });
+  if (freezeT > 0) freezeT -= dt;
+  parts = parts.filter(p => (p.t -= dt) > 0);
+  parts.forEach(p => { p.x += p.vx * dt; p.y += p.vy * dt; p.vy += 300 * dt; });
+  popups = popups.filter(p => (p.t -= dt) > 0);
+  rings = rings.filter(r => (r.t -= dt) > 0);
+}
+
+function drawBall(b, angry){
+  const t = TIERS[b.tier];
+  const sq = b.squash * 0.18;
+  ctx.save(); ctx.translate(b.x, b.y);
+  ctx.scale(1 + sq, 1 - sq);
+  if (b.kind === 'gold'){ ctx.shadowColor = '#ffd23f'; ctx.shadowBlur = 22; }
+  if (b.kind === 'dodger'){
+    // purple star
+    ctx.fillStyle = '#a855f7';
+    ctx.beginPath();
+    for (let i = 0; i < 10; i++){
+      const rr = i % 2 ? b.r * 0.45 : b.r;
+      const a = -Math.PI / 2 + i * Math.PI / 5;
+      const px = Math.cos(a) * rr, py = Math.sin(a) * rr;
+      if (i === 0) ctx.moveTo(px, py); else ctx.lineTo(px, py);
+    }
+    ctx.closePath(); ctx.fill();
+  } else {
+    ctx.fillStyle = b.kind === 'mega' ? '#ffd23f' : (b.kind === 'gold' ? '#ffd23f' : t.col);
+    ctx.beginPath(); ctx.arc(0, 0, b.r, 0, Math.PI * 2); ctx.fill();
+    ctx.fillStyle = 'rgba(255,255,255,0.35)';
+    ctx.beginPath(); ctx.arc(-b.r * 0.35, -b.r * 0.4, b.r * 0.22, 0, Math.PI * 2); ctx.fill();
+  }
+  ctx.shadowBlur = 0;
+  // face
+  ctx.fillStyle = '#0d0b1e'; ctx.textAlign = 'center';
+  const er = Math.max(3, b.r * 0.11);
+  if (angry || b.kind === 'mega'){
+    ctx.font = '900 ' + Math.round(b.r * 0.42) + 'px Arial';
+    ctx.fillText('><', 0, b.r * 0.1);
+    ctx.strokeStyle = '#0d0b1e'; ctx.lineWidth = 3;
+    ctx.beginPath(); ctx.moveTo(-b.r * 0.45, -b.r * 0.35); ctx.lineTo(-b.r * 0.15, -b.r * 0.2); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(b.r * 0.45, -b.r * 0.35); ctx.lineTo(b.r * 0.15, -b.r * 0.2); ctx.stroke();
+  } else {
+    ctx.beginPath(); ctx.arc(-b.r * 0.32, -b.r * 0.1, er, 0, Math.PI * 2); ctx.fill();
+    ctx.beginPath(); ctx.arc(b.r * 0.32, -b.r * 0.1, er, 0, Math.PI * 2); ctx.fill();
+    ctx.strokeStyle = '#0d0b1e'; ctx.lineWidth = 3; ctx.beginPath();
+    ctx.arc(0, b.r * 0.1, b.r * 0.3, 0.15 * Math.PI, 0.85 * Math.PI); ctx.stroke();
+  }
+  if (b.kind === 'mega'){
+    ctx.fillStyle = '#ff4757'; ctx.font = '900 ' + Math.round(b.r * 0.4) + 'px Arial';
+    ctx.fillText('♛', 0, -b.r - 6);
+  }
+  if (b.kind === 'dodger' && !b.dodgeUsed){
+    ctx.fillStyle = '#fff'; ctx.font = '900 13px Arial';
+    ctx.fillText('DODGES!', 0, b.r + 18);
+  }
+  ctx.restore();
+}
+function draw(){
+  ctx.clearRect(0, 0, W, H);
+  const grad = ctx.createLinearGradient(0, 0, 0, H);
+  grad.addColorStop(0, '#2a1052'); grad.addColorStop(0.6, '#160a2e'); grad.addColorStop(1, '#0d0b1e');
+  ctx.fillStyle = grad; ctx.fillRect(0, 0, W, H);
+  // crowd of watchers at the bottom (judging faces)
+  for (let i = 0; i < 8; i++){
+    const x = 30 + i * 60, bob = Math.sin(elapsed * 3 + i) * 3;
+    ctx.fillStyle = i % 2 ? '#3a2a5e' : '#2a3a5e';
+    ctx.beginPath(); ctx.arc(x, 730 + bob, 20, 0, Math.PI * 2); ctx.fill();
+    ctx.fillStyle = '#fff'; ctx.font = 'bold 13px Arial'; ctx.textAlign = 'center';
+    ctx.fillText(balls.length >= 25 ? '😱' : (i % 3 ? '👀' : '😮'), x, 736 + bob);
+  }
+  // floor line
+  ctx.fillStyle = '#3a2560'; ctx.fillRect(0, 700, W, 4);
+  const angry = elapsed >= 15;
+  balls.forEach(b => drawBall(b, angry));
+  if (freezeT > 0){
+    ctx.fillStyle = 'rgba(53,224,255,0.12)'; ctx.fillRect(0, 0, W, H);
+    ctx.fillStyle = '#35e0ff'; ctx.font = '900 24px Arial'; ctx.textAlign = 'center';
+    ctx.fillText('FROZEN!', 240, 120);
+  }
+  parts.forEach(p => { ctx.fillStyle = p.col; ctx.fillRect(p.x - 3, p.y - 3, 6, 6); });
+  rings.forEach(r => {
+    ctx.globalAlpha = r.t * 2; ctx.strokeStyle = '#fff'; ctx.lineWidth = 3;
+    ctx.beginPath(); ctx.arc(r.x, r.y, r.r + (0.35 - r.t) * 60, 0, Math.PI * 2); ctx.stroke();
+    ctx.globalAlpha = 1;
+  });
+  popups.forEach(p => {
+    ctx.globalAlpha = Math.min(1, p.t);
+    ctx.fillStyle = p.col; ctx.font = '900 24px Arial'; ctx.textAlign = 'center';
+    ctx.fillText(p.txt, p.x, p.y); ctx.globalAlpha = 1;
+  });
+  // BOOM button
+  ctx.fillStyle = bombs > 0 ? '#ff4757' : '#555';
+  ctx.beginPath(); ctx.arc(420, 690, 42, 0, Math.PI * 2); ctx.fill();
+  ctx.fillStyle = '#fff'; ctx.font = '900 17px Arial'; ctx.textAlign = 'center';
+  ctx.fillText('BOOM', 420, 686);
+  ctx.font = '700 13px Arial'; ctx.fillText('x' + bombs, 420, 706);
+  // crosshair (keyboard)
+  if (cross.show && state === 'play'){
+    ctx.strokeStyle = '#fff'; ctx.lineWidth = 2;
+    ctx.beginPath(); ctx.arc(cross.x, cross.y, 18, 0, Math.PI * 2); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(cross.x - 26, cross.y); ctx.lineTo(cross.x - 10, cross.y);
+    ctx.moveTo(cross.x + 10, cross.y); ctx.lineTo(cross.x + 26, cross.y);
+    ctx.moveTo(cross.x, cross.y - 26); ctx.lineTo(cross.x, cross.y - 10);
+    ctx.moveTo(cross.x, cross.y + 10); ctx.lineTo(cross.x, cross.y + 26); ctx.stroke();
+  }
+  // HUD
+  ctx.fillStyle = '#fff'; ctx.textAlign = 'left'; ctx.font = '900 22px Arial';
+  ctx.fillText('★ ' + score, 14, 34);
+  ctx.fillStyle = '#ffd23f'; ctx.font = '700 15px Arial';
+  ctx.fillText('BEST ' + high + (combo > 1 ? '   COMBO x' + combo : ''), 14, 56);
+  ctx.textAlign = 'right'; ctx.fillStyle = '#fff'; ctx.font = '900 22px Arial';
+  ctx.fillText(Math.ceil(timeLeft) + 's', 466, 34);
+  ctx.fillStyle = balls.length >= 25 ? '#ff4757' : '#35e0ff'; ctx.font = '700 15px Arial';
+  ctx.fillText('BALLS ' + balls.length + '/30', 466, 56);
+  if (rainbow){ ctx.fillStyle = '#ff5da2'; ctx.font = '700 13px Arial'; ctx.fillText('RAINBOW POP ✓', 466, 76); }
+
+  if (state === 'start'){
+    ctx.fillStyle = 'rgba(13,11,30,0.78)'; ctx.fillRect(0, 0, W, H);
+    ctx.textAlign = 'center';
+    ctx.fillStyle = '#ff5da2'; ctx.font = '900 52px Arial';
+    ctx.fillText('POP PANIC!', 240, 210);
+    ctx.font = '900 64px Arial'; ctx.fillText('🎈💥', 240, 300);
+    ctx.fillStyle = '#fff'; ctx.font = '700 20px Arial';
+    ctx.fillText('Pop it. It multiplies. Oops.', 240, 350);
+    ctx.fillStyle = '#35e0ff'; ctx.font = '900 19px Arial';
+    ctx.fillText('TAP BALLS • DON\'T HIT 30', 240, 395);
+    ctx.fillStyle = '#ffd23f'; ctx.font = '700 16px Arial';
+    ctx.fillText('Gold = free points. Purple star dodges.', 240, 430);
+    ctx.fillStyle = '#7CFC98'; ctx.font = '900 26px Arial';
+    ctx.fillText('TAP TO PLAY', 240, 500);
+    ctx.fillStyle = '#aaa'; ctx.font = '700 15px Arial';
+    ctx.fillText('Best: ' + high + (rainbow ? '   RAINBOW POP ✓' : ''), 240, 540);
+  }
+  if (state === 'pause'){
+    ctx.fillStyle = 'rgba(13,11,30,0.7)'; ctx.fillRect(0, 0, W, H);
+    ctx.fillStyle = '#fff'; ctx.textAlign = 'center'; ctx.font = '900 40px Arial';
+    ctx.fillText('PAUSED', 240, 380);
+  }
+  if (state === 'over'){
+    ctx.fillStyle = 'rgba(13,11,30,0.85)'; ctx.fillRect(0, 0, W, H);
+    ctx.textAlign = 'center';
+    ctx.fillStyle = '#ff4757'; ctx.font = '900 40px Arial';
+    ctx.fillText(overTitle, 240, 220);
+    ctx.fillStyle = '#fff'; ctx.font = '700 19px Arial';
+    ctx.fillText(overRoast, 240, 260);
+    ctx.fillStyle = '#ffd23f'; ctx.font = '900 30px Arial';
+    ctx.fillText('★ ' + score + '  •  BEST ' + high, 240, 320);
+    ctx.fillStyle = '#7CFC98'; ctx.font = '900 20px Arial';
+    ctx.fillText(rankFor(score), 240, 360);
+    ctx.fillStyle = '#aaa'; ctx.font = '700 15px Arial';
+    ctx.fillText('Pops: ' + pops + '   Best combo x' + bestCombo, 240, 390);
+    if (rainbowJust){ ctx.fillStyle = '#ff5da2'; ctx.font = '900 20px Arial'; ctx.fillText('UNLOCKED: RAINBOW POP!', 240, 430); }
+    ctx.fillStyle = '#35e0ff';
+    ctx.fillRect(140, 520, 200, 55);
+    ctx.fillStyle = '#0d0b1e'; ctx.font = '900 22px Arial';
+    ctx.fillText('PLAY AGAIN', 240, 556);
+    ctx.fillStyle = '#ffd23f';
+    ctx.fillRect(140, 590, 200, 50);
+    ctx.fillStyle = '#0d0b1e'; ctx.font = '900 19px Arial';
+    ctx.fillText('COPY RESULT', 240, 622);
+    if (copyMsg > 0){ ctx.fillStyle = '#7CFC98'; ctx.font = '900 18px Arial'; ctx.fillText('COPIED!', 240, 665); }
+  }
+}
+let last = performance.now();
+function loop(now){
+  const dt = Math.min(0.05, (now - last) / 1000);
+  last = now;
+  update(dt);
+  draw();
+  requestAnimationFrame(loop);
+}
+requestAnimationFrame(loop);
+</script>
+</body>
+</html>

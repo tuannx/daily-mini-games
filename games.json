@@ -303,5 +303,14 @@
   "mechanic": "Slingshot denture rescue (sneeze shut-mouth, wind gusts, dog thief)",
   "tagline": "Granny sneezed her teeth out. Slingshot them home — before the dog does.",
   "title": "GRANNY LOST HER TEETH"
+ },
+ {
+  "date": "2026-11-04",
+  "day": 35,
+  "emoji": "🎈",
+  "file": "games/pop-panic.html",
+  "mechanic": "Split-when-popped ball swarm (pop splits into 2 smaller faster balls, dodger star, mega ball, boom bombs)",
+  "tagline": "Pop it and it splits in two. Smaller, faster, angrier. Clear them before they swarm you.",
+  "title": "POP PANIC!"
  }
 ]
