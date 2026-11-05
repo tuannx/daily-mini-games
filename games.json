@@ -312,5 +312,14 @@
   "mechanic": "Split-when-popped ball swarm (pop splits into 2 smaller faster balls, dodger star, mega ball, boom bombs)",
   "tagline": "Pop it and it splits in two. Smaller, faster, angrier. Clear them before they swarm you.",
   "title": "POP PANIC!"
+ },
+ {
+  "date": "2026-11-05",
+  "day": 36,
+  "emoji": "🔗",
+  "file": "games/chained-idiots.html",
+  "mechanic": "Chained-pair vertical climber (rope yanks, partner drifts, chain shrinks)",
+  "tagline": "Two idiots. One rope. He has a plan. It's bad.",
+  "title": "CHAINED IDIOTS"
  }
 ]

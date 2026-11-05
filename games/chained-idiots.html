@@ -1,0 +1,661 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
+<title>CHAINED IDIOTS — Two idiots. One rope. Zero plans.</title>
+<style>
+  *{margin:0;padding:0;box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+  html,body{height:100%;background:#0d0b1e;overflow:hidden}
+  body{display:flex;align-items:center;justify-content:center;font-family:system-ui,'Arial Black',Arial,sans-serif;user-select:none;-webkit-user-select:none;touch-action:none}
+  #wrap{position:relative;width:100%;max-width:480px;height:100%;max-height:860px}
+  canvas{display:block;width:100%;height:100%;background:#160a2e}
+  .btn{position:absolute;top:8px;width:38px;height:38px;border:2px solid #35e0ff;border-radius:50%;background:rgba(13,11,30,.7);color:#fff;font-size:17px;line-height:34px;text-align:center;cursor:pointer;z-index:5}
+  #pauseBtn{right:8px} #muteBtn{right:52px}
+</style>
+</head>
+<body>
+<div id="wrap">
+<canvas id="c" width="480" height="760"></canvas>
+<div class="btn" id="muteBtn">♪</div>
+<div class="btn" id="pauseBtn">II</div>
+</div>
+<script>
+'use strict';
+/* CHAINED IDIOTS — two idiots chained together climb a tower.
+   They auto-bounce. You steer BOTH (drag / arrow keys). The rope is
+   the joke: it goes slack, snaps taut and YANKS the lagging idiot.
+   Twist: 10s the chain SHRINKS; 20s HIM gets "his own plan" and
+   drifts away from you; 30s wind gusts; 40s angry birds swarm.
+   Gold glow = stars ONLY (collect). Angry red = birds (dodge).
+   Fall below the screen = both idiots scream on the way down. */
+const cv = document.getElementById('c');
+const ctx = cv.getContext('2d');
+const W = 480, H = 760;
+const GAME_URL = 'https://tuannx.github.io/daily-mini-games/games/chained-idiots.html';
+const HS_KEY = 'chainedidiots-highscore';
+const RAINBOW_KEY = 'chainedidiots-rainbow';
+
+let AC = null, muted = false;
+function beep(f, d, type, vol, slide){
+  if (muted) return;
+  try {
+    AC = AC || new (window.AudioContext || window.webkitAudioContext)();
+    const o = AC.createOscillator(), g = AC.createGain();
+    o.type = type || 'sine'; o.frequency.value = f;
+    if (slide) o.frequency.exponentialRampToValueAtTime(slide, AC.currentTime + d);
+    g.gain.setValueAtTime(vol || 0.12, AC.currentTime);
+    g.gain.exponentialRampToValueAtTime(0.001, AC.currentTime + d);
+    o.connect(g); g.connect(AC.destination);
+    o.start(); o.stop(AC.currentTime + d);
+  } catch(e){}
+}
+const sBounce = ()=>{ beep(300,.08,'sine',.09,520); };
+const sYank = ()=>{ beep(700,.1,'square',.09,300); };
+const sStar = ()=>{ [1046,1318,1568].forEach((f,i)=>setTimeout(()=>beep(f,.09,'sine',.09),i*50)); };
+const sBonk = ()=>{ beep(180,.25,'sawtooth',.13,60); };
+const sSave = ()=>{ [880,1174].forEach((f,i)=>setTimeout(()=>beep(f,.1,'sine',.10),i*70)); };
+const sWarn = ()=>{ beep(880,.2,'square',.10,660); };
+const sOver = ()=>{ [440,330,220,160].forEach((f,i)=>setTimeout(()=>beep(f,.18,'triangle',.11),i*140)); };
+const sStart = ()=>{ [523,659,784].forEach((f,i)=>setTimeout(()=>beep(f,.1,'sine',.10),i*70)); };
+const sBoost = ()=>{ beep(400,.12,'sine',.10,900); };
+
+let state = 'start'; // start | play | pause | over
+let score = 0, high = +(localStorage.getItem(HS_KEY) || 0);
+let rainbow = localStorage.getItem(RAINBOW_KEY) === '1';
+let combo = 0, bestCombo = 0, comboT = 0;
+let timeLeft = 60, elapsed = 0, copyMsg = 0;
+let heightM = 0, bestHeight = 0, stars = 0;
+let hearts = 3;
+let camY = 0, startY = 680;
+let ropeL = 150, ropeLooseT = 0, yankCd = 0, saveCd = 0;
+let boostCd = 0, windT = 0, windX = 0, windDur = 0, windMsg = false;
+let shrink1 = false, shrink2 = false, planOn = false, planT = 0, himDrift = 0;
+let birdT = 3, linkT = 12, starNear = false;
+let targetX = 240, dragging = false, downX = 0, downY = 0, downT = 0;
+let keys = {};
+let plats = [], birdsArr = [], starsArr = [], links = [], parts = [], popups = [], clouds = [], leaves = [];
+let you, him;
+let overTitle = '', overRoast = '', rainbowJust = false;
+
+const ROASTS = [
+  'One fell. The other filed a complaint.',
+  'The chain has seen things.',
+  'Physics filed for divorce.',
+  'HIM had a plan. It was bad.',
+  'Gravity collects both idiots.'
+];
+function rankFor(s){
+  if (s >= 600) return 'CHAIN GANG LEGEND';
+  if (s >= 350) return 'DYNAMIC DUO';
+  if (s >= 180) return 'ROPE BURN SURVIVOR';
+  return 'STILL CHAINED';
+}
+function popup(x, y, txt, col){ popups.push({x, y, txt, col: col || '#fff', t: 1.2}); } // popup y is SCREEN space
+function burst(x, y, col, n){ // burst coords are WORLD space (draw subtracts camY)
+  for (let i = 0; i < (n || 12); i++)
+    parts.push({x, y, vx: (Math.random()-0.5)*300, vy: -Math.random()*220-30, t: .8, col: col});
+}
+let bonusPts = 0;
+function mkIdiot(x, y, col, dark, name){
+  return {x, y, vx: 0, vy: 0, r: 20, col, dark, name,
+    squash: 0, dizzy: 0, prevY: y, scared: 0, plan: 0};
+}
+function addPlat(y){
+  const w = 70 + Math.random() * 45;
+  const p = {x: 30 + Math.random() * (W - 60 - w), y, w,
+    crumble: Math.random() < 0.25, gone: false, goneT: 0, wob: Math.random() * 6.28};
+  plats.push(p);
+  if (Math.random() < 0.3)
+    starsArr.push({x: p.x + p.w / 2, y: p.y - 34, r: 13, got: false, wob: Math.random() * 6.28});
+  return p;
+}
+function reset(){
+  score = 0; combo = 0; bestCombo = 0; comboT = 0; bonusPts = 0;
+  timeLeft = 60; elapsed = 0; copyMsg = 0;
+  heightM = 0; bestHeight = 0; stars = 0; hearts = 3;
+  startY = 680; camY = 0;
+  ropeL = 150; ropeLooseT = 0; yankCd = 0; saveCd = 0;
+  boostCd = 0; windT = 5; windX = 0; windDur = 0; windMsg = false;
+  shrink1 = false; shrink2 = false; planOn = false; planT = 0; himDrift = 0;
+  birdT = 3; linkT = 12;
+  targetX = 240; dragging = false;
+  plats = []; birdsArr = []; starsArr = []; links = []; parts = []; popups = []; leaves = [];
+  clouds = [];
+  for (let i = 0; i < 7; i++)
+    clouds.push({x: Math.random() * W, y: Math.random() * H, s: 0.5 + Math.random() * 0.8, v: 8 + Math.random() * 14});
+  you = mkIdiot(200, 640, '#35e0ff', '#0e7fa3', 'YOU');
+  him = mkIdiot(280, 640, '#ff9f2e', '#c25e00', 'HIM');
+  plats.push({x: 140, y: 700, w: 200, crumble: false, gone: false, goneT: 0, wob: 0});
+  let py = 700;
+  while (py > -200){ py -= 70 + Math.random() * 40; addPlat(py); }
+}
+function startGame(){ reset(); state = 'play'; sStart(); }
+function endGame(title){
+  state = 'over'; overTitle = title;
+  overRoast = ROASTS[Math.floor(Math.random()*ROASTS.length)];
+  if (score > high){ high = score; localStorage.setItem(HS_KEY, String(high)); }
+  if (score >= 400 && !rainbow){ rainbow = true; rainbowJust = true; localStorage.setItem(RAINBOW_KEY, '1'); }
+  sOver();
+}
+function bonk(bird, who){
+  if (who.dizzy > 0) return;
+  hearts--; who.dizzy = 1.2; who.vy = -380;
+  who.vx = (who.x < bird.x ? -1 : 1) * 260;
+  combo = 0;
+  burst(who.x, who.y - 10, '#ff4757', 14);
+  popup(who.x, who.y - camY - 40, 'BONK!', '#ff4757');
+  sBonk();
+  if (hearts <= 0) endGame('PECKED OUT!');
+}
+function bounce(who, p){
+  who.vy = -640;
+  who.squash = 1;
+  // near-miss: landed within 8px of a platform edge
+  if (who.x < p.x + 10 || who.x > p.x + p.w - 10){
+    bonusPts += 2; popup(who.x, who.y - camY - 40, 'SO CLOSE!', '#35e0ff');
+  }
+  if (p.crumble && !p.gone){ p.gone = true; p.goneT = 0.5; burst(p.x + p.w/2, p.y, '#8a7a5a', 10); }
+  sBounce();
+}
+function steer(who, tx, dt, power){
+  const dx = tx - who.x;
+  who.vx += Math.max(-1, Math.min(1, dx / 60)) * power * dt;
+  who.vx *= Math.pow(0.12, dt); // friction
+  who.vx = Math.max(-320, Math.min(320, who.vx));
+}
+function ropePhysics(dt){
+  const dx = him.x - you.x, dy = him.y - you.y;
+  const dist = Math.hypot(dx, dy) || 0.001;
+  const L = ropeLooseT > 0 ? 150 : ropeL;
+  if (dist > L){
+    const nx = dx / dist, ny = dy / dist, over = dist - L;
+    you.x += nx * over / 2; you.y += ny * over / 2;
+    him.x -= nx * over / 2; him.y -= ny * over / 2;
+    // yank: the falling one gets pulled, the higher one gets dragged
+    const low = you.y > him.y ? you : him;
+    const high = low === you ? him : you;
+    if (low.vy > 120){
+      low.vy = Math.min(low.vy, 60);
+      high.vy += 40;
+      if (yankCd <= 0){
+        yankCd = 1.2;
+        popup((you.x + him.x) / 2, Math.min(you.y, him.y) - camY - 30, 'YANK!', '#ffd23f');
+        burst((you.x + him.x) / 2, (you.y + him.y) / 2, '#ffd23f', 8);
+        sYank();
+      }
+    }
+  }
+  return dist > L;
+}
+function update(dt){
+  if (state !== 'play') return;
+  elapsed += dt; timeLeft -= dt;
+  if (timeLeft <= 0){ timeLeft = 0; endGame('TIME UP!'); return; }
+  if (comboT > 0){ comboT -= dt; if (comboT <= 0) combo = 0; }
+  if (copyMsg > 0) copyMsg -= dt;
+  if (yankCd > 0) yankCd -= dt;
+  if (saveCd > 0) saveCd -= dt;
+  if (boostCd > 0) boostCd -= dt;
+  if (ropeLooseT > 0) ropeLooseT -= dt;
+
+  // --- escalation ---
+  if (elapsed >= 10 && !shrink1){
+    shrink1 = true; ropeL = 110;
+    popup(240, 300, 'CHAIN SHRINKS!', '#ff4757'); sWarn();
+  }
+  if (elapsed >= 20 && !planOn){
+    planOn = true; planT = 0;
+    popup(240, 300, 'HE HAS A PLAN!', '#ff9f2e'); sWarn();
+  }
+  if (elapsed >= 45 && !shrink2){
+    shrink2 = true; ropeL = 80;
+    popup(240, 300, 'CHAIN SHRINKS AGAIN!', '#ff4757'); sWarn();
+  }
+  // HIM's own plan: drifts to his own random target
+  if (planOn){
+    planT -= dt;
+    if (planT <= 0){
+      planT = 2.5;
+      himDrift = (Math.random() < 0.5 ? -1 : 1) * (80 + Math.random() * 120);
+    }
+    him.plan = 1;
+  }
+  // wind gusts from 30s
+  if (elapsed >= 30){
+    windT -= dt;
+    if (windT <= 0){
+      windT = 6;
+      windDur = 2; windX = (Math.random() < 0.5 ? -1 : 1) * 130;
+      popup(240, 340, windX > 0 ? 'WIND >>' : '<< WIND', '#35e0ff'); sWarn();
+    }
+  }
+  if (windDur > 0){
+    windDur -= dt;
+    if (Math.random() < 0.4)
+      leaves.push({x: windX > 0 ? -10 : W + 10, y: camY + Math.random() * H, vx: windX * 1.6, t: 2});
+  }
+  // birds
+  birdT -= dt;
+  if (birdT <= 0){
+    birdT = elapsed >= 40 ? 2.5 : 4;
+    const fromLeft = Math.random() < 0.5;
+    birdsArr.push({x: fromLeft ? -30 : W + 30, y: camY + 120 + Math.random() * 420,
+      vx: (fromLeft ? 1 : -1) * (130 + Math.random() * 80), r: 18, wob: Math.random() * 6.28});
+  }
+  // golden chain link (rare)
+  linkT -= dt;
+  if (linkT <= 0){
+    linkT = 13 + Math.random() * 4;
+    links.push({x: 60 + Math.random() * 360, y: camY + 100 + Math.random() * 300, r: 16, t: 8, wob: 0});
+  }
+
+  // --- steering ---
+  let tx = targetX;
+  if (keys['ArrowLeft'] || keys['a']) tx = Math.min(you.x, him.x) - 90;
+  if (keys['ArrowRight'] || keys['d']) tx = Math.max(you.x, him.x) + 90;
+  steer(you, tx, dt, 2600);
+  steer(him, planOn ? him.x + himDrift : tx, dt, planOn ? 1800 : 2000);
+
+  // --- physics per idiot ---
+  [you, him].forEach(who => {
+    who.prevY = who.y;
+    who.vy += 1400 * dt;
+    if (windDur > 0) who.vx += windX * dt * 0.8;
+    who.x += who.vx * dt;
+    who.y += who.vy * dt;
+    if (who.x < who.r){ who.x = who.r; who.vx = Math.abs(who.vx) * 0.6; }
+    if (who.x > W - who.r){ who.x = W - who.r; who.vx = -Math.abs(who.vx) * 0.6; }
+    if (who.squash > 0) who.squash = Math.max(0, who.squash - dt * 5);
+    if (who.dizzy > 0) who.dizzy -= dt;
+    // platform bounce
+    if (who.vy > 0){
+      plats.forEach(p => {
+        if (p.gone) return;
+        const prevB = who.prevY + who.r, newB = who.y + who.r;
+        if (prevB <= p.y + 6 && newB >= p.y && who.x > p.x - 6 && who.x < p.x + p.w + 6){
+          who.y = p.y - who.r;
+          bounce(who, p);
+        }
+      });
+    }
+  });
+
+  const taut = ropePhysics(dt);
+
+  // rope save: lower idiot about to fall off-screen, partner still up
+  const low = you.y > him.y ? you : him;
+  const high = low === you ? him : you;
+  if (saveCd <= 0 && low.y - camY > H - 60 && high.vy <= 0 && taut){
+    saveCd = 3;
+    low.vy = -560; low.y = high.y + 60;
+    bonusPts += 5;
+    popup(low.x, low.y - camY - 40, 'ROPE SAVE! +5', '#7CFC98');
+    burst(low.x, low.y, '#7CFC98', 12);
+    sSave();
+  }
+  // fall = both scream
+  if (you.y - camY > H + 30 || him.y - camY > H + 30){
+    burst(you.x, you.y, '#35e0ff', 12);
+    burst(him.x, him.y, '#ff9f2e', 12);
+    endGame('CHAINED DOWN!');
+    return;
+  }
+
+  // camera follows the highest idiot, only upward
+  const topY = Math.min(you.y, him.y) - 320;
+  if (topY < camY) camY = topY;
+  heightM = Math.max(bestHeight, Math.floor((startY - Math.min(you.y, him.y)) / 10));
+  bestHeight = Math.max(bestHeight, heightM);
+  score = heightM + stars * 25 + bonusPts;
+
+  // stars (glow = collect only)
+  starsArr.forEach(s => {
+    if (s.got) return;
+    s.wob += dt * 4;
+    [you, him].forEach(who => {
+      if (Math.hypot(who.x - s.x, who.y - s.y) < who.r + s.r + 6){
+        s.got = true; stars++;
+        combo++; bestCombo = Math.max(bestCombo, combo); comboT = 1.5;
+        popup(s.x, s.y - camY - 20, '+' + (25 + combo * 2), '#ffd23f');
+        burst(s.x, s.y, '#ffd23f', 12);
+        sStar();
+      }
+    });
+  });
+  starsArr = starsArr.filter(s => !s.got && s.y - camY < H + 60);
+
+  // golden links
+  links.forEach(l => {
+    l.t -= dt; l.wob += dt * 5;
+    [you, him].forEach(who => {
+      if (Math.hypot(who.x - l.x, who.y - l.y) < who.r + l.r + 8){
+        l.t = 0; ropeLooseT = 5; bonusPts += 50;
+        popup(l.x, l.y - camY - 24, '+50 LOOSE CHAIN!', '#ffd23f');
+        burst(l.x, l.y, '#ffd23f', 18);
+        sStar();
+      }
+    });
+  });
+  links = links.filter(l => l.t > 0);
+
+  // birds
+  birdsArr.forEach(b => {
+    b.x += b.vx * dt; b.wob += dt * 8;
+    [you, him].forEach(who => {
+      if (Math.hypot(who.x - b.x, who.y - b.y) < who.r + b.r - 4) bonk(b, who);
+    });
+  });
+  birdsArr = birdsArr.filter(b => b.x > -60 && b.x < W + 60);
+
+  // generate platforms above, cull below
+  if (plats.length === 0) addPlat(camY - 100);
+  let topPlat = Math.min.apply(null, plats.map(p => p.y));
+  while (topPlat > camY - 200){ topPlat -= 70 + Math.random() * 40; addPlat(topPlat); }
+  plats.forEach(p => { if (p.gone) p.goneT -= dt; });
+  plats = plats.filter(p => (!p.gone || p.goneT > 0) && p.y - camY < H + 80);
+
+  // clouds + leaves drift
+  clouds.forEach(c => {
+    c.x += c.v * dt;
+    if (c.x > W + 60){ c.x = -60; c.y = camY + Math.random() * H; }
+  });
+  leaves = leaves.filter(l => (l.t -= dt) > 0);
+  leaves.forEach(l => { l.x += l.vx * dt; });
+  parts = parts.filter(p => (p.t -= dt) > 0);
+  parts.forEach(p => { p.x += p.vx * dt; p.y += p.vy * dt; p.vy += 300 * dt; });
+  popups = popups.filter(p => (p.t -= dt) > 0);
+}
+function boost(){
+  if (state !== 'play' || boostCd > 0) return;
+  boostCd = 1.2;
+  you.vy = -720; him.vy = -720;
+  you.squash = 0.6; him.squash = 0.6;
+  burst(you.x, you.y + 20, '#35e0ff', 8);
+  burst(him.x, him.y + 20, '#ff9f2e', 8);
+  sBoost();
+}
+function canvasPos(e){
+  const r = cv.getBoundingClientRect();
+  return {x: (e.clientX - r.left) * W / r.width, y: (e.clientY - r.top) * H / r.height};
+}
+cv.addEventListener('pointerdown', e => {
+  const p = canvasPos(e);
+  if (state === 'start'){ startGame(); return; }
+  if (state === 'over'){
+    if (p.x > 140 && p.x < 340 && p.y > 520 && p.y < 575){ startGame(); }
+    else if (p.x > 140 && p.x < 340 && p.y > 590 && p.y < 640){
+      const txt = 'I climbed ' + heightM + 'm chained to an idiot in CHAINED IDIOTS — he had a plan, it was bad. Score ' + score + '! ' + GAME_URL;
+      try { navigator.clipboard.writeText(txt); } catch(e){}
+      copyMsg = 2; sStar();
+    }
+    return;
+  }
+  if (state !== 'play') return;
+  dragging = true; targetX = p.x;
+  downX = p.x; downY = p.y; downT = performance.now();
+});
+cv.addEventListener('pointermove', e => {
+  if (!dragging) return;
+  const p = canvasPos(e);
+  targetX = p.x;
+});
+cv.addEventListener('pointerup', e => {
+  if (!dragging) return;
+  dragging = false;
+  const p = canvasPos(e);
+  // quick tap (no drag) = jump boost
+  if (Math.hypot(p.x - downX, p.y - downY) < 12 && performance.now() - downT < 250) boost();
+});
+document.getElementById('muteBtn').onclick = ()=>{ muted = !muted; document.getElementById('muteBtn').textContent = muted ? '×' : '♪'; };
+document.getElementById('pauseBtn').onclick = ()=>{
+  if (state === 'play') state = 'pause';
+  else if (state === 'pause') state = 'play';
+};
+window.addEventListener('keydown', e => {
+  keys[e.key] = true;
+  if (e.key === ' '){
+    if (state === 'start') startGame();
+    else if (state === 'over') startGame();
+    else boost();
+    e.preventDefault();
+  }
+  if (e.key === 'p' || e.key === 'P'){
+    if (state === 'play') state = 'pause';
+    else if (state === 'pause') state = 'play';
+  }
+});
+window.addEventListener('keyup', e => { keys[e.key] = false; });
+
+function drawIdiot(who){
+  const sy = who.y - camY;
+  const sq = who.squash * 0.2;
+  ctx.save(); ctx.translate(who.x, sy);
+  ctx.scale(1 + sq, 1 - sq);
+  ctx.fillStyle = who.col;
+  ctx.beginPath(); ctx.arc(0, 0, who.r, 0, Math.PI * 2); ctx.fill();
+  ctx.fillStyle = 'rgba(255,255,255,0.35)';
+  ctx.beginPath(); ctx.arc(-7, -8, 5, 0, Math.PI * 2); ctx.fill();
+  // face
+  ctx.fillStyle = '#0d0b1e'; ctx.textAlign = 'center';
+  const falling = who.vy > 260;
+  if (who.dizzy > 0){
+    ctx.font = '900 15px Arial';
+    ctx.fillText('✖ ✖', 0, -2);
+    ctx.font = '900 11px Arial';
+    ctx.fillText('~ ~', 0, 12);
+    ctx.strokeStyle = '#ffd23f'; ctx.lineWidth = 2;
+    ctx.beginPath(); ctx.arc(0, 0, who.r + 6, 0, Math.PI * 2); ctx.stroke();
+  } else if (falling){
+    ctx.font = '900 13px Arial';
+    ctx.fillText('O  O', 0, -4);
+    ctx.beginPath(); ctx.arc(0, 8, 6, 0, Math.PI); ctx.stroke();
+  } else if (who.plan){
+    // HIM with his own plan: smug sideways grin
+    ctx.font = '900 13px Arial';
+    ctx.fillText('>  >', 0, -4);
+    ctx.strokeStyle = '#0d0b1e'; ctx.lineWidth = 2.5;
+    ctx.beginPath(); ctx.arc(2, 6, 7, 0.2 * Math.PI, 0.9 * Math.PI); ctx.stroke();
+  } else {
+    ctx.beginPath(); ctx.arc(-7, -3, 3, 0, Math.PI * 2); ctx.fill();
+    ctx.beginPath(); ctx.arc(7, -3, 3, 0, Math.PI * 2); ctx.fill();
+    ctx.strokeStyle = '#0d0b1e'; ctx.lineWidth = 2.5;
+    ctx.beginPath(); ctx.arc(0, 4, 6, 0.15 * Math.PI, 0.85 * Math.PI); ctx.stroke();
+  }
+  ctx.restore();
+  // name tag
+  ctx.fillStyle = who.col; ctx.font = '900 11px Arial'; ctx.textAlign = 'center';
+  ctx.fillText(who.name, who.x, sy - who.r - 6);
+}
+function draw(){
+  ctx.clearRect(0, 0, W, H);
+  const grad = ctx.createLinearGradient(0, 0, 0, H);
+  grad.addColorStop(0, '#1b2a52'); grad.addColorStop(0.55, '#160a2e'); grad.addColorStop(1, '#0d0b1e');
+  ctx.fillStyle = grad; ctx.fillRect(0, 0, W, H);
+  // clouds (background, drifting)
+  clouds.forEach(c => {
+    const cy = c.y - camY * 0.3;
+    if (cy < -40 || cy > H + 40) return;
+    ctx.fillStyle = 'rgba(255,255,255,0.08)';
+    ctx.beginPath(); ctx.ellipse(c.x, cy, 42 * c.s, 16 * c.s, 0, 0, Math.PI * 2); ctx.fill();
+    ctx.beginPath(); ctx.ellipse(c.x + 26 * c.s, cy + 6, 30 * c.s, 12 * c.s, 0, 0, Math.PI * 2); ctx.fill();
+  });
+  // platforms
+  plats.forEach(p => {
+    const sy = p.y - camY;
+    if (sy < -30 || sy > H + 30) return;
+    if (p.gone){ ctx.globalAlpha = Math.max(0, p.goneT * 2); }
+    ctx.fillStyle = p.crumble ? '#8a7a5a' : '#3a2a5e';
+    ctx.fillRect(p.x, sy, p.w, 12);
+    ctx.fillStyle = p.crumble ? '#6b5c40' : '#5a3a8e';
+    ctx.fillRect(p.x, sy, p.w, 4);
+    if (p.crumble){
+      ctx.strokeStyle = '#3a2a1e'; ctx.lineWidth = 2;
+      ctx.beginPath(); ctx.moveTo(p.x + p.w * 0.3, sy); ctx.lineTo(p.x + p.w * 0.5, sy + 12); ctx.stroke();
+      ctx.beginPath(); ctx.moveTo(p.x + p.w * 0.7, sy); ctx.lineTo(p.x + p.w * 0.55, sy + 12); ctx.stroke();
+    }
+    ctx.globalAlpha = 1;
+  });
+  // stars (the ONLY glow)
+  starsArr.forEach(s => {
+    const sy = s.y - camY;
+    if (sy < -30 || sy > H + 30) return;
+    ctx.save(); ctx.translate(s.x, sy + Math.sin(s.wob) * 3);
+    ctx.shadowColor = '#ffd23f'; ctx.shadowBlur = 18;
+    ctx.fillStyle = '#ffd23f';
+    ctx.beginPath();
+    for (let i = 0; i < 10; i++){
+      const rr = i % 2 ? s.r * 0.45 : s.r;
+      const a = -Math.PI / 2 + i * Math.PI / 5;
+      const px = Math.cos(a) * rr, py = Math.sin(a) * rr;
+      if (i === 0) ctx.moveTo(px, py); else ctx.lineTo(px, py);
+    }
+    ctx.closePath(); ctx.fill();
+    ctx.restore();
+  });
+  // golden links
+  links.forEach(l => {
+    const sy = l.y - camY;
+    ctx.save(); ctx.translate(l.x, sy + Math.sin(l.wob) * 4);
+    ctx.shadowColor = '#ffd23f'; ctx.shadowBlur = 20;
+    ctx.strokeStyle = '#ffd23f'; ctx.lineWidth = 5;
+    ctx.beginPath(); ctx.arc(-6, 0, 9, 0, Math.PI * 2); ctx.stroke();
+    ctx.beginPath(); ctx.arc(6, 0, 9, 0, Math.PI * 2); ctx.stroke();
+    ctx.restore();
+  });
+  // rope between the idiots
+  if (state !== 'start'){
+    const y1 = you.y - camY, y2 = him.y - camY;
+    const dist = Math.hypot(him.x - you.x, him.y - you.y);
+    const L = ropeLooseT > 0 ? 150 : ropeL;
+    const taut = dist > L - 4;
+    const mx = (you.x + him.x) / 2, my = (y1 + y2) / 2;
+    ctx.strokeStyle = rainbow ? '#ff5da2' : '#c9c9c9';
+    ctx.lineWidth = taut ? 4 : 3;
+    ctx.beginPath();
+    ctx.moveTo(you.x, y1);
+    if (taut){ ctx.lineTo(him.x, y2); }
+    else { ctx.quadraticCurveTo(mx, my + 26 + Math.sin(elapsed * 5) * 4, him.x, y2); }
+    ctx.stroke();
+    // chain links
+    ctx.fillStyle = rainbow ? '#ff5da2' : '#9a9a9a';
+    for (let i = 1; i < 5; i++){
+      const t = i / 5;
+      const lx = you.x + (him.x - you.x) * t;
+      const ly = y1 + (y2 - y1) * t + (taut ? 0 : 26 * Math.sin(t * Math.PI));
+      ctx.beginPath(); ctx.arc(lx, ly, 3.5, 0, Math.PI * 2); ctx.fill();
+    }
+    if (taut){
+      ctx.fillStyle = '#ffd23f'; ctx.font = '900 12px Arial'; ctx.textAlign = 'center';
+      ctx.fillText('✦', mx, my - 8);
+    }
+  }
+  // idiots
+  if (state !== 'start'){ drawIdiot(you); drawIdiot(him); }
+  // birds (angry red, always the enemy)
+  birdsArr.forEach(b => {
+    const sy = b.y - camY;
+    if (sy < -40 || sy > H + 40) return;
+    ctx.save(); ctx.translate(b.x, sy + Math.sin(b.wob) * 4);
+    ctx.fillStyle = '#ff4757';
+    ctx.beginPath(); ctx.arc(0, 0, b.r, 0, Math.PI * 2); ctx.fill();
+    // flapping wings
+    ctx.fillStyle = '#c0392b';
+    const flap = Math.sin(b.wob * 2) * 6;
+    ctx.beginPath(); ctx.ellipse(-b.r, -4 - flap, 12, 5, -0.5, 0, Math.PI * 2); ctx.fill();
+    ctx.beginPath(); ctx.ellipse(b.r, -4 + flap, 12, 5, 0.5, 0, Math.PI * 2); ctx.fill();
+    // angry face + beak
+    ctx.fillStyle = '#fff'; ctx.font = '900 14px Arial'; ctx.textAlign = 'center';
+    ctx.fillText('><', 0, 2);
+    ctx.fillStyle = '#ffd23f';
+    ctx.beginPath(); ctx.moveTo(b.vx > 0 ? b.r : -b.r, 4); ctx.lineTo(b.vx > 0 ? b.r + 10 : -b.r - 10, 8); ctx.lineTo(b.vx > 0 ? b.r : -b.r, 12); ctx.closePath(); ctx.fill();
+    ctx.restore();
+  });
+  // leaves (wind)
+  leaves.forEach(l => {
+    ctx.fillStyle = '#7CFC98';
+    ctx.fillRect(l.x, l.y - camY, 8, 4);
+  });
+  parts.forEach(p => { ctx.fillStyle = p.col; ctx.fillRect(p.x - 3, p.y - camY - 3, 6, 6); });
+  popups.forEach(p => {
+    ctx.globalAlpha = Math.min(1, p.t);
+    ctx.fillStyle = p.col; ctx.font = '900 24px Arial'; ctx.textAlign = 'center';
+    ctx.fillText(p.txt, p.x, p.y); ctx.globalAlpha = 1;
+  });
+  // HUD
+  ctx.fillStyle = '#fff'; ctx.textAlign = 'left'; ctx.font = '900 22px Arial';
+  ctx.fillText('▲ ' + heightM + 'm  ★ ' + score, 14, 34);
+  ctx.fillStyle = '#ffd23f'; ctx.font = '700 15px Arial';
+  ctx.fillText('BEST ' + high + (combo > 1 ? '   COMBO x' + combo : ''), 14, 56);
+  ctx.textAlign = 'right'; ctx.fillStyle = '#fff'; ctx.font = '900 22px Arial';
+  ctx.fillText(Math.ceil(timeLeft) + 's', 466, 34);
+  // hearts
+  ctx.font = '900 20px Arial'; ctx.textAlign = 'right';
+  ctx.fillText('♥'.repeat(hearts) + '♡'.repeat(3 - hearts), 466, 60);
+  if (rainbow){ ctx.fillStyle = '#ff5da2'; ctx.font = '700 13px Arial'; ctx.fillText('RAINBOW CHAIN ✓', 466, 80); }
+  if (planOn){ ctx.fillStyle = '#ff9f2e'; ctx.font = '700 13px Arial'; ctx.textAlign = 'left'; ctx.fillText('HIM HAS A PLAN!', 14, 78); }
+  if (ropeLooseT > 0){ ctx.fillStyle = '#7CFC98'; ctx.font = '700 13px Arial'; ctx.textAlign = 'left'; ctx.fillText('LOOSE CHAIN ' + Math.ceil(ropeLooseT) + 's', 14, 98); }
+
+  if (state === 'start'){
+    ctx.fillStyle = 'rgba(13,11,30,0.78)'; ctx.fillRect(0, 0, W, H);
+    ctx.textAlign = 'center';
+    ctx.fillStyle = '#35e0ff'; ctx.font = '900 46px Arial';
+    ctx.fillText('CHAINED', 240, 180);
+    ctx.fillStyle = '#ff9f2e'; ctx.font = '900 46px Arial';
+    ctx.fillText('IDIOTS', 240, 232);
+    ctx.font = '900 56px Arial'; ctx.fillText('🔗😱😤', 240, 310);
+    ctx.fillStyle = '#fff'; ctx.font = '700 20px Arial';
+    ctx.fillText('Two idiots. One rope. Zero plans.', 240, 355);
+    ctx.fillStyle = '#35e0ff'; ctx.font = '900 19px Arial';
+    ctx.fillText('DRAG TO STEER • TAP TO JUMP', 240, 400);
+    ctx.fillStyle = '#ffd23f'; ctx.font = '700 16px Arial';
+    ctx.fillText('Gold stars = points. Red birds = pain.', 240, 432);
+    ctx.fillStyle = '#ff9f2e'; ctx.font = '700 16px Arial';
+    ctx.fillText('The rope WILL yank you. Both of you.', 240, 458);
+    ctx.fillStyle = '#7CFC98'; ctx.font = '900 26px Arial';
+    ctx.fillText('TAP TO PLAY', 240, 520);
+    ctx.fillStyle = '#aaa'; ctx.font = '700 15px Arial';
+    ctx.fillText('Best: ' + high + (rainbow ? '   RAINBOW CHAIN ✓' : ''), 240, 560);
+  }
+  if (state === 'pause'){
+    ctx.fillStyle = 'rgba(13,11,30,0.7)'; ctx.fillRect(0, 0, W, H);
+    ctx.fillStyle = '#fff'; ctx.textAlign = 'center'; ctx.font = '900 40px Arial';
+    ctx.fillText('PAUSED', 240, 380);
+  }
+  if (state === 'over'){
+    ctx.fillStyle = 'rgba(13,11,30,0.85)'; ctx.fillRect(0, 0, W, H);
+    ctx.textAlign = 'center';
+    ctx.fillStyle = '#ff4757'; ctx.font = '900 38px Arial';
+    ctx.fillText(overTitle, 240, 210);
+    ctx.fillStyle = '#fff'; ctx.font = '700 19px Arial';
+    ctx.fillText(overRoast, 240, 250);
+    ctx.fillStyle = '#ffd23f'; ctx.font = '900 30px Arial';
+    ctx.fillText('▲ ' + heightM + 'm   ★ ' + score, 240, 310);
+    ctx.fillStyle = '#7CFC98'; ctx.font = '900 20px Arial';
+    ctx.fillText(rankFor(score), 240, 350);
+    ctx.fillStyle = '#aaa'; ctx.font = '700 15px Arial';
+    ctx.fillText('Stars: ' + stars + '   Best combo x' + bestCombo, 240, 380);
+    if (rainbowJust){ ctx.fillStyle = '#ff5da2'; ctx.font = '900 20px Arial'; ctx.fillText('UNLOCKED: RAINBOW CHAIN!', 240, 420); }
+    ctx.fillStyle = '#35e0ff';
+    ctx.fillRect(140, 520, 200, 55);
+    ctx.fillStyle = '#0d0b1e'; ctx.font = '900 22px Arial';
+    ctx.fillText('PLAY AGAIN', 240, 556);
+    ctx.fillStyle = '#ffd23f';
+    ctx.fillRect(140, 590, 200, 50);
+    ctx.fillStyle = '#0d0b1e'; ctx.font = '900 19px Arial';
+    ctx.fillText('COPY RESULT', 240, 622);
+    if (copyMsg > 0){ ctx.fillStyle = '#7CFC98'; ctx.font = '900 18px Arial'; ctx.fillText('COPIED!', 240, 665); }
+  }
+}
+let last = performance.now();
+function loop(now){
+  const dt = Math.min(0.05, (now - last) / 1000);
+  last = now;
+  update(dt);
+  draw();
+  requestAnimationFrame(loop);
+}
+requestAnimationFrame(loop);
+</script>
+</body>
+</html>
