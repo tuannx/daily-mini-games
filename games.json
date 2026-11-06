@@ -321,5 +321,14 @@
   "mechanic": "Chained-pair vertical climber (rope yanks, partner drifts, chain shrinks)",
   "tagline": "Two idiots. One rope. He has a plan. It's bad.",
   "title": "CHAINED IDIOTS"
+ },
+ {
+  "date": "2026-11-06",
+  "day": 37,
+  "emoji": "🖱️",
+  "file": "games/cursor-identity-crisis.html",
+  "mechanic": "Cursor-chaos clicker (click coins, never click fake cursors; SWAP body-swap + mirror decoy + coin-stealing fakes)",
+  "tagline": "You are the cursor. They are not. Click gold, dodge the red fakes — they bite, swap, and steal.",
+  "title": "CURSOR IDENTITY CRISIS"
  }
 ]

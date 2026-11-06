@@ -1,0 +1,622 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
+<title>CURSOR IDENTITY CRISIS — You are the cursor. They are not.</title>
+<style>
+  *{margin:0;padding:0;box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+  html,body{height:100%;background:#0d0b1e;overflow:hidden}
+  body{display:flex;align-items:center;justify-content:center;font-family:system-ui,'Arial Black',Arial,sans-serif;user-select:none;-webkit-user-select:none;touch-action:none}
+  #wrap{position:relative;width:100%;max-width:480px;height:100%;max-height:860px}
+  canvas{display:block;width:100%;height:100%;background:#101a3a;cursor:none}
+  .btn{position:absolute;top:8px;width:38px;height:38px;border:2px solid #35e0ff;border-radius:50%;background:rgba(13,11,30,.7);color:#fff;font-size:17px;line-height:34px;text-align:center;cursor:pointer;z-index:5}
+  #pauseBtn{right:8px} #muteBtn{right:52px}
+</style>
+</head>
+<body>
+<div id="wrap">
+<canvas id="c" width="480" height="760"></canvas>
+<div class="btn" id="muteBtn">♪</div>
+<div class="btn" id="pauseBtn">II</div>
+</div>
+<script>
+'use strict';
+/* CURSOR IDENTITY CRISIS — you ARE the mouse cursor on a fake desktop.
+   Click glowing gold coins. NEVER click the angry red fake cursors:
+   they bite (combo + points gone, cursor face goes 😵).
+   Twist: 12s SWAP! — you body-swap position with a random fake, all
+   cursors flash grey "?" for 0.6s so you lose yourself. 25s a purple
+   MIRROR cursor copies your moves 0.3s late (harmless decoy, giggles).
+   40s fakes start STEALING coins. Golden cursor flees, worth +50.
+   Coins glow = ONLY collectible. Red angry face = dodge. Purple = decoy.
+   Gold cursor = collectible (gold + 😋 + sparkles, distinct family). */
+const cv = document.getElementById('c');
+const ctx = cv.getContext('2d');
+const W = 480, H = 760;
+const GAME_URL = 'https://tuannx.github.io/daily-mini-games/games/cursor-identity-crisis.html';
+const HS_KEY = 'cursorcrisis-highscore';
+const RB_KEY = 'cursorcrisis-rainbow';
+
+let AC = null, muted = false;
+function beep(f, d, type, vol, slide){
+  if (muted) return;
+  try {
+    AC = AC || new (window.AudioContext || window.webkitAudioContext)();
+    const o = AC.createOscillator(), g = AC.createGain();
+    o.type = type || 'sine'; o.frequency.value = f;
+    if (slide) o.frequency.exponentialRampToValueAtTime(slide, AC.currentTime + d);
+    g.gain.setValueAtTime(vol || 0.12, AC.currentTime);
+    g.gain.exponentialRampToValueAtTime(0.001, AC.currentTime + d);
+    o.connect(g); g.connect(AC.destination);
+    o.start(); o.stop(AC.currentTime + d);
+  } catch(e){}
+}
+const sCoin  = ()=>{ [1046,1318,1568].forEach((f,i)=>setTimeout(()=>beep(f,.08,'sine',.09),i*45)); };
+const sBite  = ()=>{ beep(180,.28,'sawtooth',.14,55); };
+const sSwap  = ()=>{ [880,660,440].forEach((f,i)=>setTimeout(()=>beep(f,.1,'square',.09),i*60)); };
+const sGold  = ()=>{ [1318,1568,2093].forEach((f,i)=>setTimeout(()=>beep(f,.1,'sine',.1),i*50)); };
+const sNear  = ()=>{ beep(1200,.08,'sine',.08,1600); };
+const sGiggle= ()=>{ [700,900,700].forEach((f,i)=>setTimeout(()=>beep(f,.07,'triangle',.07),i*60)); };
+const sOver  = ()=>{ [440,330,220,160].forEach((f,i)=>setTimeout(()=>beep(f,.18,'triangle',.11),i*140)); };
+const sStart = ()=>{ [523,659,784].forEach((f,i)=>setTimeout(()=>beep(f,.1,'sine',.10),i*70)); };
+const sSteal = ()=>{ beep(300,.15,'square',.09,180); };
+const sWarn  = ()=>{ beep(880,.15,'square',.09,660); };
+
+const R = (a,b)=>a+Math.random()*(b-a);
+const TAU = Math.PI*2;
+function dist(ax,ay,bx,by){ return Math.hypot(ax-bx, ay-by); }
+
+let state = 'title'; // title | play | pause | over
+let score = 0, combo = 0, bestCombo = 0, bites = 0, timeLeft = 60, elapsed = 0;
+let best = +(localStorage.getItem(HS_KEY) || 0);
+let rainbow = localStorage.getItem(RB_KEY) === '1';
+let pointer = {x: W/2, y: H/2, down:false, seen:false};
+let trail = [];           // mirror-cursor history {x,y,t}
+let coins = [], fakes = [], parts = [], popups = [], sparkles = [];
+let gold = null;          // golden fleeing cursor
+let mirrorOn = false, stealOn = false;
+let swapFlash = 0;        // seconds left of grey "?" confusion
+let coinTimer = 0, goldTimer = 14, fakeTimer = 0, lungeTimer = 0;
+let shake = 0, deadFace = 0, stealWarned = false, mirrorWarned = false;
+let overLines = [
+  'You clicked the wrong you.',
+  'Identity theft, but make it cursor.',
+  'Your cursor filed for divorce.',
+  'The fake you has your job now.',
+  'You got out-clicked by yourself.'
+];
+let overLine = overLines[0];
+let overTimer = 0;
+
+// Fake desktop background: drifting windows + folders
+let bgWins = [];
+for (let i=0;i<5;i++) bgWins.push({x:R(0,W-140), y:R(60,H-120), w:R(90,150), h:R(60,100), vx:R(-6,6), vy:R(-4,4), hue:R(200,320), face:['😐','😴','🤨','😑','🙂'][i]});
+let bgFolders = [];
+for (let i=0;i<6;i++) bgFolders.push({x:R(20,W-40), y:R(80,H-60), vx:R(-8,8), vy:R(-5,5), ph:R(0,TAU)});
+
+function rankTitle(s){
+  if (s >= 800) return 'SUPREME CURSOR';
+  if (s >= 500) return 'CLICKBAIT SURVIVOR';
+  if (s >= 300) return 'POINTER PROFESSIONAL';
+  if (s >= 150) return 'CURSOR WRANGLER';
+  return 'CERTIFIED CLICKER';
+}
+
+function spawnCoin(){
+  coins.push({x:R(40,W-40), y:R(90,H-60), r:16, born:elapsed, life:4.5, ph:R(0,TAU)});
+}
+function spawnFake(){
+  const ang = R(0,TAU);
+  fakes.push({x:R(60,W-60), y:R(110,H-80), vx:0, vy:0, ang, spd:R(55,85),
+    face:'😠', mode:'wander', modeT:R(1,2.5), lungeT:R(4,9), lx:0, ly:0, scale:1, laugh:0});
+}
+function spawnGold(){
+  gold = {x:R(60,W-60), y:R(120,H-100), vx:0, vy:0, ph:0, life:6};
+  popup('GOLD!', gold.x, gold.y - 30, '#ffd700');
+  sGold();
+}
+function popup(txt, x, y, color){
+  popups.push({txt, x, y, color: color||'#fff', life:1.1, max:1.1});
+}
+function burst(x, y, color, n){
+  for (let i=0;i<(n||12);i++){
+    const a = R(0,TAU), sp = R(60,220);
+    parts.push({x, y, vx:Math.cos(a)*sp, vy:Math.sin(a)*sp, r:R(2,5), color, life:R(.4,.9), max:.9});
+  }
+}
+function confetti(x, y){
+  const cols = ['#ffd700','#ff5da2','#35e0ff','#7CFC00','#ff8c42'];
+  for (let i=0;i<26;i++){
+    const a = R(0,TAU), sp = R(80,280);
+    parts.push({x, y, vx:Math.cos(a)*sp, vy:Math.sin(a)*sp-60, r:R(3,6), color:cols[i%5], life:R(.6,1.2), max:1.2});
+  }
+}
+
+function reset(){
+  score = 0; combo = 0; bestCombo = 0; bites = 0; timeLeft = 60; elapsed = 0;
+  coins = []; fakes = []; parts = []; popups = []; sparkles = [];
+  gold = null; trail = [];
+  mirrorOn = false; stealOn = false; swapFlash = 0;
+  coinTimer = 0; goldTimer = 14; fakeTimer = 0; lungeTimer = 0;
+  shake = 0; deadFace = 0; stealWarned = false; mirrorWarned = false;
+  for (let i=0;i<3;i++) spawnFake();
+  for (let i=0;i<3;i++) spawnCoin();
+}
+
+function startGame(){
+  reset();
+  state = 'play';
+  sStart();
+}
+
+// --- cursor drawing: arrow with a face ---
+function drawCursorArrow(x, y, size, body, outline, face, rot, alpha){
+  ctx.save();
+  ctx.globalAlpha = alpha == null ? 1 : alpha;
+  ctx.translate(x, y);
+  ctx.rotate(rot || 0);
+  ctx.scale(size/28, size/28);
+  ctx.beginPath();
+  ctx.moveTo(0,-14); ctx.lineTo(10,10); ctx.lineTo(3,10); ctx.lineTo(6,18);
+  ctx.lineTo(1,19); ctx.lineTo(-2,11); ctx.lineTo(-9,11); ctx.closePath();
+  ctx.fillStyle = body; ctx.strokeStyle = outline; ctx.lineWidth = 2;
+  ctx.fill(); ctx.stroke();
+  ctx.font = '11px system-ui'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+  ctx.fillText(face, -1, -2);
+  ctx.restore();
+}
+
+function update(dt){
+  if (state !== 'play') return;
+  elapsed += dt;
+  timeLeft -= dt;
+  if (swapFlash > 0) swapFlash -= dt;
+  if (deadFace > 0) deadFace -= dt;
+  if (shake > 0) shake = Math.max(0, shake - dt*30);
+
+  // background drift
+  for (const w of bgWins){ w.x += w.vx*dt; w.y += w.vy*dt; if (w.x<0||w.x>W-w.w) w.vx*=-1; if (w.y<70||w.y>H-w.h) w.vy*=-1; }
+  for (const f of bgFolders){ f.x += f.vx*dt; f.y += f.vy*dt; f.ph += dt*2; if (f.x<10||f.x>W-30) f.vx*=-1; if (f.y<80||f.y>H-40) f.vy*=-1; }
+
+  // difficulty ramp
+  if (elapsed >= 12 && fakeTimer <= 0 && fakes.length < 5){ spawnFake(); fakeTimer = 12; popup('MORE FAKES!', W/2, 200, '#ff5da2'); }
+  if (elapsed >= 25 && !mirrorOn){ mirrorOn = true; popup('MIRROR!', W/2, 200, '#b06bff'); sGiggle(); }
+  if (elapsed >= 40 && !stealOn){ stealOn = true; popup('THEY STEAL NOW!', W/2, 200, '#ff5da2'); sWarn(); }
+  if (fakeTimer > 0) fakeTimer -= dt;
+
+  // SWAP event every ~14s after 12s
+  if (elapsed >= 12 && Math.floor(elapsed) % 14 === 0 && elapsed - Math.floor(elapsed) < dt){
+    doSwap();
+  }
+  // coins
+  coinTimer -= dt;
+  if (coinTimer <= 0){ spawnCoin(); coinTimer = R(.7,1.1); }
+  for (let i=coins.length-1;i>=0;i--){
+    const c = coins[i];
+    if (elapsed - c.born > c.life){ coins.splice(i,1); continue; }
+    // fakes steal coins after 40s
+    if (stealOn){
+      for (const f of fakes){
+        if (dist(f.x,f.y,c.x,c.y) < 26){
+          coins.splice(i,1); burst(c.x,c.y,'#ff5da2',8);
+          popup('STOLEN!', c.x, c.y-20, '#ff5da2'); sSteal();
+          break;
+        }
+      }
+    }
+  }
+  if (coins.length > 7) coins.shift();
+
+  // golden cursor spawn
+  goldTimer -= dt;
+  if (goldTimer <= 0 && !gold){ spawnGold(); goldTimer = R(16,22); }
+  if (gold){
+    gold.life -= dt; gold.ph += dt*6;
+    const dx = gold.x - pointer.x, dy = gold.y - pointer.y;
+    const d = Math.hypot(dx,dy) || 1;
+    if (d < 110){ gold.vx += dx/d*260*dt; gold.vy += dy/d*260*dt; }
+    gold.vx *= .92; gold.vy *= .92;
+    gold.x += gold.vx*dt; gold.y += gold.vy*dt;
+    gold.x = Math.max(20, Math.min(W-20, gold.x));
+    gold.y = Math.max(90, Math.min(H-20, gold.y));
+    if (Math.random() < .3) sparkles.push({x:gold.x+R(-14,14), y:gold.y+R(-14,14), life:.5, max:.5});
+    if (gold.life <= 0){ popup('ESCAPED!', gold.x, gold.y-26, '#ffd700'); gold = null; }
+  }
+
+  // mirror cursor trail
+  trail.push({x:pointer.x, y:pointer.y, t:elapsed});
+  while (trail.length && elapsed - trail[0].t > .35) trail.shift();
+
+  // fakes AI
+  for (const f of fakes){
+    f.modeT -= dt;
+    if (f.laugh > 0) f.laugh -= dt;
+    if (f.mode === 'telegraph'){
+      f.scale = 1 + Math.sin(elapsed*40)*.12;
+      if (f.modeT <= 0){
+        f.mode = 'lunge'; f.modeT = .45;
+        const a = Math.atan2(pointer.y - f.y, pointer.x - f.x);
+        f.vx = Math.cos(a)*520; f.vy = Math.sin(a)*520;
+        f.lx = pointer.x; f.ly = pointer.y; // snapshot: lunge at where you WERE
+      }
+    } else if (f.mode === 'lunge'){
+      f.x += f.vx*dt; f.y += f.vy*dt;
+      if (dist(f.x,f.y,pointer.x,pointer.y) < 26 && deadFace <= 0){
+        // nibble!
+        score = Math.max(0, score - 20); combo = 0; bites++;
+        deadFace = 1.2; shake = 10; sBite();
+        popup('NIBBLED!', pointer.x, pointer.y - 34, '#ff5da2');
+        burst(pointer.x, pointer.y, '#ff5da2', 10);
+        f.mode = 'wander'; f.modeT = R(1,2);
+      } else if (dist(f.x,f.y,f.lx,f.ly) < 30 || f.modeT <= 0){
+        // missed the lunge: near-miss!
+        const d = dist(f.x,f.y,pointer.x,pointer.y);
+        if (d < 90 && d >= 26){ score += 5; popup('SO CLOSE!', pointer.x, pointer.y - 34, '#35e0ff'); sNear(); }
+        f.mode = 'wander'; f.modeT = R(1,2.5);
+      }
+    } else {
+      // wander: drift + dodge player cursor + chase coins (after 40s)
+      f.ang += R(-1.6,1.6)*dt;
+      let tx = Math.cos(f.ang), ty = Math.sin(f.ang);
+      const pd = dist(f.x,f.y,pointer.x,pointer.y);
+      if (pd < 70){ tx += (f.x-pointer.x)/pd*1.6; ty += (f.y-pointer.y)/pd*1.6; }
+      if (stealOn && coins.length){
+        let best2 = null, bd = 1e9;
+        for (const c of coins){ const dd = dist(f.x,f.y,c.x,c.y); if (dd < bd){ bd = dd; best2 = c; } }
+        if (best2 && bd < 200){ tx += (best2.x-f.x)/bd*.8; ty += (best2.y-f.y)/bd*.8; }
+      }
+      const tl = Math.hypot(tx,ty) || 1;
+      f.vx = tx/tl*f.spd; f.vy = ty/tl*f.spd;
+      f.x += f.vx*dt; f.y += f.vy*dt;
+      f.scale = 1;
+      f.lungeT -= dt;
+      if (f.lungeT <= 0 && pd < 240){
+        f.mode = 'telegraph'; f.modeT = .45; f.face = '😡'; sWarn();
+      }
+    }
+    if (f.mode !== 'telegraph' && f.laugh <= 0) f.face = '😠';
+    f.x = Math.max(16, Math.min(W-16, f.x));
+    f.y = Math.max(90, Math.min(H-16, f.y));
+  }
+
+  // particles / popups / sparkles
+  for (let i=parts.length-1;i>=0;i--){ const p = parts[i]; p.life -= dt; p.x += p.vx*dt; p.y += p.vy*dt; p.vy += 160*dt; if (p.life<=0) parts.splice(i,1); }
+  for (let i=popups.length-1;i>=0;i--){ const p = popups[i]; p.life -= dt; p.y -= 34*dt; if (p.life<=0) popups.splice(i,1); }
+  for (let i=sparkles.length-1;i>=0;i--){ sparkles[i].life -= dt; if (sparkles[i].life<=0) sparkles.splice(i,1); }
+
+  if (timeLeft <= 0) gameOver();
+}
+
+function doSwap(){
+  if (!fakes.length) return;
+  const f = fakes[Math.floor(Math.random()*fakes.length)];
+  const tx = pointer.x, ty = pointer.y;
+  pointer.x = f.x; pointer.y = f.y;
+  f.x = tx; f.y = ty;
+  swapFlash = .6;
+  popup('SWAP!', W/2, 200, '#fff');
+  sSwap();
+  burst(pointer.x, pointer.y, '#fff', 14);
+}
+
+function gameOver(){
+  state = 'over';
+  overLine = overLines[Math.floor(Math.random()*overLines.length)];
+  overTimer = 0;
+  if (score > best){ best = score; localStorage.setItem(HS_KEY, String(best)); }
+  if (score >= 1000 && !rainbow){ rainbow = true; localStorage.setItem(RB_KEY, '1'); popup('RAINBOW UNLOCKED!', W/2, 300, '#ffd700'); }
+  sOver();
+}
+
+function clickAt(x, y){
+  if (state === 'title'){ startGame(); return; }
+  if (state === 'over'){
+    if (overTimer > .6) startGame();
+    return;
+  }
+  if (state !== 'play') return;
+  // golden cursor first (small, fast)
+  if (gold && dist(x,y,gold.x,gold.y) < 30){
+    score += 50; combo++;
+    confetti(gold.x, gold.y);
+    popup('+50 GOLD!', gold.x, gold.y-26, '#ffd700');
+    sGold(); gold = null; goldTimer = R(16,22);
+    return;
+  }
+  // coins
+  for (let i=coins.length-1;i>=0;i--){
+    const c = coins[i];
+    if (dist(x,y,c.x,c.y) < c.r + 12){
+      const pts = 10 * Math.min(combo+1, 8);
+      score += pts; combo++; bestCombo = Math.max(bestCombo, combo);
+      burst(c.x, c.y, '#ffd700', 10);
+      popup(combo >= 3 ? 'x'+Math.min(combo,8)+' COMBO!' : '+'+pts, c.x, c.y-24, '#ffd700');
+      sCoin();
+      coins.splice(i,1);
+      return;
+    }
+  }
+  // mirror cursor: harmless giggle
+  if (mirrorOn && trail.length){
+    const m = trail[0];
+    if (dist(x,y,m.x,m.y) < 26){ popup('HEHE', m.x, m.y-26, '#b06bff'); sGiggle(); return; }
+  }
+  // fake cursor: BITTEN
+  for (const f of fakes){
+    if (dist(x,y,f.x,f.y) < 30){
+      score = Math.max(0, score - 15); combo = 0; bites++;
+      deadFace = 1.2; shake = 12; sBite();
+      f.laugh = 1.4; f.face = '😂';
+      popup('OUCH!', f.x, f.y-30, '#ff5da2');
+      burst(f.x, f.y, '#ff5da2', 12);
+      return;
+    }
+  }
+  // empty desktop click: tiny puff, no penalty
+  parts.push({x, y, vx:0, vy:-20, r:3, color:'#888', life:.3, max:.3});
+}
+
+function draw(){
+  ctx.save();
+  if (shake > 0) ctx.translate(R(-shake,shake)*.5, R(-shake,shake)*.5);
+
+  // fake desktop background
+  const g = ctx.createLinearGradient(0,0,0,H);
+  g.addColorStop(0,'#1a2a5e'); g.addColorStop(1,'#0d0b1e');
+  ctx.fillStyle = g; ctx.fillRect(-20,-20,W+40,H+40);
+  for (const w of bgWins){
+    ctx.fillStyle = 'rgba(255,255,255,.08)';
+    ctx.strokeStyle = 'rgba(255,255,255,.18)'; ctx.lineWidth = 2;
+    ctx.beginPath(); ctx.roundRect(w.x, w.y, w.w, w.h, 8); ctx.fill(); ctx.stroke();
+    ctx.fillStyle = 'rgba(255,255,255,.14)';
+    ctx.fillRect(w.x, w.y, w.w, 18);
+    ctx.font = '13px system-ui'; ctx.textAlign = 'left'; ctx.textBaseline = 'middle';
+    ctx.fillStyle = '#fff';
+    ctx.fillText(w.face, w.x+6, w.y+26);
+    ctx.fillStyle = 'rgba(255,255,255,.35)';
+    ctx.fillRect(w.x+10, w.y+44, w.w-20, 5);
+    ctx.fillRect(w.x+10, w.y+56, w.w-40, 5);
+  }
+  for (const f of bgFolders){
+    ctx.font = '22px system-ui'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+    ctx.fillText('📁', f.x, f.y + Math.sin(f.ph)*3);
+  }
+
+  if (state === 'title'){
+    ctx.fillStyle = 'rgba(13,11,30,.55)'; ctx.fillRect(0,0,W,H);
+    ctx.textAlign = 'center';
+    ctx.fillStyle = '#fff';
+    ctx.font = '900 44px system-ui';
+    ctx.fillText('CURSOR', W/2, 190);
+    ctx.fillText('IDENTITY', W/2, 240);
+    ctx.fillText('CRISIS', W/2, 290);
+    drawCursorArrow(W/2, 350, 64, '#fff', '#111', '😀', -.3, 1);
+    drawCursorArrow(W/2-110, 380, 44, '#ff4757', '#7a1020', '😠', .4, 1);
+    drawCursorArrow(W/2+110, 380, 44, '#ff4757', '#7a1020', '😠', -.5, 1);
+    ctx.font = '700 20px system-ui'; ctx.fillStyle = '#ffd700';
+    ctx.fillText('You are the cursor. They are not.', W/2, 450);
+    ctx.font = '600 16px system-ui'; ctx.fillStyle = '#bfe9ff';
+    ctx.fillText('Tap gold coins. Never tap red cursors.', W/2, 482);
+    ctx.fillText('They bite. They swap. They steal.', W/2, 508);
+    ctx.font = '900 22px system-ui'; ctx.fillStyle = '#35e0ff';
+    ctx.fillText('▶ TAP TO PLAY', W/2, 570);
+    ctx.font = '600 14px system-ui'; ctx.fillStyle = '#8fa3c8';
+    ctx.fillText('Best: ' + best + (rainbow ? '  •  🌈 cursor unlocked' : ''), W/2, 610);
+    ctx.restore();
+    return;
+  }
+
+  // coins (ONLY glowing thing)
+  for (const c of coins){
+    const age = elapsed - c.born;
+    const fade = age > c.life - .8 ? (c.life - age)/.8 : 1;
+    const pulse = 1 + Math.sin(elapsed*6 + c.ph)*.12;
+    ctx.save();
+    ctx.globalAlpha = fade;
+    ctx.shadowColor = '#ffd700'; ctx.shadowBlur = 22;
+    ctx.fillStyle = '#ffd700';
+    ctx.beginPath(); ctx.arc(c.x, c.y, c.r*pulse, 0, TAU); ctx.fill();
+    ctx.shadowBlur = 0;
+    ctx.fillStyle = '#ffedb0';
+    ctx.beginPath(); ctx.arc(c.x, c.y, c.r*.62*pulse, 0, TAU); ctx.fill();
+    ctx.font = 'bold 15px system-ui'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+    ctx.fillStyle = '#8a6d00';
+    ctx.fillText('$', c.x, c.y+1);
+    ctx.restore();
+  }
+
+  // golden fleeing cursor
+  if (gold){
+    const blink = .75 + Math.sin(gold.ph)*.25;
+    drawCursorArrow(gold.x, gold.y, 40, '#ffd700', '#8a6d00', '😋', Math.sin(gold.ph*.5)*.3, blink);
+    ctx.save();
+    ctx.shadowColor = '#ffd700'; ctx.shadowBlur = 16;
+    ctx.strokeStyle = 'rgba(255,215,0,.8)'; ctx.lineWidth = 2;
+    ctx.beginPath(); ctx.arc(gold.x, gold.y, 26+Math.sin(gold.ph)*3, 0, TAU); ctx.stroke();
+    ctx.restore();
+  }
+  for (const s of sparkles){
+    ctx.save(); ctx.globalAlpha = s.life/s.max;
+    ctx.fillStyle = '#ffd700'; ctx.font = '12px system-ui'; ctx.textAlign = 'center';
+    ctx.fillText('✦', s.x, s.y); ctx.restore();
+  }
+
+  // fake cursors (angry red, NEVER glow)
+  for (const f of fakes){
+    const grey = swapFlash > 0;
+    const body = grey ? '#9aa3b2' : '#ff4757';
+    const out  = grey ? '#444' : '#7a1020';
+    const face = grey ? '?' : (f.laugh > 0 ? '😂' : f.face);
+    drawCursorArrow(f.x, f.y, 34*f.scale, body, out, face, Math.sin(elapsed*3 + f.x)*.15, 1);
+    if (f.mode === 'telegraph'){
+      ctx.save();
+      ctx.strokeStyle = '#ff4757'; ctx.lineWidth = 3;
+      ctx.beginPath(); ctx.arc(f.x, f.y, 26+Math.sin(elapsed*30)*4, 0, TAU); ctx.stroke();
+      ctx.restore();
+    }
+  }
+
+  // mirror cursor (purple decoy)
+  if (mirrorOn && trail.length){
+    const m = trail[0];
+    drawCursorArrow(m.x, m.y, 34, '#b06bff', '#4a1d80', '😏', 0, .85);
+  }
+
+  // player cursor (white, always on top)
+  if (state === 'play' || state === 'pause'){
+    if (swapFlash > 0){
+      drawCursorArrow(pointer.x, pointer.y, 34, '#9aa3b2', '#444', '?', 0, 1);
+    } else {
+      drawCursorArrow(pointer.x, pointer.y, 34, rainbow ? '#ff8c42' : '#ffffff', '#111',
+        deadFace > 0 ? '😵' : '😀', 0, 1);
+      if (rainbow){
+        ctx.save();
+        ctx.globalAlpha = .5;
+        ctx.strokeStyle = `hsl(${(elapsed*180)%360},100%,60%)`; ctx.lineWidth = 3;
+        ctx.beginPath(); ctx.arc(pointer.x, pointer.y, 24, 0, TAU); ctx.stroke();
+        ctx.restore();
+      }
+    }
+  }
+
+  // particles
+  for (const p of parts){
+    ctx.save(); ctx.globalAlpha = Math.max(0, p.life/p.max);
+    ctx.fillStyle = p.color;
+    ctx.beginPath(); ctx.arc(p.x, p.y, p.r, 0, TAU); ctx.fill();
+    ctx.restore();
+  }
+
+  // popups
+  ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+  for (const p of popups){
+    ctx.save(); ctx.globalAlpha = Math.max(0, p.life/p.max);
+    ctx.font = '900 22px system-ui';
+    ctx.lineWidth = 5; ctx.strokeStyle = 'rgba(0,0,0,.7)';
+    ctx.strokeText(p.txt, p.x, p.y);
+    ctx.fillStyle = p.color;
+    ctx.fillText(p.txt, p.x, p.y);
+    ctx.restore();
+  }
+
+  // HUD
+  ctx.fillStyle = 'rgba(13,11,30,.72)';
+  ctx.fillRect(0, 0, W, 58);
+  ctx.textAlign = 'left'; ctx.textBaseline = 'middle';
+  ctx.fillStyle = '#ffd700'; ctx.font = '900 26px system-ui';
+  ctx.fillText('★ ' + score, 14, 30);
+  ctx.fillStyle = combo >= 3 ? '#ff5da2' : '#bfe9ff';
+  ctx.font = '900 18px system-ui';
+  ctx.fillText(combo >= 2 ? 'x' + Math.min(combo,8) + ' COMBO' : '', 150, 30);
+  ctx.textAlign = 'right'; ctx.fillStyle = '#fff'; ctx.font = '900 26px system-ui';
+  ctx.fillText(Math.max(0, Math.ceil(timeLeft)) + 's', W-14, 30);
+  if (swapFlash > 0){
+    ctx.textAlign = 'center'; ctx.font = '900 30px system-ui';
+    ctx.fillStyle = '#fff';
+    ctx.fillText('WHICH ONE IS YOU?', W/2, 110);
+  }
+
+  if (state === 'pause'){
+    ctx.fillStyle = 'rgba(13,11,30,.6)'; ctx.fillRect(0,0,W,H);
+    ctx.textAlign = 'center'; ctx.fillStyle = '#fff'; ctx.font = '900 34px system-ui';
+    ctx.fillText('PAUSED', W/2, H/2);
+  }
+
+  if (state === 'over'){
+    overTimer += 1/60;
+    ctx.fillStyle = 'rgba(13,11,30,.72)'; ctx.fillRect(0,0,W,H);
+    ctx.textAlign = 'center';
+    ctx.fillStyle = '#ff5da2'; ctx.font = '900 34px system-ui';
+    ctx.fillText('BITTEN OUT!', W/2, 220);
+    ctx.fillStyle = '#fff'; ctx.font = '700 19px system-ui';
+    wrapText(overLine, W/2, 268, 400, 26);
+    ctx.fillStyle = '#ffd700'; ctx.font = '900 44px system-ui';
+    ctx.fillText(score + ' PTS', W/2, 340);
+    ctx.fillStyle = '#bfe9ff'; ctx.font = '700 18px system-ui';
+    ctx.fillText('RANK: ' + rankTitle(score), W/2, 386);
+    ctx.fillText('Best combo x' + Math.min(bestCombo,8) + '  •  Bitten ' + bites + 'x  •  Best ' + best, W/2, 416);
+    if (rainbow) { ctx.fillStyle = '#ffd700'; ctx.fillText('🌈 Rainbow cursor unlocked!', W/2, 446); }
+    ctx.fillStyle = '#35e0ff'; ctx.font = '900 22px system-ui';
+    ctx.fillText('▶ TAP TO PLAY AGAIN', W/2, 510);
+    ctx.fillStyle = '#8fa3c8'; ctx.font = '600 15px system-ui';
+    ctx.fillText('📋 TAP HERE TO COPY RESULT', W/2, 556);
+    ctx.fillText('(tap anywhere else restarts)', W/2, 580);
+  }
+  ctx.restore();
+}
+
+function wrapText(text, x, y, maxW, lh){
+  const words = text.split(' ');
+  let line = '', yy = y;
+  for (const w of words){
+    const t = line ? line + ' ' + w : w;
+    if (ctx.measureText(t).width > maxW && line){ ctx.fillText(line, x, yy); line = w; yy += lh; }
+    else line = t;
+  }
+  ctx.fillText(line, x, yy);
+}
+
+function copyResult(){
+  const txt = 'I scored ' + score + ' as a cursor and got bitten ' + bites + 'x in CURSOR IDENTITY CRISIS. Which one is you? ' + GAME_URL;
+  if (navigator.clipboard && navigator.clipboard.writeText){
+    navigator.clipboard.writeText(txt).then(()=>popup('COPIED!', W/2, 480, '#35e0ff')).catch(()=>{});
+  }
+}
+
+// input
+function toGame(e){
+  const r = cv.getBoundingClientRect();
+  const cx = (e.clientX - r.left) * (W / r.width);
+  const cy = (e.clientY - r.top) * (H / r.height);
+  return {x: Math.max(0, Math.min(W, cx)), y: Math.max(0, Math.min(H, cy))};
+}
+cv.addEventListener('pointermove', e => {
+  const p = toGame(e);
+  pointer.x = p.x; pointer.y = p.y; pointer.seen = true;
+});
+cv.addEventListener('pointerdown', e => {
+  e.preventDefault();
+  const p = toGame(e);
+  pointer.x = p.x; pointer.y = p.y; pointer.seen = true;
+  if (state === 'over' && overTimer > .6 && p.y > 530 && p.y < 580){ copyResult(); return; }
+  clickAt(p.x, p.y);
+});
+window.addEventListener('keydown', e => {
+  if (e.key === ' ' || e.key === 'Enter'){
+    e.preventDefault();
+    if (state === 'title' || state === 'over') startGame();
+  }
+  if (e.key === 'p' || e.key === 'P' || e.key === 'Escape'){
+    if (state === 'play') state = 'pause';
+    else if (state === 'pause') state = 'play';
+  }
+  // arrow keys nudge the cursor (keyboard play)
+  const step = 26;
+  if (state === 'play'){
+    if (e.key === 'ArrowLeft') pointer.x = Math.max(0, pointer.x - step);
+    if (e.key === 'ArrowRight') pointer.x = Math.min(W, pointer.x + step);
+    if (e.key === 'ArrowUp') pointer.y = Math.max(58, pointer.y - step);
+    if (e.key === 'ArrowDown') pointer.y = Math.min(H, pointer.y + step);
+  }
+});
+document.getElementById('pauseBtn').addEventListener('click', () => {
+  if (state === 'play') state = 'pause';
+  else if (state === 'pause') state = 'play';
+});
+document.getElementById('muteBtn').addEventListener('click', function(){
+  muted = !muted; this.textContent = muted ? '✕' : '♪';
+});
+
+let last = performance.now();
+function loop(now){
+  const dt = Math.min(.05, (now - last)/1000);
+  last = now;
+  update(dt);
+  draw();
+  requestAnimationFrame(loop);
+}
+requestAnimationFrame(loop);
+</script>
+</body>
+</html>
