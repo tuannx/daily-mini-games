@@ -330,5 +330,14 @@
   "mechanic": "Cursor-chaos clicker (click coins, never click fake cursors; SWAP body-swap + mirror decoy + coin-stealing fakes)",
   "tagline": "You are the cursor. They are not. Click gold, dodge the red fakes — they bite, swap, and steal.",
   "title": "CURSOR IDENTITY CRISIS"
+ },
+ {
+  "date": "2026-11-07",
+  "day": 38,
+  "emoji": "🦝",
+  "file": "games/dont-drop-the-brainrot.html",
+  "mechanic": "Juggle-the-weirdos defense (tap to bounce brainrot creatures; raccoon thief snatches drops, jumps at 30s, bombs + wind at 15s)",
+  "tagline": "Juggle the weirdos. The raccoon below is hungry. Three drops and they're his.",
+  "title": "DON'T DROP THE BRAINROT"
  }
 ]

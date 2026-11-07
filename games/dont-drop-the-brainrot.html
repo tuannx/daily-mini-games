@@ -1,0 +1,671 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
+<title>DON'T DROP THE BRAINROT — Juggle the weirdos. He's waiting.</title>
+<style>
+  *{margin:0;padding:0;box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+  html,body{height:100%;background:#0d0b1e;overflow:hidden}
+  body{display:flex;align-items:center;justify-content:center;font-family:system-ui,'Arial Black',Arial,sans-serif;user-select:none;-webkit-user-select:none;touch-action:none}
+  #wrap{position:relative;width:100%;max-width:480px;height:100%;max-height:860px}
+  canvas{display:block;width:100%;height:100%;background:#141033;cursor:pointer}
+  .btn{position:absolute;top:8px;width:38px;height:38px;border:2px solid #35e0ff;border-radius:50%;background:rgba(13,11,30,.7);color:#fff;font-size:17px;line-height:34px;text-align:center;cursor:pointer;z-index:5}
+  #pauseBtn{right:8px} #muteBtn{right:52px}
+</style>
+</head>
+<body>
+<div id="wrap">
+<canvas id="c" width="480" height="760"></canvas>
+<div class="btn" id="muteBtn">♪</div>
+<div class="btn" id="pauseBtn">II</div>
+</div>
+<script>
+'use strict';
+/* DON'T DROP THE BRAINROT — juggle absurd creatures, tap to bounce them.
+   A raccoon thief paces the floor below. Anything that touches the
+   floor is HIS. 3 drops = game over, he runs off wearing a crown.
+   Twist: 15s wind gusts + red ANGRY bomb creatures (tap = boom, they
+   scatter the others). 30s the raccoon starts JUMPING to snatch
+   creatures mid-air (telegraphed crouch + "!"). Golden creature = +50.
+   Glow = ONLY bounceable good creature. Red angry = bomb, never tap.
+   Raccoon = thief, never a collectible. Trend: "Steal a Brainrot"
+   (Roblox, 25M CCU, Nov 2026) + Italian Brainrot meme wave. */
+const cv = document.getElementById('c');
+const ctx = cv.getContext('2d');
+const W = 480, H = 760, FLOOR = 668;
+const GAME_URL = 'https://tuannx.github.io/daily-mini-games/games/dont-drop-the-brainrot.html';
+const HS_KEY = 'brainrot-highscore';
+const GLOVE_KEY = 'brainrot-golden-glove';
+
+let AC = null, muted = false;
+function beep(f, d, type, vol, slide){
+  if (muted) return;
+  try {
+    AC = AC || new (window.AudioContext || window.webkitAudioContext)();
+    const o = AC.createOscillator(), g = AC.createGain();
+    o.type = type || 'sine'; o.frequency.value = f;
+    if (slide) o.frequency.exponentialRampToValueAtTime(slide, AC.currentTime + d);
+    g.gain.setValueAtTime(vol || 0.12, AC.currentTime);
+    g.gain.exponentialRampToValueAtTime(0.001, AC.currentTime + d);
+    o.connect(g); g.connect(AC.destination);
+    o.start(); o.stop(AC.currentTime + d);
+  } catch(e){}
+}
+const sBounce = ()=>{ beep(520,.09,'sine',.11,880); };
+const sDrop   = ()=>{ [300,220,140].forEach((f,i)=>setTimeout(()=>beep(f,.16,'triangle',.12),i*90)); };
+const sBoom   = ()=>{ beep(160,.4,'sawtooth',.16,40); };
+const sGold   = ()=>{ [1318,1568,2093].forEach((f,i)=>setTimeout(()=>beep(f,.1,'sine',.1),i*50)); };
+const sNear   = ()=>{ beep(1200,.08,'sine',.08,1600); };
+const sSnatch = ()=>{ beep(500,.18,'square',.1,900); };
+const sWarn   = ()=>{ beep(880,.15,'square',.09,660); };
+const sOver   = ()=>{ [440,330,220,160].forEach((f,i)=>setTimeout(()=>beep(f,.18,'triangle',.11),i*140)); };
+const sStart  = ()=>{ [523,659,784].forEach((f,i)=>setTimeout(()=>beep(f,.1,'sine',.10),i*70)); };
+const sGiggle = ()=>{ [700,900,700].forEach((f,i)=>setTimeout(()=>beep(f,.07,'triangle',.07),i*60)); };
+
+const R = (a,b)=>a+Math.random()*(b-a);
+const TAU = Math.PI*2;
+function dist(ax,ay,bx,by){ return Math.hypot(ax-bx, ay-by); }
+
+// --- the weirdos: each a distinct hybrid with face + squash/stretch ---
+const KINDS = [
+  {name:'SHARK',   body:'#4aa8ff', belly:'#d6ecff', emoji:'🦈', acc:'👟', face:'😀'},
+  {name:'CROC',    body:'#7ddc4a', belly:'#e8ffd2', emoji:'🐊', acc:'🍌', face:'😁'},
+  {name:'PIGEON',  body:'#b8b8d0', belly:'#fff',    emoji:'🐦', acc:'🍞', face:'🙂'},
+  {name:'CAT',     body:'#ff9f43', belly:'#ffe8c9', emoji:'🐱', acc:'☕', face:'😺'},
+  {name:'FROG',    body:'#58d68d', belly:'#e2ffe9', emoji:'🐸', acc:'🥁', face:'😆'},
+];
+function makeCreature(golden){
+  const k = KINDS[Math.floor(Math.random()*KINDS.length)];
+  return {
+    kind:k, golden:!!golden, x:R(70,W-70), y:R(120,240),
+    vx:R(-30,30), vy:R(-40,40), r: golden?30:34,
+    rot:R(-.3,.3), vr:R(-.6,.6), squash:0, spin:0,
+    face:k.face, scared:false, nearWarned:false, born:elapsed
+  };
+}
+function makeBomb(){
+  return {x:R(70,W-70), y:110, vx:R(-20,20), vy:0, r:30,
+    rot:0, vr:R(-1,1), fuse:R(0,TAU), born:elapsed, scared:false};
+}
+
+let state = 'title'; // title | play | pause | over
+let score = 0, combo = 0, bestCombo = 0, drops = 0, timeLeft = 60, elapsed = 0;
+let best = +(localStorage.getItem(HS_KEY) || 0);
+let glove = localStorage.getItem(GLOVE_KEY) === '1';
+let creatures = [], bombs = [], parts = [], popups = [], sparkles = [], leaves = [];
+let gold = null;
+let raccoon = {x:W/2, tx:W/2, dir:1, mode:'pace', modeT:2, jumpVy:0, y:FLOOR, caught:null, runT:0, face:'😏'};
+let spawnTimer = 0, goldTimer = 16, bombTimer = 15, windTimer = 20, jumpTimer = 30;
+let wind = 0, windT = 0, shake = 0, overTimer = 0;
+let windOn = false, bombOn = false, jumpOn = false;
+let overLines = [
+  'The raccoon has your shark. He named it Kevin.',
+  'Three drops. He wears the crown now.',
+  'Your brainrot lives in a trash can now.',
+  'The raccoon filed for custody. He won.',
+  'He juggles better than you. With YOUR shark.'
+];
+let overLine = overLines[0];
+
+// background: drifting clouds + floating dust
+let clouds = [];
+for (let i=0;i<5;i++) clouds.push({x:R(0,W), y:R(70,300), s:R(.6,1.3), vx:R(6,16), face:['😴','😐','🙂','😮','😌'][i]});
+
+function rankTitle(s){
+  if (s >= 600) return 'BRAINROT BABYSITTER';
+  if (s >= 400) return 'CERTIFIED JUGGLER';
+  if (s >= 250) return 'WEIRDO WRANGLER';
+  if (s >= 120) return 'RACCOON SNACK';
+  return 'DROPOUT';
+}
+function popup(txt, x, y, color){ popups.push({txt, x, y, color: color||'#fff', life:1.1, max:1.1}); }
+function burst(x, y, color, n){
+  for (let i=0;i<(n||12);i++){
+    const a = R(0,TAU), sp = R(60,220);
+    parts.push({x, y, vx:Math.cos(a)*sp, vy:Math.sin(a)*sp, r:R(2,5), color, life:R(.4,.9), max:.9});
+  }
+}
+function confetti(x, y){
+  const cols = ['#ffd700','#ff5da2','#35e0ff','#7CFC00','#ff8c42'];
+  for (let i=0;i<26;i++){
+    const a = R(0,TAU), sp = R(80,280);
+    parts.push({x, y, vx:Math.cos(a)*sp, vy:Math.sin(a)*sp-60, r:R(3,6), color:cols[i%5], life:R(.6,1.2), max:1.2});
+  }
+}
+
+function reset(){
+  score = 0; combo = 0; bestCombo = 0; drops = 0; timeLeft = 60; elapsed = 0;
+  creatures = []; bombs = []; parts = []; popups = []; sparkles = []; leaves = [];
+  gold = null;
+  raccoon = {x:W/2, tx:W/2, dir:1, mode:'pace', modeT:2, jumpVy:0, y:FLOOR, caught:null, runT:0, face:'😏'};
+  spawnTimer = 0; goldTimer = 16; bombTimer = 15; windTimer = 20; jumpTimer = 30;
+  wind = 0; windT = 0; shake = 0; overTimer = 0;
+  windOn = false; bombOn = false; jumpOn = false;
+  creatures.push(makeCreature(false));
+  creatures.push(makeCreature(false));
+}
+function startGame(){ reset(); state = 'play'; sStart(); }
+
+function loseOne(c, why){
+  drops++;
+  combo = 0;
+  shake = 12;
+  sDrop();
+  raccoon.mode = 'snatch'; raccoon.modeT = .9; raccoon.caught = c; raccoon.face = '😂';
+  popup(why === 'jump' ? 'SNATCHED!' : 'DROPPED!', c.x, Math.min(c.y, FLOOR-60), '#ff5da2');
+  burst(c.x, Math.min(c.y, FLOOR-20), '#ff5da2', 10);
+  if (drops >= 3) gameOver();
+}
+
+function gameOver(){
+  state = 'over';
+  overLine = overLines[Math.floor(Math.random()*overLines.length)];
+  overTimer = 0;
+  if (score > best){ best = score; localStorage.setItem(HS_KEY, String(best)); }
+  if (score >= 250 && !glove){ glove = true; localStorage.setItem(GLOVE_KEY, '1'); }
+  sOver();
+}
+
+function update(dt){
+  if (state !== 'play') return;
+  elapsed += dt;
+  timeLeft -= dt;
+  if (shake > 0) shake = Math.max(0, shake - dt*30);
+
+  for (const cl of clouds){ cl.x += cl.vx*dt; if (cl.x > W+70) cl.x = -70; }
+
+  // --- escalation schedule ---
+  if (elapsed >= 15 && !windOn){ windOn = true; popup('WIND!', W/2, 200, '#35e0ff'); sWarn(); }
+  if (elapsed >= 15 && !bombOn){ bombOn = true; popup('BOMBS NOW!', W/2, 240, '#ff4757'); sWarn(); }
+  if (elapsed >= 30 && !jumpOn){ jumpOn = true; popup('HE JUMPS NOW!', W/2, 200, '#ff5da2'); sWarn(); }
+  if (elapsed >= 45 && creatures.length < 5 && spawnTimer <= 0){ creatures.push(makeCreature(false)); spawnTimer = 8; popup('MORE WEIRDOS!', W/2, 200, '#ffd700'); }
+
+  // wind gusts
+  windTimer -= dt;
+  if (windTimer <= 0){ wind = R(-90,90); windT = R(1.6,2.6); windTimer = R(9,14);
+    if (windOn){ popup(wind > 0 ? 'WIND →' : '← WIND', W/2, 200, '#35e0ff');
+      for (let i=0;i<8;i++) leaves.push({x: wind>0? -10 : W+10, y:R(120,560), vx: wind*2.2, vy:R(10,40), rot:R(0,TAU), life:2.4}); } }
+  if (windT > 0) windT -= dt; else wind = 0;
+
+  // spawn more creatures over time (cap 4, 5 after 45s)
+  spawnTimer -= dt;
+  const cap = elapsed >= 45 ? 5 : (elapsed >= 20 ? 4 : 3);
+  if (spawnTimer <= 0 && creatures.length < cap){ creatures.push(makeCreature(false)); spawnTimer = R(7,11); }
+
+  // golden creature
+  goldTimer -= dt;
+  if (goldTimer <= 0 && !gold){ gold = makeCreature(true); goldTimer = R(16,22); popup('GOLD!', gold.x, gold.y-40, '#ffd700'); sGold(); }
+  if (gold){
+    if (Math.random() < .4) sparkles.push({x:gold.x+R(-20,20), y:gold.y+R(-20,20), life:.5, max:.5});
+  }
+
+  // bombs
+  bombTimer -= dt;
+  if (bombOn && bombTimer <= 0 && bombs.length < 1){ bombs.push(makeBomb()); bombTimer = R(11,16); }
+
+  const grav = 620 + elapsed*6;
+
+  // --- creatures physics ---
+  const all = gold ? creatures.concat([gold]) : creatures;
+  for (let i=creatures.length-1;i>=0;i--){
+    const c = creatures[i];
+    stepCreature(c, dt, grav);
+    if (c.y + c.r >= FLOOR){
+      creatures.splice(i,1);
+      loseOne(c, 'floor');
+    }
+  }
+  if (gold){
+    stepCreature(gold, dt, grav);
+    if (gold.y + gold.r >= FLOOR){ loseOne(gold, 'floor'); gold = null; }
+  }
+  function stepCreature(c, dt, grav){
+    c.vy += grav*dt;
+    c.vx += wind*dt*.6;
+    c.x += c.vx*dt; c.y += c.vy*dt;
+    c.rot += c.vr*dt;
+    if (c.squash > 0) c.squash -= dt*4;
+    if (c.spin > 0) c.spin -= dt*3;
+    if (c.x < c.r){ c.x = c.r; c.vx = Math.abs(c.vx)*.7; }
+    if (c.x > W-c.r){ c.x = W-c.r; c.vx = -Math.abs(c.vx)*.7; }
+    if (c.y < 70){ c.y = 70; c.vy = Math.abs(c.vy)*.5; }
+    // near-miss warning: close to floor, face goes scared
+    const gap = FLOOR - (c.y + c.r);
+    c.scared = gap < 90 && c.vy > 0;
+    c.face = c.scared ? '😱' : c.kind.face;
+    c.nearWarned = gap < 34 && c.vy > 0;
+  }
+
+  // --- bombs physics (fall, explode on floor harmlessly) ---
+  for (let i=bombs.length-1;i>=0;i--){
+    const b = bombs[i];
+    b.fuse += dt*8;
+    b.vy += grav*dt; b.x += b.vx*dt; b.y += b.vy*dt; b.rot += b.vr*dt;
+    if (b.x < b.r){ b.x = b.r; b.vx = Math.abs(b.vx)*.7; }
+    if (b.x > W-b.r){ b.x = W-b.r; b.vx = -Math.abs(b.vx)*.7; }
+    if (b.y + b.r >= FLOOR){
+      burst(b.x, FLOOR-10, '#ff4757', 14);
+      bombs.splice(i,1);
+      popup('PHEW!', b.x, FLOOR-50, '#bfe9ff');
+    }
+  }
+
+  // --- raccoon AI ---
+  const rc = raccoon;
+  if (rc.mode === 'snatch'){
+    rc.modeT -= dt;
+    if (rc.modeT <= 0){
+      // runs off screen with the stolen creature, then comes back empty-handed
+      rc.mode = 'runoff'; rc.modeT = .8; rc.runT = 0;
+    }
+  } else if (rc.mode === 'runoff'){
+    rc.runT += dt;
+    rc.x += (rc.dir)*260*dt;
+    if (rc.runT > .8){ rc.mode = 'pace'; rc.modeT = 1; rc.caught = null; rc.face = '😏'; rc.x = Math.max(40, Math.min(W-40, rc.x)); }
+  } else if (rc.mode === 'telegraph'){
+    rc.modeT -= dt;
+    if (rc.modeT <= 0){
+      // JUMP at the lowest creature
+      let tgt = null, low = -1;
+      for (const c of all){ if (c.y > low){ low = c.y; tgt = c; } }
+      if (tgt){
+        rc.mode = 'jump';
+        rc.jumpVy = -760;
+        rc.tx = tgt.x;
+        sSnatch();
+      } else { rc.mode = 'pace'; rc.modeT = 1; }
+    }
+  } else if (rc.mode === 'jump'){
+    rc.jumpVy += 900*dt;
+    rc.y += rc.jumpVy*dt;
+    rc.x += (rc.tx - rc.x)*dt*4;
+    // mid-air grab?
+    for (let i=creatures.length-1;i>=0;i--){
+      const c = creatures[i];
+      if (dist(rc.x, rc.y-20, c.x, c.y) < c.r + 26){
+        creatures.splice(i,1);
+        loseOne(c, 'jump');
+        rc.mode = 'snatch'; rc.modeT = .9; rc.caught = c;
+        rc.y = FLOOR;
+        break;
+      }
+    }
+    if (gold && dist(rc.x, rc.y-20, gold.x, gold.y) < gold.r + 26){
+      loseOne(gold, 'jump'); gold = null; rc.mode = 'snatch'; rc.modeT = .9; rc.y = FLOOR;
+    }
+    if (rc.mode === 'jump' && rc.y >= FLOOR){ rc.y = FLOOR; rc.mode = 'pace'; rc.modeT = 1; rc.face = '😤'; sGiggle(); }
+  } else {
+    // pace: follow the lowest falling creature
+    let tgt = null, low = -1;
+    for (const c of all){ if (c.y > low){ low = c.y; tgt = c; } }
+    if (tgt){ rc.tx = tgt.x; }
+    const dx = rc.tx - rc.x;
+    rc.dir = dx >= 0 ? 1 : -1;
+    rc.x += Math.sign(dx) * Math.min(Math.abs(dx), 150*dt);
+    rc.modeT -= dt;
+    if (jumpOn && rc.modeT <= 0 && creatures.length){
+      rc.mode = 'telegraph'; rc.modeT = .7; rc.face = '😈'; sWarn();
+    }
+  }
+  rc.x = Math.max(30, Math.min(W-30, rc.x));
+
+  // particles / popups / sparkles / leaves
+  for (let i=parts.length-1;i>=0;i--){ const p = parts[i]; p.life -= dt; p.x += p.vx*dt; p.y += p.vy*dt; p.vy += 160*dt; if (p.life<=0) parts.splice(i,1); }
+  for (let i=popups.length-1;i>=0;i--){ const p = popups[i]; p.life -= dt; p.y -= 34*dt; if (p.life<=0) popups.splice(i,1); }
+  for (let i=sparkles.length-1;i>=0;i--){ sparkles[i].life -= dt; if (sparkles[i].life<=0) sparkles.splice(i,1); }
+  for (let i=leaves.length-1;i>=0;i--){ const l = leaves[i]; l.life -= dt; l.x += l.vx*dt; l.y += l.vy*dt; l.rot += dt*4; if (l.life<=0) leaves.splice(i,1); }
+
+  if (timeLeft <= 0 && state === 'play') gameOver();
+}
+
+function tapAt(x, y){
+  if (state === 'title'){ startGame(); return; }
+  if (state === 'over'){ if (overTimer > .6) startGame(); return; }
+  if (state !== 'play') return;
+
+  // bombs first: tapping one = boom
+  for (let i=bombs.length-1;i>=0;i--){
+    const b = bombs[i];
+    if (dist(x,y,b.x,b.y) < b.r + 16){
+      score = Math.max(0, score - 20); combo = 0; shake = 14; sBoom();
+      burst(b.x, b.y, '#ff4757', 22);
+      popup('BOOM! -20', b.x, b.y-34, '#ff4757');
+      // scatter the creatures
+      for (const c of creatures){ c.vx = R(-260,260); c.vy = R(-320,-80); c.spin = 1; }
+      if (gold){ gold.vx = R(-260,260); gold.vy = R(-320,-80); gold.spin = 1; }
+      bombs.splice(i,1);
+      return;
+    }
+  }
+  // golden creature
+  if (gold && dist(x,y,gold.x,gold.y) < gold.r + 18){
+    score += 50; combo++; bestCombo = Math.max(bestCombo, combo);
+    confetti(gold.x, gold.y);
+    popup('+50 GOLD!', gold.x, gold.y-36, '#ffd700');
+    sGold(); gold = null; goldTimer = R(16,22);
+    return;
+  }
+  // creatures: bounce!
+  for (const c of creatures){
+    if (dist(x,y,c.x,c.y) < c.r + 16){
+      const wasNear = c.nearWarned;
+      c.vy = -(520 + Math.min(elapsed,30)*4);
+      c.vx += R(-40,40) + (W/2 - c.x)*.12;
+      c.squash = 1; c.spin = .6;
+      score += 10 * Math.min(combo+1, 5);
+      combo++; bestCombo = Math.max(bestCombo, combo);
+      burst(c.x, c.y + c.r*.6, '#7CFC00', 6);
+      if (wasNear){ score += 5; popup('SO CLOSE! +5', c.x, c.y-40, '#35e0ff'); sNear(); }
+      else if (combo >= 3) popup('x' + Math.min(combo,8) + ' COMBO!', c.x, c.y-40, '#ff5da2');
+      else popup('+'+(10*Math.min(combo,5)), c.x, c.y-40, '#fff');
+      sBounce();
+      return;
+    }
+  }
+  // empty tap: tiny puff
+  parts.push({x, y, vx:0, vy:-20, r:3, color:'#888', life:.3, max:.3});
+}
+
+// --- drawing ---
+function drawCreature(c){
+  ctx.save();
+  ctx.translate(c.x, c.y);
+  ctx.rotate(c.rot + (c.spin > 0 ? Math.sin(c.spin*20)*.25 : 0));
+  const sq = c.squash > 0 ? c.squash : 0;
+  ctx.scale(1 + sq*.25, 1 - sq*.25);
+  if (c.golden){
+    ctx.shadowColor = '#ffd700'; ctx.shadowBlur = 26;
+  } else {
+    ctx.shadowColor = '#7CFC00'; ctx.shadowBlur = 14;
+  }
+  // body
+  ctx.fillStyle = c.golden ? '#ffd700' : c.kind.body;
+  ctx.beginPath(); ctx.ellipse(0, 0, c.r, c.r*.92, 0, 0, TAU); ctx.fill();
+  ctx.shadowBlur = 0;
+  // belly
+  ctx.fillStyle = c.golden ? '#fff3b0' : c.kind.belly;
+  ctx.beginPath(); ctx.ellipse(0, c.r*.28, c.r*.62, c.r*.5, 0, 0, TAU); ctx.fill();
+  // accessory (the joke)
+  ctx.font = (c.r*.9) + 'px system-ui'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+  ctx.fillText(c.kind.acc, 0, -c.r*.62);
+  // face
+  ctx.font = (c.r*.95) + 'px system-ui';
+  ctx.fillText(c.golden ? '🤩' : c.face, 0, c.r*.1);
+  if (c.golden){
+    ctx.strokeStyle = 'rgba(255,215,0,.9)'; ctx.lineWidth = 2.5;
+    ctx.beginPath(); ctx.arc(0, 0, c.r + 6 + Math.sin(elapsed*6)*3, 0, TAU); ctx.stroke();
+  }
+  ctx.restore();
+}
+function drawBomb(b){
+  ctx.save();
+  ctx.translate(b.x, b.y);
+  ctx.rotate(b.rot);
+  const pulse = 1 + Math.sin(b.fuse)*.12;
+  ctx.scale(pulse, pulse);
+  // spikes
+  ctx.fillStyle = '#ff4757';
+  for (let i=0;i<8;i++){
+    const a = i/8*TAU;
+    ctx.beginPath();
+    ctx.moveTo(Math.cos(a)*b.r*.7, Math.sin(a)*b.r*.7);
+    ctx.lineTo(Math.cos(a+.2)*b.r*1.25, Math.sin(a+.2)*b.r*1.25);
+    ctx.lineTo(Math.cos(a+.4)*b.r*.7, Math.sin(a+.4)*b.r*.7);
+    ctx.fill();
+  }
+  ctx.beginPath(); ctx.arc(0, 0, b.r, 0, TAU); ctx.fill();
+  ctx.fillStyle = '#7a1020';
+  ctx.beginPath(); ctx.arc(0, 0, b.r*.68, 0, TAU); ctx.fill();
+  ctx.font = (b.r*1.1) + 'px system-ui'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+  ctx.fillText('😡', 0, 1);
+  ctx.restore();
+}
+function drawRaccoon(rc){
+  ctx.save();
+  ctx.translate(rc.x, rc.y);
+  const crouch = rc.mode === 'telegraph' ? .78 : 1;
+  ctx.scale(1.15, crouch);
+  // tail
+  ctx.strokeStyle = '#5a5a6e'; ctx.lineWidth = 12; ctx.lineCap = 'round';
+  ctx.beginPath(); ctx.moveTo(-18, -6); ctx.quadraticCurveTo(-44, -26, -34, -44); ctx.stroke();
+  ctx.strokeStyle = '#8a8a9e'; ctx.lineWidth = 12;
+  ctx.beginPath(); ctx.moveTo(-34, -44); ctx.quadraticCurveTo(-30, -52, -24, -48); ctx.stroke();
+  // body
+  ctx.fillStyle = '#6e6e82';
+  ctx.beginPath(); ctx.ellipse(0, -18, 26, 24, 0, 0, TAU); ctx.fill();
+  // mask + ears
+  ctx.fillStyle = '#3a3a4a';
+  ctx.beginPath(); ctx.ellipse(0, -34, 20, 12, 0, 0, TAU); ctx.fill();
+  ctx.fillStyle = '#6e6e82';
+  ctx.beginPath(); ctx.moveTo(-16,-44); ctx.lineTo(-20,-60); ctx.lineTo(-8,-48); ctx.fill();
+  ctx.beginPath(); ctx.moveTo(16,-44); ctx.lineTo(20,-60); ctx.lineTo(8,-48); ctx.fill();
+  // eyes
+  ctx.fillStyle = '#fff';
+  ctx.beginPath(); ctx.arc(-8, -36, 4.5, 0, TAU); ctx.arc(8, -36, 4.5, 0, TAU); ctx.fill();
+  ctx.fillStyle = '#111';
+  const look = Math.max(-4, Math.min(4, ((creatures[0]?creatures[0].x:rc.x) - rc.x)*.02));
+  ctx.beginPath(); ctx.arc(-8+look, -36, 2.2, 0, TAU); ctx.arc(8+look, -36, 2.2, 0, TAU); ctx.fill();
+  // face emoji
+  ctx.font = '20px system-ui'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+  ctx.fillText(rc.face, 0, -14);
+  // stolen creature in paws while snatching / running off
+  if (rc.caught){
+    ctx.font = '26px system-ui';
+    ctx.fillText(rc.caught.kind.emoji, rc.dir*22, -52);
+  }
+  if (rc.mode === 'telegraph'){
+    ctx.font = '900 26px system-ui'; ctx.fillStyle = '#ff5da2';
+    ctx.fillText('!', 0, -72);
+  }
+  ctx.restore();
+}
+
+function draw(){
+  ctx.save();
+  if (shake > 0) ctx.translate(R(-shake,shake)*.5, R(-shake,shake)*.5);
+
+  // sky
+  const g = ctx.createLinearGradient(0,0,0,H);
+  g.addColorStop(0,'#2b1a5e'); g.addColorStop(.6,'#141033'); g.addColorStop(1,'#0d0b1e');
+  ctx.fillStyle = g; ctx.fillRect(-20,-20,W+40,H+40);
+  // clouds with sleepy faces
+  for (const cl of clouds){
+    ctx.save(); ctx.globalAlpha = .5; ctx.translate(cl.x, cl.y); ctx.scale(cl.s, cl.s);
+    ctx.fillStyle = '#ffffff22';
+    ctx.beginPath(); ctx.ellipse(0,0,42,18,0,0,TAU); ctx.ellipse(-24,4,26,14,0,0,TAU); ctx.ellipse(24,4,26,14,0,0,TAU); ctx.fill();
+    ctx.font = '15px system-ui'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+    ctx.fillStyle = '#ffffff88';
+    ctx.fillText(cl.face, 0, -2);
+    ctx.restore();
+  }
+  // wind leaves
+  for (const l of leaves){
+    ctx.save(); ctx.translate(l.x, l.y); ctx.rotate(l.rot);
+    ctx.fillStyle = '#7CFC00'; ctx.font = '16px system-ui'; ctx.textAlign = 'center';
+    ctx.fillText('🍃', 0, 0); ctx.restore();
+  }
+
+  if (state === 'title'){
+    ctx.fillStyle = 'rgba(13,11,30,.55)'; ctx.fillRect(0,0,W,H);
+    ctx.textAlign = 'center';
+    ctx.fillStyle = '#fff';
+    ctx.font = '900 40px system-ui';
+    ctx.fillText("DON'T DROP", W/2, 150);
+    ctx.fillText('THE BRAINROT', W/2, 196);
+    // title creatures mid-bounce
+    ctx.font = '58px system-ui';
+    ctx.fillText('🦈', W/2-110, 280);
+    ctx.fillText('🐊', W/2, 250);
+    ctx.fillText('🐸', W/2+110, 280);
+    ctx.font = '30px system-ui';
+    ctx.fillText('👟', W/2-110, 240);
+    ctx.fillText('🍌', W/2, 210);
+    ctx.fillText('🥁', W/2+110, 240);
+    drawRaccoon({x:W/2, y:FLOOR, dir:1, mode:'pace', modeT:1, jumpVy:0, caught:null, runT:0, face:'😏'});
+    ctx.font = '700 20px system-ui'; ctx.fillStyle = '#ffd700';
+    ctx.fillText("DON'T DROP IT. HE'S WAITING.", W/2, 420);
+    ctx.font = '600 16px system-ui'; ctx.fillStyle = '#bfe9ff';
+    ctx.fillText('Tap a weirdo to bounce it. 3 drops = his.', W/2, 452);
+    ctx.fillText('Red bombs go BOOM. Gold = +50.', W/2, 478);
+    ctx.font = '900 22px system-ui'; ctx.fillStyle = '#35e0ff';
+    ctx.fillText('▶ TAP TO PLAY', W/2, 540);
+    ctx.font = '600 14px system-ui'; ctx.fillStyle = '#8fa3c8';
+    ctx.fillText('Best: ' + best + (glove ? '  •  🧤 golden glove unlocked' : ''), W/2, 580);
+    ctx.restore();
+    return;
+  }
+
+  // floor: trash-can alley
+  ctx.fillStyle = '#241a3a';
+  ctx.fillRect(0, FLOOR, W, H-FLOOR);
+  ctx.fillStyle = '#31254d';
+  ctx.fillRect(0, FLOOR, W, 6);
+  ctx.font = '26px system-ui'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+  ctx.fillText('🗑️', 40, FLOOR+44);
+  ctx.fillText('🍕', W-46, FLOOR+40);
+  ctx.fillText('🥫', W-100, FLOOR+52);
+  ctx.font = '700 13px system-ui'; ctx.fillStyle = '#8fa3c8';
+  ctx.fillText('HIS TURF — DO NOT DROP', W/2, FLOOR+58);
+
+  // creatures (ONLY glowing things)
+  for (const c of creatures) drawCreature(c);
+  if (gold) drawCreature(gold);
+  for (const s of sparkles){
+    ctx.save(); ctx.globalAlpha = s.life/s.max;
+    ctx.fillStyle = '#ffd700'; ctx.font = '12px system-ui'; ctx.textAlign = 'center';
+    ctx.fillText('✦', s.x, s.y); ctx.restore();
+  }
+  // bombs (angry red, NEVER glow)
+  for (const b of bombs) drawBomb(b);
+  // the thief
+  drawRaccoon(raccoon);
+
+  // particles
+  for (const p of parts){
+    ctx.save(); ctx.globalAlpha = Math.max(0, p.life/p.max);
+    ctx.fillStyle = p.color;
+    ctx.beginPath(); ctx.arc(p.x, p.y, p.r, 0, TAU); ctx.fill();
+    ctx.restore();
+  }
+  // popups
+  ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+  for (const p of popups){
+    ctx.save(); ctx.globalAlpha = Math.max(0, p.life/p.max);
+    ctx.font = '900 22px system-ui';
+    ctx.lineWidth = 5; ctx.strokeStyle = 'rgba(0,0,0,.7)';
+    ctx.strokeText(p.txt, p.x, p.y);
+    ctx.fillStyle = p.color;
+    ctx.fillText(p.txt, p.x, p.y);
+    ctx.restore();
+  }
+
+  // HUD
+  ctx.fillStyle = 'rgba(13,11,30,.72)';
+  ctx.fillRect(0, 0, W, 58);
+  ctx.textAlign = 'left'; ctx.textBaseline = 'middle';
+  ctx.fillStyle = '#ffd700'; ctx.font = '900 26px system-ui';
+  ctx.fillText('★ ' + score, 14, 30);
+  ctx.fillStyle = combo >= 3 ? '#ff5da2' : '#bfe9ff';
+  ctx.font = '900 18px system-ui';
+  ctx.fillText(combo >= 2 ? 'x' + Math.min(combo,8) + ' COMBO' : '', 150, 30);
+  ctx.textAlign = 'right'; ctx.fillStyle = '#fff'; ctx.font = '900 26px system-ui';
+  ctx.fillText(Math.max(0, Math.ceil(timeLeft)) + 's', W-14, 30);
+  // drops: 3 raccoon paws
+  ctx.textAlign = 'center'; ctx.font = '20px system-ui';
+  for (let i=0;i<3;i++){
+    ctx.globalAlpha = i < drops ? 1 : .25;
+    ctx.fillText('🦝', W/2 - 30 + i*30, 30);
+  }
+  ctx.globalAlpha = 1;
+
+  if (state === 'pause'){
+    ctx.fillStyle = 'rgba(13,11,30,.6)'; ctx.fillRect(0,0,W,H);
+    ctx.textAlign = 'center'; ctx.fillStyle = '#fff'; ctx.font = '900 34px system-ui';
+    ctx.fillText('PAUSED', W/2, H/2);
+  }
+
+  if (state === 'over'){
+    overTimer += 1/60;
+    ctx.fillStyle = 'rgba(13,11,30,.72)'; ctx.fillRect(0,0,W,H);
+    ctx.textAlign = 'center';
+    ctx.fillStyle = '#ff5da2'; ctx.font = '900 34px system-ui';
+    ctx.fillText('HE GOT THEM!', W/2, 220);
+    ctx.fillStyle = '#fff'; ctx.font = '700 19px system-ui';
+    wrapText(overLine, W/2, 268, 400, 26);
+    ctx.fillStyle = '#ffd700'; ctx.font = '900 44px system-ui';
+    ctx.fillText(score + ' PTS', W/2, 340);
+    ctx.fillStyle = '#bfe9ff'; ctx.font = '700 18px system-ui';
+    ctx.fillText('RANK: ' + rankTitle(score), W/2, 386);
+    ctx.fillText('Best combo x' + Math.min(bestCombo,8) + '  •  Drops ' + drops + '/3  •  Best ' + best, W/2, 416);
+    if (glove) { ctx.fillStyle = '#ffd700'; ctx.fillText('🧤 Golden glove unlocked!', W/2, 446); }
+    ctx.fillStyle = '#35e0ff'; ctx.font = '900 22px system-ui';
+    ctx.fillText('▶ TAP TO PLAY AGAIN', W/2, 510);
+    ctx.fillStyle = '#8fa3c8'; ctx.font = '600 15px system-ui';
+    ctx.fillText('📋 TAP HERE TO COPY RESULT', W/2, 556);
+    ctx.fillText('(tap anywhere else restarts)', W/2, 580);
+  }
+  ctx.restore();
+}
+
+function wrapText(text, x, y, maxW, lh){
+  const words = text.split(' ');
+  let line = '', yy = y;
+  for (const w of words){
+    const t = line ? line + ' ' + w : w;
+    if (ctx.measureText(t).width > maxW && line){ ctx.fillText(line, x, yy); line = w; yy += lh; }
+    else line = t;
+  }
+  ctx.fillText(line, x, yy);
+}
+
+function copyResult(){
+  const txt = 'I scored ' + score + ' juggling brainrot in DON\'T DROP THE BRAINROT — the raccoon got ' + drops + '/3 of my weirdos. ' + GAME_URL;
+  if (navigator.clipboard && navigator.clipboard.writeText){
+    navigator.clipboard.writeText(txt).then(()=>popup('COPIED!', W/2, 480, '#35e0ff')).catch(()=>{});
+  }
+}
+
+// input
+function toGame(e){
+  const r = cv.getBoundingClientRect();
+  const cx = (e.clientX - r.left) * (W / r.width);
+  const cy = (e.clientY - r.top) * (H / r.height);
+  return {x: Math.max(0, Math.min(W, cx)), y: Math.max(0, Math.min(H, cy))};
+}
+cv.addEventListener('pointerdown', e => {
+  e.preventDefault();
+  const p = toGame(e);
+  if (state === 'over' && overTimer > .6 && p.y > 530 && p.y < 580){ copyResult(); return; }
+  tapAt(p.x, p.y);
+});
+window.addEventListener('keydown', e => {
+  if (e.key === ' ' || e.key === 'Enter'){
+    e.preventDefault();
+    if (state === 'title' || state === 'over') startGame();
+  }
+  if (e.key === 'p' || e.key === 'P' || e.key === 'Escape'){
+    if (state === 'play') state = 'pause';
+    else if (state === 'pause') state = 'play';
+  }
+});
+document.getElementById('pauseBtn').addEventListener('click', () => {
+  if (state === 'play') state = 'pause';
+  else if (state === 'pause') state = 'play';
+});
+document.getElementById('muteBtn').addEventListener('click', function(){
+  muted = !muted; this.textContent = muted ? '✕' : '♪';
+});
+
+let last = performance.now();
+function loop(now){
+  const dt = Math.min(.05, (now - last)/1000);
+  last = now;
+  update(dt);
+  draw();
+  requestAnimationFrame(loop);
+}
+requestAnimationFrame(loop);
+</script>
+</body>
+</html>
