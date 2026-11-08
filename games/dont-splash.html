@@ -1,0 +1,656 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
+<title>DON'T SPLASH! — Move quiet. He's below.</title>
+<style>
+  *{margin:0;padding:0;box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+  html,body{height:100%;background:#0d0b1e;overflow:hidden}
+  body{display:flex;align-items:center;justify-content:center;font-family:system-ui,'Arial Black',Arial,sans-serif;user-select:none;-webkit-user-select:none;touch-action:none}
+  #wrap{position:relative;width:100%;max-width:480px;height:100%;max-height:860px}
+  canvas{display:block;width:100%;height:100%;background:#0a2a4a;cursor:pointer}
+  .btn{position:absolute;top:8px;width:38px;height:38px;border:2px solid #35e0ff;border-radius:50%;background:rgba(13,11,30,.7);color:#fff;font-size:17px;line-height:34px;text-align:center;cursor:pointer;z-index:5}
+  #pauseBtn{right:8px} #muteBtn{right:52px}
+</style>
+</head>
+<body>
+<div id="wrap">
+<canvas id="c" width="480" height="760"></canvas>
+<div class="btn" id="muteBtn">♪</div>
+<div class="btn" id="pauseBtn">II</div>
+</div>
+<script>
+'use strict';
+/* DON'T SPLASH! — stealth ripple survival in a flooded pool.
+   Drag (or WASD/arrows) to paddle. Moving makes ripples; ripples wake
+   the Lurker below. Freeze to let the water go quiet and lose him.
+   Glow rings = points. Golden duck = +50. Red angry drains SUCK.
+   Twist: 15s lights flicker (darkness pulses), 30s the pool CLOSES
+   (walls creep in), 45s the Lurker goes HUNGRY (faster, red eyes).
+   Survive 60s to win. Glow = ONLY good things. Red angry = drain,
+   never touch. Lurker = predator, never a collectible.
+   Trend: "DONT SPLASH" — #1 fastest-growing new Roblox game, Nov 2026
+   (9.7M visits/day, 161.9M in 17 days, ggrecon.com) — creep a flooded
+   pool complex, stay quiet near the water. */
+const cv = document.getElementById('c');
+const ctx = cv.getContext('2d');
+const W = 480, H = 760;
+const GAME_URL = 'https://tuannx.github.io/daily-mini-games/games/dont-splash.html';
+const HS_KEY = 'dontsplash-highscore';
+const SKIN_KEY = 'dontsplash-golden-floatie';
+
+let AC = null, muted = false;
+function beep(f, d, type, vol, slide){
+  if (muted) return;
+  try {
+    AC = AC || new (window.AudioContext || window.webkitAudioContext)();
+    const o = AC.createOscillator(), g = AC.createGain();
+    o.type = type || 'sine'; o.frequency.value = f;
+    if (slide) o.frequency.exponentialRampToValueAtTime(slide, AC.currentTime + d);
+    g.gain.setValueAtTime(vol || 0.12, AC.currentTime);
+    g.gain.exponentialRampToValueAtTime(0.001, AC.currentTime + d);
+    o.connect(g); g.connect(AC.destination);
+    o.start(); o.stop(AC.currentTime + d);
+  } catch(e){}
+}
+const sPaddle = ()=>{ beep(300,.07,'sine',.05,180); };
+const sRing   = ()=>{ beep(880,.1,'sine',.11,1320); };
+const sGold   = ()=>{ [1318,1568,2093].forEach((f,i)=>setTimeout(()=>beep(f,.1,'sine',.1),i*50)); };
+const sWarn   = ()=>{ beep(660,.14,'square',.08,440); };
+const sLunge  = ()=>{ beep(200,.3,'sawtooth',.13,60); };
+const sNear   = ()=>{ beep(1200,.08,'sine',.08,1600); };
+const sCaught = ()=>{ [500,350,220,120].forEach((f,i)=>setTimeout(()=>beep(f,.2,'sawtooth',.12),i*120)); };
+const sSuck   = ()=>{ beep(400,.5,'sawtooth',.13,60); };
+const sStart  = ()=>{ [523,659,784].forEach((f,i)=>setTimeout(()=>beep(f,.1,'sine',.10),i*70)); };
+const sWin    = ()=>{ [523,659,784,1046].forEach((f,i)=>setTimeout(()=>beep(f,.14,'sine',.11),i*90)); };
+
+const R = (a,b)=>a+Math.random()*(b-a);
+const TAU = Math.PI*2;
+const clamp = (v,a,b)=>Math.max(a,Math.min(b,v));
+const dist = (ax,ay,bx,by)=>Math.hypot(ax-bx,ay-by);
+
+let best = +(localStorage.getItem(HS_KEY) || 0);
+let goldenSkin = localStorage.getItem(SKIN_KEY) === '1';
+
+// --- state ---
+let state = 'title'; // title | play | pause | over | win
+let score = 0, combo = 0, comboTimer = 0, timeLeft = 60, elapsed = 0;
+let noise = 0;            // ripple meter 0..100
+let nearMissed = false;   // per-lunge near-miss flag
+let popup = null, popupT = 0;
+let overLine = '', overCause = '';
+let flicker = 0;          // 15s+ darkness pulse phase
+let poolMargin = 0;       // 30s+ walls creep in (px)
+let hungry = false;       // 45s+
+let spawnedDuck = false, spawnedDrain = false;
+let shake = 0;
+
+const OVER_LINES = [
+  'The shark has your floatie. He looks fabulous.',
+  'You splashed. He heard. He came.',
+  'The lifeguard saw everything. He did nothing.',
+  'Drained. Literally.',
+  'He filed a noise complaint.',
+  'The pool is closed. So are you.',
+];
+const RANKS = [
+  [0,'SPLASHER'],[60,'QUIET KID'],[120,'POOL NINJA'],[200,'POOL GHOST'],[300,'LEGEND OF THE DEEP']
+];
+function rankFor(s){ let r = RANKS[0][1]; for (const [t,n] of RANKS) if (s>=t) r = n; return r; }
+
+// --- player: kid on a floatie ---
+const P = { x: W/2, y: H-120, r: 22, vx: 0, vy: 0, face: '😬', squash: 0, paddleT: 0 };
+let pointer = null; // {x,y} in canvas coords
+const keys = {};
+
+// --- lurker: the thing below ---
+const L = { x: W/2, y: 200, r: 26, vx: 0, vy: 0, mode: 'wander', // wander | stalk | telegraph | lunge | lost
+  t: 0, tx: W/2, ty: 200, caught: false, eyeRed: false, lungeDx: 0, lungeDy: 0 };
+
+// --- world objects ---
+let rings = [];     // glowing collectibles
+let ripples = [];   // expanding rings from movement
+let drains = [];    // red angry hazards
+let duck = null;    // golden duck, rare
+let balls = [];     // background beach balls bobbing
+let ducksBg = [];   // background rubber ducks bobbing
+let parts = [];     // particles
+let floatTxts = []; // floating +10 texts
+
+function spawnRing(){
+  const m = 46 + poolMargin;
+  rings.push({ x: R(m, W-m), y: R(m+70, H-m-40), r: 15, pulse: R(0,TAU), born: elapsed });
+}
+function spawnDrain(){
+  const m = 60 + poolMargin;
+  drains.push({ x: R(m, W-m), y: R(m+80, H-m-60), r: 26, suck: 0, spin: R(0,TAU) });
+}
+function spawnDuck(){
+  const m = 60 + poolMargin;
+  duck = { x: R(m, W-m), y: R(m+80, H-m-60), r: 17, pulse: 0 };
+  spawnedDuck = true;
+}
+function reset(){
+  score = 0; combo = 0; comboTimer = 0; timeLeft = 60; elapsed = 0;
+  noise = 0; popup = null; popupT = 0; flicker = 0; poolMargin = 0;
+  hungry = false; spawnedDuck = false; spawnedDrain = false; shake = 0;
+  P.x = W/2; P.y = H-120; P.vx = 0; P.vy = 0; P.face = '😬';
+  L.x = W/2; L.y = 180; L.vx = 0; L.vy = 0; L.mode = 'wander'; L.t = 0;
+  L.tx = W/2; L.ty = 220; L.caught = false; L.eyeRed = false;
+  rings = []; ripples = []; drains = []; duck = null; parts = []; floatTxts = [];
+  balls = []; ducksBg = [];
+  for (let i=0;i<3;i++) balls.push({x:R(50,430), y:R(90,680), r:R(16,22), ph:R(0,TAU), hue:Math.floor(R(0,360))});
+  for (let i=0;i<2;i++) ducksBg.push({x:R(60,420), y:R(90,680), ph:R(0,TAU)});
+  spawnRing(); spawnRing();
+}
+reset();
+
+function addPopup(txt, color){
+  popup = { txt, color: color || '#fff' }; popupT = 1.4;
+}
+function burst(x, y, color, n){
+  for (let i=0;i<(n||10);i++) parts.push({x, y, vx:R(-90,90), vy:R(-90,90), life:R(.4,.9), max:.9, color, r:R(2,5)});
+}
+function floatTxt(x, y, txt, color){
+  floatTxts.push({x, y, txt, color: color||'#7df9ff', life: 1});
+}
+function gameOver(cause){
+  state = 'over'; overCause = cause;
+  overLine = OVER_LINES[Math.floor(Math.random()*OVER_LINES.length)];
+  if (score > best){ best = score; localStorage.setItem(HS_KEY, String(best)); }
+  if (score >= 200 && !goldenSkin){ goldenSkin = true; localStorage.setItem(SKIN_KEY, '1'); }
+  shake = 10;
+  if (cause === 'drain') sSuck(); else sCaught();
+}
+
+// --- input ---
+function toCanvas(e){
+  const r = cv.getBoundingClientRect();
+  const cx = (e.touches ? e.touches[0].clientX : e.clientX);
+  const cy = (e.touches ? e.touches[0].clientY : e.clientY);
+  return { x: (cx - r.left) * (W / r.width), y: (cy - r.top) * (H / r.height) };
+}
+cv.addEventListener('pointerdown', e=>{
+  e.preventDefault();
+  if (state === 'title'){ state = 'play'; sStart(); return; }
+  if (state === 'over' || state === 'win'){ reset(); state = 'play'; sStart(); return; }
+  if (state === 'play'){ pointer = toCanvas(e); }
+});
+cv.addEventListener('pointermove', e=>{ if (state==='play' && pointer) pointer = toCanvas(e); });
+cv.addEventListener('pointerup', ()=>{ pointer = null; });
+cv.addEventListener('pointercancel', ()=>{ pointer = null; });
+window.addEventListener('keydown', e=>{
+  keys[e.key.toLowerCase()] = true;
+  if (e.key === ' ' || e.key === 'Enter'){
+    e.preventDefault();
+    if (state === 'title'){ state = 'play'; sStart(); }
+    else if (state === 'over' || state === 'win'){ reset(); state = 'play'; sStart(); }
+  }
+  if (e.key.toLowerCase() === 'p') togglePause();
+});
+window.addEventListener('keyup', e=>{ keys[e.key.toLowerCase()] = false; });
+function togglePause(){
+  if (state === 'play'){ state = 'pause'; }
+  else if (state === 'pause'){ state = 'play'; }
+}
+document.getElementById('pauseBtn').addEventListener('click', togglePause);
+document.getElementById('muteBtn').addEventListener('click', function(){
+  muted = !muted; this.textContent = muted ? '✕' : '♪';
+});
+
+// --- update ---
+function update(dt){
+  elapsed += dt; timeLeft = Math.max(0, 60 - elapsed);
+  if (popupT > 0) popupT -= dt;
+  if (shake > 0) shake -= dt*20;
+  if (comboTimer > 0){ comboTimer -= dt; if (comboTimer <= 0) combo = 0; }
+
+  // escalation timeline
+  if (elapsed >= 15 && flicker === 0){ flicker = 0.001; addPopup('LIGHTS FLICKER!', '#ffd166'); sWarn(); }
+  if (elapsed >= 30 && poolMargin === 0){ poolMargin = 0.001; addPopup('POOL CLOSES!', '#ff5d8f'); sWarn(); }
+  if (elapsed >= 45 && !hungry){ hungry = true; addPopup('HE\'S HUNGRY!', '#ff3b3b'); sWarn(); }
+  if (flicker > 0) flicker += dt;
+  if (poolMargin > 0 && poolMargin < 34) poolMargin = Math.min(34, poolMargin + dt*8);
+  if (!spawnedDuck && elapsed > 20 && Math.random() < dt*0.06) spawnDuck();
+  if (!spawnedDrain && elapsed > 20){ spawnDrain(); spawnedDrain = true; }
+  if (elapsed > 40 && drains.length < 2 && Math.random() < dt*0.03) spawnDrain();
+
+  // --- player movement ---
+  let ax = 0, ay = 0;
+  if (pointer){
+    const dx = pointer.x - P.x, dy = pointer.y - P.y, d = Math.hypot(dx,dy);
+    if (d > 8){ ax = dx/d; ay = dy/d; }
+  }
+  if (keys['arrowleft']||keys['a']) ax -= 1;
+  if (keys['arrowright']||keys['d']) ax += 1;
+  if (keys['arrowup']||keys['w']) ay -= 1;
+  if (keys['arrowdown']||keys['s']) ay += 1;
+  const al = Math.hypot(ax,ay); if (al > 1){ ax/=al; ay/=al; }
+  const SPD = 165;
+  P.vx = ax*SPD; P.vy = ay*SPD;
+  const moving = al > 0.1;
+  const speed = Math.hypot(P.vx, P.vy);
+  P.x += P.vx*dt; P.y += P.vy*dt;
+  const m = 30 + poolMargin;
+  P.x = clamp(P.x, m, W-m); P.y = clamp(P.y, 56+m, H-m);
+  P.squash = Math.max(0, P.squash - dt*6);
+  P.paddleT -= dt;
+
+  // ripples + noise: faster = louder
+  if (moving){
+    noise = clamp(noise + (speed/SPD)*55*dt, 0, 100);
+    P.paddleT -= dt;
+    if (P.paddleT <= 0){
+      P.paddleT = 0.16;
+      ripples.push({x:P.x, y:P.y, r: 12, max: 26 + (speed/SPD)*34, a: .55});
+      if (Math.random() < .4) sPaddle();
+      P.squash = 1;
+    }
+  } else {
+    noise = clamp(noise - 34*dt, 0, 100);
+  }
+  // player face: terrified when lurker close or hunting
+  const ld = dist(P.x,P.y,L.x,L.y);
+  P.face = (L.mode==='lunge'||L.mode==='telegraph'||ld < 110) ? '😱' : '😬';
+
+  // --- lurker AI ---
+  const huntAt = hungry ? 50 : 70;
+  L.t -= dt;
+  if (L.mode === 'wander'){
+    if (L.t <= 0){ L.tx = R(60,W-60); L.ty = R(120,H-80); L.t = R(1.5,3); }
+    const dx = L.tx-L.x, dy = L.ty-L.y, d = Math.hypot(dx,dy)||1;
+    const sp = 42;
+    L.x += dx/d*sp*dt; L.y += dy/d*sp*dt;
+    // ripples attract him: stalk the loudest recent ripple
+    if (noise > 35 || ripples.some(r=>r.max>44)){
+      L.mode = 'stalk'; L.t = 2.5;
+    }
+  } else if (L.mode === 'stalk'){
+    const dx = P.x-L.x, dy = P.y-L.y, d = Math.hypot(dx,dy)||1;
+    const sp = hungry ? 78 : 62;
+    L.x += dx/d*sp*dt; L.y += dy/d*sp*dt;
+    if (noise >= huntAt){ L.mode = 'telegraph'; L.t = 0.55; sWarn(); }
+    else if (L.t <= 0 && noise < 25){ L.mode = 'wander'; L.t = 0; }
+    else if (L.t <= 0){ L.t = 2; }
+  } else if (L.mode === 'telegraph'){
+    // shake in place, then LUNGE at where you are
+    L.lungeDx = P.x - L.x; L.lungeDy = P.y - L.y;
+    const ll = Math.hypot(L.lungeDx, L.lungeDy)||1;
+    L.lungeDx/=ll; L.lungeDy/=ll;
+    if (L.t <= 0){ L.mode = 'lunge'; L.t = 0.5; nearMissed = false; sLunge(); }
+  } else if (L.mode === 'lunge'){
+    const sp = hungry ? 420 : 340;
+    L.x += L.lungeDx*sp*dt; L.y += L.lungeDy*sp*dt;
+    if (L.t <= 0){
+      // near-miss: he passed close but didn't get you
+      if (!nearMissed && ld < 90){ nearMissed = true; score += 5; addPopup('SO CLOSE! +5','#7df9ff'); sNear(); }
+      L.mode = (noise >= huntAt) ? 'stalk' : 'wander'; L.t = 0;
+    }
+  }
+  L.x = clamp(L.x, 24, W-24); L.y = clamp(L.y, 60, H-24);
+  L.eyeRed = (L.mode==='telegraph'||L.mode==='lunge'||hungry);
+
+  // caught?
+  if (dist(P.x,P.y,L.x,L.y) < P.r + L.r - 8){
+    burst(P.x, P.y, '#ff5d8f', 18);
+    gameOver('lurker'); return;
+  }
+
+  // --- drains suck ---
+  for (const dr of drains){
+    dr.spin += dt*3;
+    const d = dist(P.x,P.y,dr.x,dr.y);
+    if (d < 110 && d > 1){
+      const pull = (1 - d/110) * 95 * dt;
+      P.x += (dr.x-P.x)/d*pull; P.y += (dr.y-P.y)/d*pull;
+    }
+    if (d < dr.r - 4){ burst(P.x,P.y,'#ff3b3b',16); gameOver('drain'); return; }
+  }
+
+  // --- rings ---
+  for (let i=rings.length-1;i>=0;i--){
+    const r = rings[i]; r.pulse += dt*4;
+    if (dist(P.x,P.y,r.x,r.y) < P.r + r.r + 4){
+      combo = Math.min(combo+1, 8); comboTimer = 4;
+      const pts = 10 * combo;
+      score += pts;
+      floatTxt(r.x, r.y-18, '+'+pts, '#7df9ff');
+      burst(r.x, r.y, '#35e0ff', 10);
+      sRing();
+      rings.splice(i,1);
+    }
+  }
+  if (rings.length < 3 && Math.random() < dt*0.5) spawnRing();
+  if (duck){
+    duck.pulse += dt*5;
+    if (dist(P.x,P.y,duck.x,duck.y) < P.r + duck.r + 4){
+      score += 50; floatTxt(duck.x, duck.y-18, '+50 GOLD!', '#ffd166');
+      burst(duck.x, duck.y, '#ffd166', 16); sGold(); duck = null;
+    }
+  }
+
+  // --- ripples / particles / float texts ---
+  for (let i=ripples.length-1;i>=0;i--){
+    const r = ripples[i]; r.r += dt*55; r.a -= dt*0.5;
+    if (r.r >= r.max || r.a <= 0) ripples.splice(i,1);
+  }
+  for (let i=parts.length-1;i>=0;i--){
+    const p = parts[i]; p.x += p.vx*dt; p.y += p.vy*dt; p.life -= dt;
+    if (p.life <= 0) parts.splice(i,1);
+  }
+  for (let i=floatTxts.length-1;i>=0;i--){
+    const f = floatTxts[i]; f.y -= dt*30; f.life -= dt;
+    if (f.life <= 0) floatTxts.splice(i,1);
+  }
+
+  // background bobbing
+  for (const b of balls) b.ph += dt*1.4;
+  for (const d of ducksBg) d.ph += dt*1.1;
+
+  // win?
+  if (timeLeft <= 0){
+    state = 'win';
+    score += 100; // survival bonus
+    if (score > best){ best = score; localStorage.setItem(HS_KEY, String(best)); }
+    if (score >= 200 && !goldenSkin){ goldenSkin = true; localStorage.setItem(SKIN_KEY, '1'); }
+    sWin();
+  }
+}
+
+// --- draw ---
+function rr(x,y,w,h,r){ ctx.beginPath(); ctx.moveTo(x+r,y); ctx.arcTo(x+w,y,x+w,y+h,r); ctx.arcTo(x+w,y+h,x,y+h,r); ctx.arcTo(x,y+h,x,y,r); ctx.arcTo(x,y,x+w,y,r); ctx.closePath(); }
+
+function draw(){
+  ctx.save();
+  if (shake > 0) ctx.translate(R(-shake,shake), R(-shake,shake));
+
+  // water
+  ctx.fillStyle = '#0a2a4a'; ctx.fillRect(-20,-20,W+40,H+40);
+  ctx.strokeStyle = 'rgba(53,224,255,.10)'; ctx.lineWidth = 2;
+  const ts = 60, off = (elapsed*6)%ts;
+  for (let x=0;x<W;x+=ts){ ctx.beginPath(); ctx.moveTo(x,-20); ctx.lineTo(x,H+20); ctx.stroke(); }
+  for (let y=-ts+off;y<H+20;y+=ts){ ctx.beginPath(); ctx.moveTo(-20,y); ctx.lineTo(W+20,y); ctx.stroke(); }
+  // pool edge (creeps in after 30s)
+  if (poolMargin > 0){
+    ctx.strokeStyle = '#ff5d8f'; ctx.lineWidth = 5;
+    ctx.strokeRect(poolMargin, 44+poolMargin, W-poolMargin*2, H-44-poolMargin*2);
+  }
+  ctx.strokeStyle = 'rgba(255,255,255,.25)'; ctx.lineWidth = 4;
+  ctx.strokeRect(2, 46, W-4, H-50);
+  // lane ropes
+  ctx.strokeStyle = 'rgba(255,209,102,.35)'; ctx.lineWidth = 3; ctx.setLineDash([14,10]);
+  ctx.beginPath(); ctx.moveTo(0, 300); ctx.lineTo(W, 300); ctx.stroke();
+  ctx.beginPath(); ctx.moveTo(0, 540); ctx.lineTo(W, 540); ctx.stroke();
+  ctx.setLineDash([]);
+
+  // background beach balls + rubber ducks
+  for (const b of balls){
+    const bob = Math.sin(b.ph)*4;
+    ctx.save(); ctx.translate(b.x, b.y+bob); ctx.rotate(Math.sin(b.ph*0.7)*0.3);
+    ctx.fillStyle = `hsl(${b.hue},80%,65%)`;
+    ctx.beginPath(); ctx.arc(0,0,b.r,0,TAU); ctx.fill();
+    ctx.fillStyle = '#fff';
+    ctx.beginPath(); ctx.moveTo(0,0); ctx.arc(0,0,b.r, -0.6, 0.6); ctx.closePath(); ctx.fill();
+    ctx.fillStyle = 'rgba(0,0,0,.25)';
+    ctx.font = '12px sans-serif'; ctx.textAlign='center'; ctx.textBaseline='middle';
+    ctx.fillText('◠', 0, -2);
+    ctx.restore();
+  }
+  for (const d of ducksBg){
+    const bob = Math.sin(d.ph)*5;
+    ctx.save(); ctx.translate(d.x, d.y+bob);
+    ctx.font = '26px sans-serif'; ctx.textAlign='center'; ctx.textBaseline='middle';
+    ctx.globalAlpha = .8; ctx.fillText('🦆', 0, 0); ctx.globalAlpha = 1;
+    ctx.restore();
+  }
+
+  // drains (red angry, swirling)
+  for (const dr of drains){
+    ctx.save(); ctx.translate(dr.x, dr.y);
+    ctx.fillStyle = '#1a0505';
+    ctx.beginPath(); ctx.arc(0,0,dr.r,0,TAU); ctx.fill();
+    ctx.strokeStyle = '#ff3b3b'; ctx.lineWidth = 3;
+    ctx.beginPath(); ctx.arc(0,0,dr.r-2,0,TAU); ctx.stroke();
+    ctx.strokeStyle = 'rgba(255,59,59,.7)'; ctx.lineWidth = 2;
+    for (let k=0;k<3;k++){
+      const a0 = dr.spin + k*2.1;
+      ctx.beginPath(); ctx.arc(0,0,6+k*6, a0, a0+2.4); ctx.stroke();
+    }
+    ctx.font = '20px sans-serif'; ctx.textAlign='center'; ctx.textBaseline='middle';
+    ctx.fillText('😠', 0, 0);
+    ctx.restore();
+  }
+
+  // ripples
+  for (const r of ripples){
+    ctx.strokeStyle = `rgba(125,249,255,${Math.max(0,r.a)})`; ctx.lineWidth = 2.5;
+    ctx.beginPath(); ctx.arc(r.x, r.y, r.r, 0, TAU); ctx.stroke();
+  }
+
+  // glowing rings (only good things glow)
+  for (const r of rings){
+    const g = 0.75 + Math.sin(r.pulse)*0.25;
+    ctx.save(); ctx.translate(r.x, r.y);
+    ctx.shadowColor = '#35e0ff'; ctx.shadowBlur = 18*g;
+    ctx.strokeStyle = '#35e0ff'; ctx.lineWidth = 5;
+    ctx.beginPath(); ctx.arc(0,0,r.r,0,TAU); ctx.stroke();
+    ctx.shadowBlur = 0;
+    ctx.fillStyle = '#e8fbff';
+    ctx.beginPath(); ctx.arc(0,0,4,0,TAU); ctx.fill();
+    ctx.restore();
+  }
+
+  // golden duck
+  if (duck){
+    const g = 0.7 + Math.sin(duck.pulse)*0.3;
+    ctx.save(); ctx.translate(duck.x, duck.y);
+    ctx.shadowColor = '#ffd166'; ctx.shadowBlur = 22*g;
+    ctx.font = '30px sans-serif'; ctx.textAlign='center'; ctx.textBaseline='middle';
+    ctx.fillText('🦆', 0, 0);
+    ctx.restore();
+    ctx.fillStyle = `rgba(255,209,102,${g})`;
+    for (let k=0;k<4;k++){
+      const a = duck.pulse + k*Math.PI/2;
+      ctx.beginPath(); ctx.arc(duck.x+Math.cos(a)*26, duck.y+Math.sin(a)*26, 2.5, 0, TAU); ctx.fill();
+    }
+  }
+
+  // lurker: shadow + fin + eyes (glows only when hunting)
+  ctx.save(); ctx.translate(L.x, L.y);
+  if (L.mode === 'telegraph') ctx.translate(R(-3,3), R(-3,3));
+  ctx.fillStyle = 'rgba(2,10,25,.55)';
+  ctx.beginPath(); ctx.ellipse(0, 4, L.r+8, L.r*0.75, 0, 0, TAU); ctx.fill();
+  // fin
+  ctx.fillStyle = '#16324a';
+  ctx.beginPath(); ctx.moveTo(-12, -6); ctx.quadraticCurveTo(0, -34, 14, -6); ctx.closePath(); ctx.fill();
+  // eyes
+  const eyeCol = L.eyeRed ? '#ff3b3b' : '#ffd166';
+  if (L.mode !== 'wander' || elapsed < 3){
+    ctx.fillStyle = eyeCol;
+    ctx.beginPath(); ctx.arc(-9, -2, 4, 0, TAU); ctx.arc(9, -2, 4, 0, TAU); ctx.fill();
+    ctx.fillStyle = '#000';
+    ctx.beginPath(); ctx.arc(-9, -2, 1.8, 0, TAU); ctx.arc(9, -2, 1.8, 0, TAU); ctx.fill();
+  }
+  if (L.mode === 'telegraph'){
+    ctx.font = 'bold 22px sans-serif'; ctx.textAlign='center'; ctx.textBaseline='middle';
+    ctx.fillStyle = '#ff3b3b'; ctx.fillText('!', 0, -44);
+  }
+  ctx.restore();
+
+  // player: floatie ring + kid face (squash when paddling)
+  ctx.save(); ctx.translate(P.x, P.y);
+  const sq = 1 + P.squash*0.18;
+  ctx.scale(2-sq > 1.25 ? 1.25 : 2-sq, sq);
+  ctx.fillStyle = goldenSkin ? '#ffd166' : '#ff5d8f';
+  ctx.beginPath(); ctx.arc(0,0,P.r,0,TAU); ctx.fill();
+  ctx.fillStyle = '#0a2a4a';
+  ctx.beginPath(); ctx.arc(0,0,P.r-9,0,TAU); ctx.fill();
+  ctx.fillStyle = '#ffe9a8';
+  ctx.beginPath(); ctx.arc(0,0,11,0,TAU); ctx.fill();
+  ctx.font = '15px sans-serif'; ctx.textAlign='center'; ctx.textBaseline='middle';
+  ctx.fillText(P.face, 0, 1);
+  ctx.restore();
+
+  // particles
+  for (const p of parts){
+    ctx.globalAlpha = Math.max(0, p.life/p.max);
+    ctx.fillStyle = p.color;
+    ctx.beginPath(); ctx.arc(p.x, p.y, p.r, 0, TAU); ctx.fill();
+  }
+  ctx.globalAlpha = 1;
+  // floating texts
+  ctx.font = 'bold 16px sans-serif'; ctx.textAlign='center'; ctx.textBaseline='middle';
+  for (const f of floatTxts){
+    ctx.globalAlpha = Math.max(0, f.life);
+    ctx.fillStyle = f.color; ctx.fillText(f.txt, f.x, f.y);
+  }
+  ctx.globalAlpha = 1;
+
+  // darkness flicker after 15s: pulsing black overlay (lurker eyes still visible — drawn above? no, overlay dims all)
+  if (flicker > 0){
+    const d = 0.28 + 0.22*Math.sin(flicker*5);
+    ctx.fillStyle = `rgba(2,6,18,${Math.max(0,d)})`;
+    ctx.fillRect(-20,-20,W+40,H+40);
+    // lurker eyes pierce the dark
+    ctx.fillStyle = L.eyeRed ? '#ff3b3b' : '#ffd166';
+    ctx.beginPath(); ctx.arc(L.x-9, L.y-2, 3.5, 0, TAU); ctx.arc(L.x+9, L.y-2, 3.5, 0, TAU); ctx.fill();
+  }
+
+  // HUD
+  ctx.fillStyle = 'rgba(5,10,30,.72)';
+  rr(0, 0, W, 46, 0); ctx.fill();
+  ctx.font = 'bold 19px sans-serif'; ctx.textAlign='left'; ctx.textBaseline='middle';
+  ctx.fillStyle = '#fff';
+  ctx.fillText('⭐ ' + score, 12, 24);
+  ctx.fillStyle = '#7df9ff';
+  ctx.fillText('⏱ ' + Math.ceil(timeLeft) + 's', 118, 24);
+  if (combo > 1){
+    ctx.fillStyle = '#ffd166';
+    ctx.fillText('🔥x' + combo, 218, 24);
+  }
+  // noise meter
+  ctx.fillStyle = '#22304a';
+  rr(300, 14, 168, 18, 9); ctx.fill();
+  const nw = 168 * (noise/100);
+  ctx.fillStyle = noise >= 70 ? '#ff3b3b' : noise >= 40 ? '#ffd166' : '#35e0ff';
+  if (nw > 2){ rr(300, 14, nw, 18, 9); ctx.fill(); }
+  ctx.fillStyle = '#fff'; ctx.font = 'bold 11px sans-serif';
+  ctx.fillText('SPLASH', 306, 23);
+  ctx.fillStyle = '#94a3b8'; ctx.font = '11px sans-serif'; ctx.textAlign='right';
+  ctx.fillText('BEST ' + best, W-10, 42);
+
+  // popup
+  if (popupT > 0 && popup){
+    ctx.globalAlpha = Math.min(1, popupT);
+    ctx.font = 'bold 26px sans-serif'; ctx.textAlign='center';
+    ctx.fillStyle = popup.color;
+    ctx.fillText(popup.txt, W/2, 120);
+    ctx.globalAlpha = 1;
+  }
+
+  // --- screens ---
+  if (state === 'title'){
+    ctx.fillStyle = 'rgba(4,8,24,.72)'; ctx.fillRect(0,0,W,H);
+    ctx.textAlign='center';
+    ctx.font = '64px sans-serif'; ctx.fillText('🏊', W/2, 150);
+    ctx.font = 'bold 44px sans-serif'; ctx.fillStyle = '#35e0ff';
+    ctx.fillText("DON'T SPLASH!", W/2, 225);
+    ctx.font = 'bold 20px sans-serif'; ctx.fillStyle = '#ffd166';
+    ctx.fillText('MOVE QUIET. HE\'S BELOW.', W/2, 262);
+    ctx.font = '16px sans-serif'; ctx.fillStyle = '#cbd5e1';
+    ctx.fillText('Drag to paddle · grab glowing rings', W/2, 310);
+    ctx.fillText('Ripples wake the shark. Freeze to hide.', W/2, 336);
+    ctx.fillText('Red drains suck. Golden duck = +50.', W/2, 362);
+    ctx.font = 'bold 20px sans-serif'; ctx.fillStyle = '#7df9ff';
+    ctx.fillText('▶ TAP TO START', W/2, 430);
+    ctx.font = '14px sans-serif'; ctx.fillStyle = '#94a3b8';
+    ctx.fillText('Survive 60s · Best: ' + best + (goldenSkin ? ' · 👑 Golden floatie unlocked!' : ''), W/2, 470);
+    ctx.fillText('Rank: ' + rankFor(best), W/2, 494);
+  }
+  if (state === 'pause'){
+    ctx.fillStyle = 'rgba(4,8,24,.7)'; ctx.fillRect(0,0,W,H);
+    ctx.textAlign='center'; ctx.font = 'bold 34px sans-serif'; ctx.fillStyle = '#fff';
+    ctx.fillText('PAUSED', W/2, H/2 - 10);
+    ctx.font = '16px sans-serif'; ctx.fillStyle = '#94a3b8';
+    ctx.fillText('Tap II or press P to resume', W/2, H/2 + 24);
+  }
+  if (state === 'over' || state === 'win'){
+    ctx.fillStyle = 'rgba(4,8,24,.78)'; ctx.fillRect(0,0,W,H);
+    ctx.textAlign='center';
+    if (state === 'win'){
+      ctx.font = '54px sans-serif'; ctx.fillText('🏆', W/2, 150);
+      ctx.font = 'bold 38px sans-serif'; ctx.fillStyle = '#ffd166';
+      ctx.fillText('YOU SURVIVED!', W/2, 215);
+      ctx.font = '18px sans-serif'; ctx.fillStyle = '#cbd5e1';
+      ctx.fillText('The shark respects the silence.', W/2, 252);
+    } else {
+      ctx.font = '54px sans-serif'; ctx.fillText('🦈', W/2, 150);
+      ctx.font = 'bold 38px sans-serif'; ctx.fillStyle = '#ff5d8f';
+      ctx.fillText(overCause === 'drain' ? 'DOWN THE DRAIN!' : 'HE GOT YOU!', W/2, 215);
+      ctx.font = '17px sans-serif'; ctx.fillStyle = '#cbd5e1';
+      wrapText(overLine, W/2, 252, 400, 22);
+    }
+    ctx.font = 'bold 26px sans-serif'; ctx.fillStyle = '#fff';
+    ctx.fillText('SCORE ' + score, W/2, 330);
+    ctx.font = '18px sans-serif'; ctx.fillStyle = '#7df9ff';
+    ctx.fillText('RANK: ' + rankFor(score) + '  ·  BEST ' + best, W/2, 366);
+    if (goldenSkin) { ctx.fillStyle = '#ffd166'; ctx.fillText('👑 Golden floatie unlocked!', W/2, 394); }
+    // share + restart buttons (canvas-drawn hit areas)
+    ctx.fillStyle = '#35e0ff'; rr(W/2-150, 430, 300, 46, 12); ctx.fill();
+    ctx.fillStyle = '#06283a'; ctx.font = 'bold 17px sans-serif';
+    ctx.fillText('📋 COPY RESULT', W/2, 453);
+    ctx.fillStyle = '#ff5d8f'; rr(W/2-150, 488, 300, 46, 12); ctx.fill();
+    ctx.fillStyle = '#fff'; ctx.font = 'bold 17px sans-serif';
+    ctx.fillText('↻ PLAY AGAIN', W/2, 511);
+    ctx.font = '13px sans-serif'; ctx.fillStyle = '#94a3b8';
+    ctx.fillText('Tap anywhere else to restart', W/2, 556);
+  }
+  ctx.restore();
+}
+
+function wrapText(txt, x, y, maxW, lh){
+  const words = txt.split(' '); let line = '';
+  const lines = [];
+  for (const w of words){
+    const t = line ? line + ' ' + w : w;
+    if (ctx.measureText(t).width > maxW && line){ lines.push(line); line = w; }
+    else line = t;
+  }
+  lines.push(line);
+  lines.forEach((l,i)=>ctx.fillText(l, x, y + i*lh));
+}
+
+// share button hit-test on game-over screen
+cv.addEventListener('click', e=>{
+  if (state !== 'over' && state !== 'win') return;
+  const p = toCanvas(e);
+  if (p.x > W/2-150 && p.x < W/2+150 && p.y > 430 && p.y < 476){
+    const txt = state === 'win'
+      ? `I survived 60s in DON'T SPLASH! — score ${score}, rank ${rankFor(score)}. The shark respects the silence. Play: ${GAME_URL}`
+      : `The shark got me in DON'T SPLASH! — score ${score}, rank ${rankFor(score)}. "${overLine}" Play: ${GAME_URL}`;
+    const done = ()=>{ addPopup('COPIED!', '#7df9ff'); popupT = 1.2; };
+    if (navigator.clipboard && navigator.clipboard.writeText){
+      navigator.clipboard.writeText(txt).then(done).catch(()=>{ fallbackCopy(txt); done(); });
+    } else { fallbackCopy(txt); done(); }
+  }
+});
+function fallbackCopy(txt){
+  const ta = document.createElement('textarea');
+  ta.value = txt; document.body.appendChild(ta); ta.select();
+  try { document.execCommand('copy'); } catch(e){}
+  document.body.removeChild(ta);
+}
+
+// --- loop ---
+let last = performance.now();
+function frame(now){
+  const dt = Math.min(0.05, (now - last)/1000); last = now;
+  if (state === 'play') update(dt);
+  draw();
+  requestAnimationFrame(frame);
+}
+requestAnimationFrame(frame);
+</script>
+</body>
+</html>

@@ -339,5 +339,14 @@
   "mechanic": "Juggle-the-weirdos defense (tap to bounce brainrot creatures; raccoon thief snatches drops, jumps at 30s, bombs + wind at 15s)",
   "tagline": "Juggle the weirdos. The raccoon below is hungry. Three drops and they're his.",
   "title": "DON'T DROP THE BRAINROT"
+ },
+ {
+  "date": "2026-11-08",
+  "day": 39,
+  "emoji": "🏊",
+  "file": "games/dont-splash.html",
+  "mechanic": "Stealth ripple survival (paddle quiet, ripples wake the lurker shark; freeze to hide, lights flicker at 15s, pool closes at 30s, hungry shark at 45s)",
+  "tagline": "Paddle quiet. Grab the glow. The thing below hates ripples — and it heard you.",
+  "title": "DON'T SPLASH!"
  }
 ]
