@@ -348,5 +348,14 @@
   "mechanic": "Stealth ripple survival (paddle quiet, ripples wake the lurker shark; freeze to hide, lights flicker at 15s, pool closes at 30s, hungry shark at 45s)",
   "tagline": "Paddle quiet. Grab the glow. The thing below hates ripples — and it heard you.",
   "title": "DON'T SPLASH!"
+ },
+ {
+  "date": "2026-11-09",
+  "day": 40,
+  "emoji": "🥚",
+  "file": "games/steal-an-egg.html",
+  "mechanic": "Break-and-steal egg heist (grab glowing eggs, dodge angry hens, eggs hatch and run at 12s, guard dog at 25s, golden egg at 40s)",
+  "tagline": "Steal eggs. Dodge hens. At 12s the eggs hatch and RUN. Get yolked.",
+  "title": "STEAL AN EGG!"
  }
 ]
