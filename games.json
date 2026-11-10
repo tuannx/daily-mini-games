@@ -357,5 +357,14 @@
   "mechanic": "Break-and-steal egg heist (grab glowing eggs, dodge angry hens, eggs hatch and run at 12s, guard dog at 25s, golden egg at 40s)",
   "tagline": "Steal eggs. Dodge hens. At 12s the eggs hatch and RUN. Get yolked.",
   "title": "STEAL AN EGG!"
+ },
+ {
+  "date": "2026-11-10",
+  "day": 41,
+  "emoji": "😾",
+  "file": "games/cat-battles.html",
+  "mechanic": "Tap-battle cat arena (slap rival, block its paw; backup cat at 15s, your cat naps at 25s, golden fish at 40s, CAT UNION at 50s)",
+  "tagline": "Slap the rival cat. Block its paw. At 25s your cat naps on the job — and at 50s they ALL turn on you.",
+  "title": "CAT BATTLES!"
  }
 ]

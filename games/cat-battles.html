@@ -1,0 +1,799 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
+<title>CAT BATTLES! — Slap the cat. Don't get slapped.</title>
+<style>
+  *{margin:0;padding:0;box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+  html,body{height:100%;background:#0d0b1e;overflow:hidden}
+  body{display:flex;align-items:center;justify-content:center;font-family:system-ui,'Arial Black',Arial,sans-serif;user-select:none;-webkit-user-select:none;touch-action:none}
+  #wrap{position:relative;width:100%;max-width:480px;height:100%;max-height:860px}
+  canvas{display:block;width:100%;height:100%;background:#241536;cursor:pointer}
+  .btn{position:absolute;top:8px;width:38px;height:38px;border:2px solid #ffd23e;border-radius:50%;background:rgba(13,11,30,.7);color:#fff;font-size:17px;line-height:34px;text-align:center;cursor:pointer;z-index:5}
+  #pauseBtn{right:8px} #muteBtn{right:52px}
+</style>
+</head>
+<body>
+<div id="wrap">
+<canvas id="c" width="480" height="760"></canvas>
+<div class="btn" id="muteBtn">♪</div>
+<div class="btn" id="pauseBtn">II</div>
+</div>
+<script>
+'use strict';
+/* CAT BATTLES! — tap-battle arena vs rival cats.
+   Tap a RIVAL cat to SLAP it. Tap YOUR cat to BLOCK its paw.
+   Rival winds up (paw up, red "!") 0.7s before it slaps — block in time.
+   Twist: 15s BACKUP! a second rival jumps in. 25s NAP TIME! your cat
+   falls asleep mid-fight (tap it 3x to wake). 40s GOLDEN FISH flies by
+   (+50, +2 lives). 50s CAT UNION! — every cat turns on YOU: swat the
+   giant paws swiping across the screen. Survive 60s. 9 lives.
+   Glow = good (fish, yarn). Red angry face = incoming slap.
+   Trend: "Cat Battles" — #3 fastest-growing new Roblox game, Nov 2026
+   (108.8M visits, 3.9M/day, ggrecon.com, Nov 2026 list). */
+const cv = document.getElementById('c');
+const ctx = cv.getContext('2d');
+const W = 480, H = 760;
+const GAME_URL = 'https://tuannx.github.io/daily-mini-games/games/cat-battles.html';
+const HS_KEY = 'catbattles-highscore';
+const SKIN_KEY = 'catbattles-crown';
+
+let AC = null, muted = false;
+function beep(f, d, type, vol, slide){
+  if (muted) return;
+  try {
+    AC = AC || new (window.AudioContext || window.webkitAudioContext)();
+    const o = AC.createOscillator(), g = AC.createGain();
+    o.type = type || 'sine'; o.frequency.value = f;
+    if (slide) o.frequency.exponentialRampToValueAtTime(slide, AC.currentTime + d);
+    g.gain.setValueAtTime(vol || 0.12, AC.currentTime);
+    g.gain.exponentialRampToValueAtTime(0.001, AC.currentTime + d);
+    o.connect(g); g.connect(AC.destination);
+    o.start(); o.stop(AC.currentTime + d);
+  } catch(e){}
+}
+const sSlap  = ()=>{ beep(300,.07,'square',.14,120); beep(900,.05,'sine',.08,1400); };
+const sBlock = ()=>{ beep(500,.09,'square',.11,700); };
+const sHurt  = ()=>{ [300,200,120].forEach((f,i)=>setTimeout(()=>beep(f,.14,'sawtooth',.12),i*80)); };
+const sFish  = ()=>{ [1318,1568,2093,2637].forEach((f,i)=>setTimeout(()=>beep(f,.1,'sine',.1),i*50)); };
+const sMeow  = ()=>{ beep(700,.18,'sine',.09,1100); };
+const sWake  = ()=>{ beep(400,.1,'square',.1,900); };
+const sUnion = ()=>{ [220,180,140].forEach((f,i)=>setTimeout(()=>beep(f,.2,'sawtooth',.12),i*110)); };
+const sWin   = ()=>{ [523,659,784,1046,1318].forEach((f,i)=>setTimeout(()=>beep(f,.14,'sine',.11),i*90)); };
+const sStart = ()=>{ [523,659,784].forEach((f,i)=>setTimeout(()=>beep(f,.1,'sine',.10),i*70)); };
+const sNear  = ()=>{ beep(1200,.08,'sine',.08,1600); };
+
+const R = (a,b)=>a+Math.random()*(b-a);
+const TAU = Math.PI*2;
+const clamp = (v,a,b)=>Math.max(a,Math.min(b,v));
+const dist = (ax,ay,bx,by)=>Math.hypot(ax-bx,ay-by);
+
+let best = +(localStorage.getItem(HS_KEY) || 0);
+let crown = localStorage.getItem(SKIN_KEY) === '1';
+
+// --- state ---
+let state = 'title'; // title | play | pause | over | win
+let score = 0, combo = 0, comboTimer = 0, timeLeft = 60, elapsed = 0;
+let lives = 9, slaps = 0, blocks = 0, defeated = 0;
+let popup = null, popupT = 0;
+let overLine = '';
+let shake = 0, flash = 0;
+let backupIn = false, napDone = false, fishDone = false, unionDone = false, unionT = 0;
+let yarnT = R(8,12), fish = null, yarn = null;
+let wave = 1, spawnT = 0;
+let parts = [], floatTxts = [], swipes = [], stars = [];
+let blockEndT = -9, lastBlockEnd = -9;
+
+const OVER_LINES = [
+  'Your cat filed for divorce.',
+  'The rival took your couch.',
+  '9 lives. 0 dignity.',
+  'The union has spoken.',
+  'You got out-catted.',
+  'Nap time is forever now.',
+];
+const RANKS = [
+  [0,'KITTEN'],[100,'SCRAPPER'],[250,'PAW MASTER'],[400,'ALLEY LEGEND'],[600,'CATFIGHT CHAMP']
+];
+function rankFor(s){ let r = RANKS[0][1]; for (const [t,n] of RANKS) if (s>=t) r = n; return r; }
+const RIVAL_NAMES = ['Mittens','Chairman Meow','Sir Hiss','Princess Claws','Mr. Biscuits','General Fluff','Baron Whiskers','Captain Hairball'];
+const RIVAL_COLORS = ['#ff9f43','#e17055','#a29bfe','#fd79a8','#00b894','#fdcb6e','#6c5ce7','#ff7675'];
+
+// --- player cat ---
+const P = { x: 105, y: 470, r: 52, blockT: 0, nap: false, napT: 0, wakeTaps: 0,
+            dizzy: 0, squash: 0, frenzyT: 0, face: '😼', jump: 0, swipeArm: 0 };
+// --- rivals ---
+let rivals = [];
+function spawnRival(i){
+  const n = defeated % RIVAL_NAMES.length;
+  rivals.push({
+    x: i === 0 ? 375 : 385, y: i === 0 ? 470 : 320, r: 52,
+    hp: 100, maxHp: 100, name: RIVAL_NAMES[n], color: RIVAL_COLORS[n],
+    slapCd: R(1.4,2.2), windup: 0, windupT: 0, squash: 0, dizzy: 0,
+    face: '😾', jump: 0, pawUp: 0, idx: i, dead: false, deadT: 0
+  });
+}
+spawnRival(0);
+
+// --- audience cats (background, react) ---
+const AUD = [
+  { x: 70,  y: 120, color: '#74b9ff', mood: '😸', jump: 0 },
+  { x: 240, y: 105, color: '#ffeaa7', mood: '😺', jump: 0 },
+  { x: 410, y: 120, color: '#fd79a8', mood: '😹', jump: 0 },
+];
+
+function setPopup(t, col){ popup = t; popupT = 1.1; popupCol = col || '#ffd23e'; }
+let popupCol = '#ffd23e';
+function floatTxt(x, y, t, col){ floatTxts.push({x, y, t, col: col||'#fff', life: 1}); }
+function burst(x, y, col, n, spd){
+  for (let i=0;i<(n||10);i++){
+    const a = R(0,TAU), s = R(40, spd||160);
+    parts.push({x, y, vx: Math.cos(a)*s, vy: Math.sin(a)*s-40, life: R(.4,.8), col, r: R(2,5), shape: Math.random()<.3?'star':'dot'});
+  }
+}
+function crowdReact(mood){
+  for (const a of AUD){ a.jump = 1; a.mood = mood; }
+  setTimeout(()=>{ for (const a of AUD) a.mood = '😺'; }, 900);
+}
+
+// --- actions ---
+function slapRival(rv){
+  if (state !== 'play' || rv.dead || P.nap || P.dizzy > 0) return;
+  if (unionT > 0) return; // during union you swat paws, not cats
+  const dmg = P.frenzyT > 0 ? 16 : 8;
+  rv.hp -= dmg; rv.squash = 1; rv.dizzy = .25; rv.face = '😵';
+  P.swipeArm = .3; P.jump = .5;
+  combo++; comboTimer = 3; slaps++;
+  const pts = 10 + Math.min(combo, 10) * 2;
+  score += pts;
+  floatTxt(rv.x, rv.y - 70, '+'+pts, '#ffd23e');
+  burst(rv.x, rv.y, '#ffd23e', 8, 140);
+  sSlap(); crowdReact('😸');
+  if (rv.hp <= 0){
+    rv.dead = true; rv.deadT = .9; defeated++;
+    score += 100;
+    floatTxt(rv.x, rv.y - 100, '+100 KO!', '#00ff88');
+    burst(rv.x, rv.y, rv.color, 22, 220);
+    burst(rv.x, rv.y, '#ffffff', 10, 180);
+    setPopup('KNOCKOUT!', '#00ff88'); sWin();
+    crowdReact('🤯');
+    spawnT = .9;
+  }
+}
+function blockCat(){
+  if (state !== 'play' || P.nap || unionT > 0) return;
+  P.blockT = .55; P.face = '😤'; sBlock();
+}
+function wakeTap(){
+  if (!P.nap) return;
+  P.wakeTaps++;
+  burst(P.x, P.y - 40, '#a29bfe', 6, 100); sWake();
+  if (P.wakeTaps >= 3){ P.nap = false; P.napT = 0; setPopup('AWAKE!', '#00ff88'); }
+}
+function rivalStrike(rv){
+  // telegraph done — the slap lands
+  if (P.blockT > 0){
+    blocks++; combo++; comboTimer = 3;
+    score += 5;
+    floatTxt(P.x, P.y - 80, 'BLOCKED! +5', '#00ff88');
+    burst(P.x + 40, P.y - 20, '#00ff88', 10, 150);
+    setPopup('BLOCKED!', '#00ff88'); sBlock();
+    crowdReact('😮');
+  } else {
+    lives--;
+    combo = 0;
+    P.dizzy = .9; P.face = '😵'; shake = 12;
+    burst(P.x, P.y - 30, '#ff4757', 12, 170);
+    floatTxt(P.x, P.y - 80, '-1 LIFE', '#ff4757');
+    sHurt(); crowdReact('😱');
+    // near-miss: block ended a blink ago
+    if (elapsed - lastBlockEnd < .18 && elapsed - lastBlockEnd > 0){
+      score += 5; floatTxt(P.x, P.y - 110, 'SO CLOSE! +5', '#ffd23e'); sNear();
+    }
+    if (lives <= 0) gameOver();
+  }
+  rv.slapCd = R(1.5, 2.4) / (1 + wave * .06);
+  rv.windup = 0; rv.pawUp = 0;
+}
+function gameOver(){
+  state = 'over';
+  overLine = OVER_LINES[Math.floor(Math.random()*OVER_LINES.length)];
+  if (score > best){ best = score; localStorage.setItem(HS_KEY, best); }
+  if (score >= 500 && !crown){ crown = true; localStorage.setItem(SKIN_KEY, '1'); }
+}
+function winGame(){
+  state = 'win';
+  if (score > best){ best = score; localStorage.setItem(HS_KEY, best); }
+  if (score >= 500 && !crown){ crown = true; localStorage.setItem(SKIN_KEY, '1'); }
+  sWin();
+}
+function reset(){
+  score = 0; combo = 0; comboTimer = 0; timeLeft = 60; elapsed = 0;
+  lives = 9; slaps = 0; blocks = 0; defeated = 0; wave = 1;
+  backupIn = false; napDone = false; fishDone = false; unionDone = false; unionT = 0;
+  yarnT = R(8,12); fish = null; yarn = null; swipes = []; parts = []; floatTxts = [];
+  P.blockT = 0; P.nap = false; P.napT = 0; P.wakeTaps = 0; P.dizzy = 0; P.frenzyT = 0; P.face = '😼';
+  rivals = []; spawnRival(0);
+  state = 'play'; sStart();
+}
+
+// --- events (escalation timeline) ---
+function timeline(){
+  if (!backupIn && elapsed >= 15){
+    backupIn = true; wave = 2;
+    spawnRival(1);
+    setPopup('BACKUP!', '#ff4757'); sMeow(); sUnion();
+    floatTxt(375, 240, '2 CATS NOW', '#ff4757');
+  }
+  if (!napDone && elapsed >= 25){
+    napDone = true;
+    P.nap = true; P.napT = 4.5; P.wakeTaps = 0; P.face = '😴';
+    setPopup('NAP TIME!', '#a29bfe'); sMeow();
+    floatTxt(P.x, P.y - 90, 'TAP ME 3x!', '#a29bfe');
+  }
+  if (!fishDone && elapsed >= 40){
+    fishDone = true;
+    fish = { x: -60, y: 200, vx: 260, caught: false };
+    setPopup('GOLDEN FISH!', '#ffd23e'); sFish();
+  }
+  if (!unionDone && elapsed >= 50){
+    unionDone = true; unionT = 10;
+    setPopup('CAT UNION!', '#ff4757'); sUnion(); shake = 14;
+    for (const rv of rivals){ rv.face = '😈'; rv.windup = 0; }
+    P.face = '😈';
+  }
+}
+function spawnSwipe(){
+  const side = Math.random() < .5 ? 'L' : 'R';
+  const y = R(180, 620);
+  swipes.push({
+    x: side === 'L' ? -70 : W + 70, y, vx: side === 'L' ? 320 : -320,
+    rot: side === 'L' ? .7 : -.7, life: 2.2, hit: false
+  });
+}
+
+// --- update ---
+let last = performance.now();
+function update(dt){
+  if (state !== 'play') return;
+  elapsed += dt; timeLeft = Math.max(0, 60 - elapsed);
+  if (timeLeft <= 0){ winGame(); return; }
+  timeline();
+
+  if (P.blockT > 0){ P.blockT -= dt; if (P.blockT <= 0){ lastBlockEnd = elapsed; P.face = P.nap ? '😴' : '😼'; } }
+  if (P.dizzy > 0) P.dizzy -= dt;
+  if (P.squash > 0) P.squash -= dt * 3;
+  if (P.swipeArm > 0) P.swipeArm -= dt;
+  if (P.jump > 0) P.jump -= dt;
+  if (P.frenzyT > 0) P.frenzyT -= dt;
+  if (comboTimer > 0){ comboTimer -= dt; if (comboTimer <= 0) combo = 0; }
+
+  if (P.nap){
+    P.napT -= dt;
+    if (Math.random() < dt * 6) parts.push({x: P.x + R(10,40), y: P.y - 55, vx: R(0,15), vy: -30, life: .8, col: '#a29bfe', r: 7, shape: 'z'});
+    if (P.napT <= 0){ P.nap = false; setPopup('AWAKE!', '#00ff88'); }
+  }
+
+  // rivals
+  for (const rv of rivals){
+    if (rv.dead){ rv.deadT -= dt; continue; }
+    if (rv.squash > 0) rv.squash -= dt * 3;
+    if (rv.dizzy > 0) rv.dizzy -= dt;
+    if (rv.jump > 0) rv.jump -= dt;
+    if (unionT > 0){ rv.face = '😈'; continue; } // union: no normal slaps
+    if (rv.windup > 0){
+      rv.windup -= dt; rv.pawUp = 1;
+      if (rv.windup <= 0) rivalStrike(rv);
+    } else {
+      rv.slapCd -= dt;
+      if (rv.slapCd <= 0){
+        rv.windup = .7; rv.windupT = .7; rv.face = '😠';
+        sWarn();
+      }
+    }
+    if (rv.dizzy <= 0 && rv.windup <= 0) rv.face = '😾';
+  }
+  // respawn after KO
+  if (spawnT > 0){
+    spawnT -= dt;
+    if (spawnT <= 0){
+      const alive = rivals.filter(r => !r.dead).length;
+      const maxR = backupIn ? 2 : 1;
+      if (alive < maxR){
+        const idx = rivals.length === 0 ? 0 : (rivals.some(r => r.idx === 1) ? 0 : 1);
+        spawnRival(idx);
+        setPopup(RIVAL_NAMES[defeated % RIVAL_NAMES.length].toUpperCase() + '!', '#fff');
+      }
+    }
+  }
+  rivals = rivals.filter(r => !r.dead || r.deadT > 0);
+
+  // union swipes
+  if (unionT > 0){
+    unionT -= dt;
+    if (Math.random() < dt * 1.1) spawnSwipe();
+    if (unionT <= 0){
+      P.face = '😼';
+      for (const rv of rivals) rv.face = '😾';
+      setPopup('BACK TO WORK!', '#00ff88');
+    }
+  }
+  for (const s of swipes){ s.x += s.vx * dt; s.life -= dt; }
+  for (let i = swipes.length - 1; i >= 0; i--){
+    const s = swipes[i];
+    if (s.life <= 0 || s.x < -120 || s.x > W + 120){
+      if (!s.hit && s.life > 0){ /* flew past center = missed swat */
+        lives--; combo = 0; shake = 10; sHurt();
+        floatTxt(W/2, 380, '-1 LIFE', '#ff4757');
+        if (lives <= 0){ gameOver(); return; }
+      }
+      swipes.splice(i, 1);
+    }
+  }
+
+  // golden fish
+  if (fish){
+    fish.x += fish.vx * dt;
+    if (fish.x > W + 80) fish = null;
+  }
+  // yarn ball
+  yarnT -= dt;
+  if (!yarn && yarnT <= 0){
+    yarn = { x: R(90, 390), y: R(560, 660), t: 6, bob: 0 };
+    yarnT = R(11, 15);
+  }
+  if (yarn){
+    yarn.t -= dt; yarn.bob += dt;
+    if (yarn.t <= 0) yarn = null;
+  }
+
+  // particles / floats / popup / shake
+  for (let i = parts.length - 1; i >= 0; i--){
+    const p = parts[i]; p.x += p.vx * dt; p.y += p.vy * dt; p.vy += 300 * dt; p.life -= dt;
+    if (p.life <= 0) parts.splice(i, 1);
+  }
+  for (let i = floatTxts.length - 1; i >= 0; i--){
+    const f = floatTxts[i]; f.y -= 40 * dt; f.life -= dt * .9;
+    if (f.life <= 0) floatTxts.splice(i, 1);
+  }
+  if (popupT > 0) popupT -= dt;
+  if (shake > 0) shake *= Math.pow(.001, dt);
+  if (flash > 0) flash -= dt;
+  for (const a of AUD) if (a.jump > 0) a.jump -= dt * 2;
+}
+function sWarn(){ beep(660,.12,'square',.07,440); }
+
+// --- drawing ---
+function drawCat(x, y, r, color, face, opts){
+  opts = opts || {};
+  const sq = opts.squash || 0;
+  const j = opts.jump || 0;
+  const sy = y - Math.sin(Math.min(j, 1) * Math.PI) * 14;
+  const w = r * (1 + sq * .25), h = r * (1 - sq * .22);
+  ctx.save();
+  ctx.translate(x, sy);
+  // tail
+  ctx.strokeStyle = color; ctx.lineWidth = 9; ctx.lineCap = 'round';
+  const wag = Math.sin(performance.now() / 180 + x) * 8;
+  ctx.beginPath(); ctx.moveTo(-w * .8, 10);
+  ctx.quadraticCurveTo(-w * 1.5, -10 + wag, -w * 1.1, -34 + wag);
+  ctx.stroke();
+  // body
+  ctx.fillStyle = color;
+  ctx.beginPath(); ctx.ellipse(0, h * .55, w * .95, h * .62, 0, 0, TAU); ctx.fill();
+  // ears
+  ctx.beginPath(); ctx.moveTo(-w * .55, -h * .55); ctx.lineTo(-w * .75, -h * 1.15); ctx.lineTo(-w * .15, -h * .8); ctx.closePath(); ctx.fill();
+  ctx.beginPath(); ctx.moveTo(w * .55, -h * .55); ctx.lineTo(w * .75, -h * 1.15); ctx.lineTo(w * .15, -h * .8); ctx.closePath(); ctx.fill();
+  ctx.fillStyle = '#ff8fa3';
+  ctx.beginPath(); ctx.moveTo(-w * .52, -h * .62); ctx.lineTo(-w * .62, -h * .95); ctx.lineTo(-w * .28, -h * .78); ctx.closePath(); ctx.fill();
+  ctx.beginPath(); ctx.moveTo(w * .52, -h * .62); ctx.lineTo(w * .62, -h * .95); ctx.lineTo(w * .28, -h * .78); ctx.closePath(); ctx.fill();
+  // head
+  ctx.fillStyle = color;
+  ctx.beginPath(); ctx.arc(0, -h * .35, w * .62, 0, TAU); ctx.fill();
+  // stripes
+  ctx.strokeStyle = 'rgba(0,0,0,.18)'; ctx.lineWidth = 4;
+  ctx.beginPath(); ctx.moveTo(-w * .2, -h * .95); ctx.lineTo(-w * .2, -h * .75); ctx.stroke();
+  ctx.beginPath(); ctx.moveTo(0, -h * .98); ctx.lineTo(0, -h * .78); ctx.stroke();
+  ctx.beginPath(); ctx.moveTo(w * .2, -h * .95); ctx.lineTo(w * .2, -h * .75); ctx.stroke();
+  // face emoji
+  ctx.font = (w * .62) + 'px serif';
+  ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+  ctx.fillText(face, 0, -h * .32);
+  // crown unlock
+  if (opts.crown){
+    ctx.font = '30px serif';
+    ctx.fillText('👑', 0, -h * 1.18);
+  }
+  // block paw
+  if (opts.block){
+    ctx.fillStyle = '#fff';
+    ctx.beginPath(); ctx.arc(w * .85, -h * .1, 16, 0, TAU); ctx.fill();
+    ctx.fillStyle = '#ff8fa3';
+    ctx.beginPath(); ctx.arc(w * .85, -h * .1, 7, 0, TAU); ctx.fill();
+    ctx.strokeStyle = '#2d3436'; ctx.lineWidth = 2;
+    ctx.beginPath(); ctx.arc(w * .85, -h * .1, 16, 0, TAU); ctx.stroke();
+  }
+  // wind-up paw (rival about to slap)
+  if (opts.pawUp){
+    ctx.save();
+    ctx.translate(w * .95, -h * .9);
+    ctx.rotate(.5);
+    ctx.fillStyle = '#fff';
+    ctx.beginPath(); ctx.ellipse(0, 0, 14, 20, 0, 0, TAU); ctx.fill();
+    ctx.fillStyle = '#ff8fa3';
+    ctx.beginPath(); ctx.arc(0, 4, 6, 0, TAU); ctx.fill();
+    ctx.restore();
+    ctx.fillStyle = '#ff4757'; ctx.font = 'bold 30px Arial';
+    ctx.fillText('!', w * .9, -h * 1.45);
+  }
+  // dizzy stars
+  if (opts.dizzy){
+    ctx.font = '20px serif';
+    ctx.fillText('💫', -w * .7, -h * 1.1 + Math.sin(performance.now() / 120) * 4);
+    ctx.fillText('💫', w * .7, -h * 1.2 - Math.sin(performance.now() / 120) * 4);
+  }
+  // nap Z
+  if (opts.nap){
+    ctx.font = 'bold 24px Arial'; ctx.fillStyle = '#a29bfe';
+    ctx.fillText('Z', w * .75, -h * 1.1);
+    ctx.font = 'bold 18px Arial';
+    ctx.fillText('Z', w * .95, -h * 1.4);
+  }
+  ctx.restore();
+  // swipe arm (player slapping)
+  if (opts.swipeArm > 0){
+    ctx.save();
+    ctx.globalAlpha = Math.min(1, opts.swipeArm * 4);
+    ctx.translate(x + w, sy - 10);
+    ctx.rotate(-.6 + (0.3 - opts.swipeArm) * 2);
+    ctx.fillStyle = '#fff';
+    ctx.beginPath(); ctx.ellipse(0, 0, 26, 14, 0, 0, TAU); ctx.fill();
+    ctx.fillStyle = '#ff8fa3';
+    ctx.beginPath(); ctx.arc(8, 0, 6, 0, TAU); ctx.fill();
+    ctx.restore();
+  }
+}
+function drawPaw(x, y, rot, scale){
+  ctx.save();
+  ctx.translate(x, y); ctx.rotate(rot); ctx.scale(scale, scale);
+  ctx.fillStyle = '#fff';
+  ctx.beginPath(); ctx.ellipse(0, 0, 34, 26, 0, 0, TAU); ctx.fill();
+  ctx.fillStyle = '#ff8fa3';
+  ctx.beginPath(); ctx.arc(-14, -16, 8, 0, TAU); ctx.arc(0, -20, 8, 0, TAU); ctx.arc(14, -16, 8, 0, TAU); ctx.fill();
+  ctx.beginPath(); ctx.arc(0, 2, 12, 0, TAU); ctx.fill();
+  ctx.strokeStyle = '#2d3436'; ctx.lineWidth = 3;
+  ctx.beginPath(); ctx.ellipse(0, 0, 34, 26, 0, 0, TAU); ctx.stroke();
+  ctx.restore();
+}
+function drawFish(x, y, golden){
+  ctx.save();
+  ctx.translate(x, y + Math.sin(performance.now() / 200) * 6);
+  if (golden){
+    ctx.shadowColor = '#ffd23e'; ctx.shadowBlur = 22;
+  }
+  ctx.fillStyle = golden ? '#ffd23e' : '#ffa502';
+  ctx.beginPath(); ctx.ellipse(0, 0, 34, 16, 0, 0, TAU); ctx.fill();
+  ctx.beginPath(); ctx.moveTo(-28, 0); ctx.lineTo(-48, -14); ctx.lineTo(-48, 14); ctx.closePath(); ctx.fill();
+  ctx.fillStyle = '#2d3436';
+  ctx.beginPath(); ctx.arc(16, -4, 4, 0, TAU); ctx.fill();
+  ctx.font = '22px serif'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+  ctx.fillText('✨', -2, -2);
+  ctx.restore();
+}
+function drawYarn(x, y, bob){
+  ctx.save();
+  ctx.translate(x, y + Math.sin(bob * 3) * 4);
+  ctx.shadowColor = '#ff6bff'; ctx.shadowBlur = 18;
+  ctx.fillStyle = '#ff6bff';
+  ctx.beginPath(); ctx.arc(0, 0, 22, 0, TAU); ctx.fill();
+  ctx.shadowBlur = 0;
+  ctx.strokeStyle = 'rgba(255,255,255,.7)'; ctx.lineWidth = 2;
+  ctx.beginPath(); ctx.arc(0, 0, 15, .3, 2.6); ctx.stroke();
+  ctx.beginPath(); ctx.arc(0, 0, 18, 2.8, 5.4); ctx.stroke();
+  ctx.font = '16px serif'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+  ctx.fillText('🧶', 0, 0);
+  ctx.restore();
+}
+
+function draw(){
+  ctx.clearRect(0, 0, W, H);
+  ctx.save();
+  if (shake > .3) ctx.translate(R(-shake, shake), R(-shake, shake));
+
+  // --- room background ---
+  const bg = ctx.createLinearGradient(0, 0, 0, H);
+  bg.addColorStop(0, '#2d1b4e'); bg.addColorStop(.55, '#241536'); bg.addColorStop(1, '#1a0f28');
+  ctx.fillStyle = bg; ctx.fillRect(-20, -20, W + 40, H + 40);
+  // window + moon
+  ctx.fillStyle = '#3d2b63'; ctx.fillRect(150, 40, 180, 110);
+  ctx.fillStyle = '#ffeaa7';
+  ctx.beginPath(); ctx.arc(280, 82, 26, 0, TAU); ctx.fill();
+  ctx.fillStyle = '#2d1b4e';
+  ctx.beginPath(); ctx.arc(268, 76, 22, 0, TAU); ctx.fill();
+  ctx.fillStyle = '#fff';
+  for (let i = 0; i < 12; i++){
+    const sx = (i * 67) % W, sy = 30 + (i * 37) % 90;
+    ctx.globalAlpha = .5 + Math.sin(performance.now() / 500 + i) * .3;
+    ctx.beginPath(); ctx.arc(sx, sy, 2, 0, TAU); ctx.fill();
+  }
+  ctx.globalAlpha = 1;
+  // posters
+  ctx.fillStyle = '#e17055'; ctx.fillRect(30, 60, 70, 46);
+  ctx.fillStyle = '#fff'; ctx.font = 'bold 11px Arial'; ctx.textAlign = 'center';
+  ctx.fillText('NO DOGS', 65, 80); ctx.fillText('ALLOWED', 65, 94);
+  ctx.fillStyle = '#00b894'; ctx.fillRect(380, 60, 70, 46);
+  ctx.fillStyle = '#fff'; ctx.fillText('FISH', 415, 80); ctx.fillText('FRIDAY', 415, 94);
+  // floor
+  ctx.fillStyle = '#170d24'; ctx.fillRect(0, 620, W, 140);
+  ctx.fillStyle = 'rgba(255,255,255,.05)'; ctx.fillRect(0, 620, W, 4);
+  // couch (gets scratched)
+  ctx.fillStyle = '#6c5ce7'; ctx.fillRect(150, 640, 180, 60);
+  ctx.fillStyle = '#a29bfe'; ctx.fillRect(150, 628, 180, 18);
+  ctx.fillStyle = '#5b4bc4'; ctx.fillRect(150, 700, 180, 14);
+  ctx.strokeStyle = 'rgba(255,255,255,.5)'; ctx.lineWidth = 2;
+  ctx.beginPath(); ctx.moveTo(170, 650); ctx.lineTo(185, 690); ctx.moveTo(185, 650); ctx.lineTo(200, 690); ctx.stroke();
+  ctx.font = '18px serif'; ctx.textAlign = 'center'; ctx.fillText('🛋️', 330, 668);
+
+  // audience cats
+  for (const a of AUD){
+    const j = a.jump > 0 ? Math.sin(a.jump * Math.PI) * 16 : 0;
+    drawCat(a.x, a.y - j, 30, a.color, a.mood, { squash: 0 });
+  }
+
+  // yarn + fish (glow = good)
+  if (yarn) drawYarn(yarn.x, yarn.y, yarn.bob);
+  if (fish) drawFish(fish.x, fish.y, true);
+
+  // rivals
+  for (const rv of rivals){
+    if (rv.dead) continue;
+    drawCat(rv.x, rv.y, rv.r, rv.color, rv.face, {
+      squash: rv.squash, jump: rv.jump, dizzy: rv.dizzy > 0, pawUp: rv.windup > 0
+    });
+    // name + HP bar
+    ctx.font = 'bold 12px Arial'; ctx.textAlign = 'center'; ctx.fillStyle = '#fff';
+    ctx.fillText(rv.name.toUpperCase(), rv.x, rv.y - 108);
+    ctx.fillStyle = 'rgba(0,0,0,.5)'; ctx.fillRect(rv.x - 42, rv.y - 100, 84, 8);
+    ctx.fillStyle = rv.hp > 40 ? '#00ff88' : '#ff4757';
+    ctx.fillRect(rv.x - 42, rv.y - 100, 84 * Math.max(0, rv.hp / rv.maxHp), 8);
+  }
+  // player cat
+  const frenzyGlow = P.frenzyT > 0;
+  if (frenzyGlow){ ctx.shadowColor = '#ff6bff'; ctx.shadowBlur = 24; }
+  drawCat(P.x, P.y, P.r, P.frenzyT > 0 ? '#ff9ff3' : '#ffa502', P.face, {
+    squash: P.squash, jump: P.jump, dizzy: P.dizzy > 0, block: P.blockT > 0,
+    nap: P.nap, swipeArm: P.swipeArm, crown
+  });
+  ctx.shadowBlur = 0;
+  ctx.font = 'bold 12px Arial'; ctx.textAlign = 'center'; ctx.fillStyle = '#fff';
+  ctx.fillText('YOU', P.x, P.y - 108);
+  if (P.frenzyT > 0){
+    ctx.fillStyle = '#ff6bff'; ctx.font = 'bold 13px Arial';
+    ctx.fillText('FRENZY ' + Math.ceil(P.frenzyT) + 's', P.x, P.y - 122);
+  }
+  if (P.nap){
+    ctx.fillStyle = '#a29bfe'; ctx.font = 'bold 14px Arial';
+    ctx.fillText('TAP ME ' + (3 - P.wakeTaps) + 'x!', P.x, P.y + 84);
+  }
+
+  // union swipes
+  for (const s of swipes) drawPaw(s.x, s.y, s.rot, 1.3);
+
+  // particles
+  for (const p of parts){
+    ctx.globalAlpha = Math.max(0, p.life);
+    ctx.fillStyle = p.col;
+    if (p.shape === 'star'){ ctx.font = p.r * 3 + 'px serif'; ctx.textAlign = 'center'; ctx.fillText('⭐', p.x, p.y); }
+    else if (p.shape === 'z'){ ctx.font = 'bold 18px Arial'; ctx.fillText('Z', p.x, p.y); }
+    else { ctx.beginPath(); ctx.arc(p.x, p.y, p.r, 0, TAU); ctx.fill(); }
+  }
+  ctx.globalAlpha = 1;
+  // floating texts
+  for (const f of floatTxts){
+    ctx.globalAlpha = Math.max(0, f.life);
+    ctx.font = 'bold 18px Arial'; ctx.textAlign = 'center';
+    ctx.fillStyle = f.col; ctx.fillText(f.t, f.x, f.y);
+  }
+  ctx.globalAlpha = 1;
+
+  // --- HUD ---
+  ctx.fillStyle = 'rgba(0,0,0,.45)'; ctx.fillRect(0, 0, W, 52);
+  ctx.textAlign = 'left'; ctx.textBaseline = 'middle';
+  ctx.fillStyle = '#ffd23e'; ctx.font = 'bold 20px Arial';
+  ctx.fillText('⭐ ' + score, 12, 20);
+  ctx.fillStyle = '#fff'; ctx.font = 'bold 13px Arial';
+  ctx.fillText('BEST ' + best, 12, 40);
+  ctx.textAlign = 'center';
+  ctx.fillStyle = combo > 1 ? '#ff6bff' : '#fff';
+  ctx.font = 'bold 18px Arial';
+  ctx.fillText(combo > 1 ? 'COMBO x' + combo : rankFor(score), W / 2, 20);
+  ctx.fillStyle = '#ffd23e'; ctx.font = 'bold 13px Arial';
+  ctx.fillText('⏱ ' + Math.ceil(timeLeft) + 's', W / 2, 40);
+  ctx.textAlign = 'right';
+  ctx.fillStyle = '#ff6bff'; ctx.font = 'bold 16px Arial';
+  ctx.fillText('♥'.repeat(Math.min(lives, 9)), W - 12, 26);
+  ctx.fillStyle = '#fff'; ctx.font = 'bold 11px Arial';
+  ctx.fillText(lives + ' LIVES', W - 12, 44);
+  // time bar
+  ctx.fillStyle = 'rgba(255,255,255,.15)'; ctx.fillRect(0, 52, W, 5);
+  ctx.fillStyle = timeLeft > 10 ? '#00ff88' : '#ff4757';
+  ctx.fillRect(0, 52, W * (timeLeft / 60), 5);
+
+  // popup
+  if (popupT > 0){
+    ctx.globalAlpha = Math.min(1, popupT * 2);
+    ctx.textAlign = 'center'; ctx.font = 'bold 34px Arial';
+    ctx.fillStyle = popupCol;
+    ctx.strokeStyle = 'rgba(0,0,0,.6)'; ctx.lineWidth = 6;
+    const py = 300 + Math.sin(performance.now() / 90) * 3;
+    ctx.strokeText(popup, W / 2, py); ctx.fillText(popup, W / 2, py);
+    ctx.globalAlpha = 1;
+  }
+
+  // --- screens ---
+  if (state === 'title'){
+    ctx.fillStyle = 'rgba(13,11,30,.72)'; ctx.fillRect(0, 0, W, H);
+    ctx.textAlign = 'center';
+    ctx.font = 'bold 46px Arial'; ctx.fillStyle = '#ffd23e';
+    ctx.fillText('CAT', W / 2, 220);
+    ctx.fillText('BATTLES!', W / 2, 272);
+    ctx.font = '44px serif'; ctx.fillText('😾', W / 2, 330);
+    ctx.fillStyle = '#fff'; ctx.font = 'bold 17px Arial';
+    ctx.fillText('Slap the cat. Don\'t get slapped.', W / 2, 380);
+    ctx.fillStyle = '#a29bfe'; ctx.font = '15px Arial';
+    ctx.fillText('Tap rival = SLAP  •  Tap your cat = BLOCK', W / 2, 412);
+    ctx.fillText('9 lives. 60 seconds. One crown.', W / 2, 436);
+    ctx.fillStyle = '#ffd23e'; ctx.font = 'bold 20px Arial';
+    ctx.fillText('▶ TAP TO FIGHT', W / 2, 500 + Math.sin(performance.now() / 300) * 4);
+    if (best > 0){ ctx.fillStyle = '#fff'; ctx.font = 'bold 14px Arial'; ctx.fillText('BEST ' + best + '  •  ' + rankFor(best), W / 2, 540); }
+    if (crown){ ctx.font = '16px serif'; ctx.fillText('👑 Crown unlocked — your cat wears it', W / 2, 566); }
+  }
+  if (state === 'pause'){
+    ctx.fillStyle = 'rgba(13,11,30,.7)'; ctx.fillRect(0, 0, W, H);
+    ctx.textAlign = 'center'; ctx.fillStyle = '#fff'; ctx.font = 'bold 34px Arial';
+    ctx.fillText('PAUSED', W / 2, 360);
+    ctx.font = '16px Arial'; ctx.fillText('Tap to resume', W / 2, 400);
+  }
+  if (state === 'over' || state === 'win'){
+    ctx.fillStyle = 'rgba(13,11,30,.8)'; ctx.fillRect(0, 0, W, H);
+    ctx.textAlign = 'center';
+    ctx.font = '44px serif';
+    ctx.fillText(state === 'win' ? '🏆' : '😹', W / 2, 220);
+    ctx.font = 'bold 36px Arial';
+    ctx.fillStyle = state === 'win' ? '#00ff88' : '#ff4757';
+    ctx.fillText(state === 'win' ? 'YOU SURVIVED!' : 'OUT-CATTED!', W / 2, 280);
+    ctx.fillStyle = '#fff'; ctx.font = '17px Arial';
+    ctx.fillText(overLine || 'The crowd demands a rematch.', W / 2, 322);
+    ctx.fillStyle = '#ffd23e'; ctx.font = 'bold 26px Arial';
+    ctx.fillText('SCORE ' + score, W / 2, 372);
+    ctx.fillStyle = '#ff6bff'; ctx.font = 'bold 18px Arial';
+    ctx.fillText('RANK: ' + rankFor(score), W / 2, 404);
+    ctx.fillStyle = '#fff'; ctx.font = '15px Arial';
+    ctx.fillText('Slaps ' + slaps + '  •  Blocks ' + blocks + '  •  KOs ' + defeated, W / 2, 434);
+    ctx.fillText('BEST ' + best, W / 2, 458);
+    if (score >= 500) { ctx.fillStyle = '#ffd23e'; ctx.fillText('👑 CROWN UNLOCKED!', W / 2, 484); }
+    // buttons
+    drawBtn(W / 2 - 130, 520, 260, 48, '#00ff88', '#06281a', '↻ FIGHT AGAIN');
+    drawBtn(W / 2 - 130, 580, 260, 48, '#ffd23e', '#3a2a00', '📋 COPY RESULT');
+    ctx.fillStyle = '#a29bfe'; ctx.font = '13px Arial';
+    ctx.fillText('Tap anywhere else to restart', W / 2, 660);
+  }
+  ctx.restore();
+}
+function drawBtn(x, y, w, h, bg, fg, label){
+  ctx.fillStyle = bg;
+  ctx.beginPath(); ctx.roundRect(x, y, w, h, 12); ctx.fill();
+  ctx.fillStyle = fg; ctx.font = 'bold 17px Arial'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+  ctx.fillText(label, x + w / 2, y + h / 2 + 1);
+  ctx.textBaseline = 'alphabetic';
+}
+
+// --- input ---
+function toGame(e){
+  const r = cv.getBoundingClientRect();
+  const cx = (e.clientX - r.left) * (W / r.width);
+  const cy = (e.clientY - r.top) * (H / r.height);
+  return { x: cx, y: cy };
+}
+function onTap(e){
+  e.preventDefault();
+  const p = toGame(e);
+  if (state === 'title'){ reset(); return; }
+  if (state === 'pause'){ state = 'play'; return; }
+  if (state === 'over' || state === 'win'){
+    // copy button
+    if (p.x > W / 2 - 130 && p.x < W / 2 + 130 && p.y > 580 && p.y < 628){
+      copyResult(); return;
+    }
+    reset(); return;
+  }
+  if (state !== 'play') return;
+  // union: swat paws
+  if (unionT > 0){
+    for (let i = 0; i < swipes.length; i++){
+      const s = swipes[i];
+      if (dist(p.x, p.y, s.x, s.y) < 70){
+        s.hit = true; score += 5; combo++; comboTimer = 3;
+        burst(s.x, s.y, '#00ff88', 10, 160);
+        floatTxt(s.x, s.y - 30, 'SWATTED! +5', '#00ff88');
+        swipes.splice(i, 1); sSlap(); return;
+      }
+    }
+    return;
+  }
+  // golden fish
+  if (fish && dist(p.x, p.y, fish.x, fish.y) < 55){
+    fish = null; score += 50; lives = Math.min(9, lives + 2);
+    floatTxt(W / 2, 240, '+50 FISH! +2 ♥', '#ffd23e');
+    setPopup('GOLDEN FISH!', '#ffd23e'); sFish();
+    burst(W / 2, 240, '#ffd23e', 16, 180);
+    return;
+  }
+  // yarn ball
+  if (yarn && dist(p.x, p.y, yarn.x, yarn.y) < 34){
+    yarn = null; P.frenzyT = 4;
+    setPopup('FRENZY!', '#ff6bff'); sFish();
+    floatTxt(P.x, P.y - 90, 'DOUBLE DAMAGE!', '#ff6bff');
+    return;
+  }
+  // napping cat: wake taps
+  if (P.nap && dist(p.x, p.y, P.x, P.y) < 90){ wakeTap(); return; }
+  // tap own cat = block
+  if (dist(p.x, p.y, P.x, P.y) < 90){ blockCat(); return; }
+  // tap rival = slap (nearest within range)
+  let bestR = null, bestD = 1e9;
+  for (const rv of rivals){
+    if (rv.dead) continue;
+    const d = dist(p.x, p.y, rv.x, rv.y);
+    if (d < bestD){ bestD = d; bestR = rv; }
+  }
+  if (bestR && bestD < 110) slapRival(bestR);
+}
+function copyResult(){
+  const txt = 'I scored ' + score + ' in CAT BATTLES! (' + rankFor(score) + ') — ' + overLine + ' ' + GAME_URL;
+  const done = ()=>{ setPopup('COPIED!', '#00ff88'); };
+  if (navigator.clipboard && navigator.clipboard.writeText){
+    navigator.clipboard.writeText(txt).then(done).catch(()=>{ fallbackCopy(txt); done(); });
+  } else { fallbackCopy(txt); done(); }
+}
+function fallbackCopy(t){
+  const ta = document.createElement('textarea');
+  ta.value = t; document.body.appendChild(ta); ta.select();
+  try { document.execCommand('copy'); } catch(e){}
+  document.body.removeChild(ta);
+}
+cv.addEventListener('pointerdown', onTap);
+document.getElementById('pauseBtn').addEventListener('click', ()=>{
+  if (state === 'play') state = 'pause';
+  else if (state === 'pause') state = 'play';
+});
+document.getElementById('muteBtn').addEventListener('click', function(){
+  muted = !muted; this.textContent = muted ? '✕' : '♪';
+});
+window.addEventListener('keydown', (e)=>{
+  if (e.code === 'Space'){ e.preventDefault();
+    if (state === 'title' || state === 'over' || state === 'win'){ reset(); return; }
+    if (state === 'play'){
+      let bestR = null, bestD = 1e9;
+      for (const rv of rivals){ if (rv.dead) continue; const d = Math.abs(rv.x - P.x); if (d < bestD){ bestD = d; bestR = rv; } }
+      if (bestR) slapRival(bestR);
+    }
+  }
+  if (e.code === 'KeyX' || e.code === 'ShiftLeft'){ if (state === 'play') blockCat(); }
+  if (e.code === 'KeyW'){ if (state === 'play') wakeTap(); }
+  if (e.code === 'KeyP'){ if (state === 'play') state = 'pause'; else if (state === 'pause') state = 'play'; }
+});
+
+// --- loop ---
+function loop(t){
+  const dt = Math.min(.05, (t - last) / 1000);
+  last = t;
+  update(dt);
+  draw();
+  requestAnimationFrame(loop);
+}
+requestAnimationFrame(loop);
+</script>
+</body>
+</html>
