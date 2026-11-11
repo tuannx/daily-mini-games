@@ -366,5 +366,14 @@
   "mechanic": "Tap-battle cat arena (slap rival, block its paw; backup cat at 15s, your cat naps at 25s, golden fish at 40s, CAT UNION at 50s)",
   "tagline": "Slap the rival cat. Block its paw. At 25s your cat naps on the job — and at 50s they ALL turn on you.",
   "title": "CAT BATTLES!"
+ },
+ {
+  "date": "2026-11-11",
+  "day": 42,
+  "emoji": "🩴",
+  "file": "games/moms-slipper.html",
+  "mechanic": "Slingshot slipper physics (drag, aim, throw; kid ducks/jumps/hides, pillow shield at 12s, toy revenge at 25s, golden slipper at 40s, grandma at 50s)",
+  "tagline": "Drag, aim, throw. The kid ducks. The pillow blocks. Grandma has two.",
+  "title": "MOM'S SLIPPER!"
  }
 ]
