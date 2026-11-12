@@ -1,0 +1,645 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<title>DON'T DROP THE GLASS! — Day 43</title>
+<style>
+  * { margin:0; padding:0; box-sizing:border-box; }
+  html,body { width:100%; height:100%; background:#0b0618; overflow:hidden; touch-action:none;
+    font-family:'Trebuchet MS','Comic Sans MS',sans-serif; }
+  #wrap { position:fixed; inset:0; display:flex; align-items:center; justify-content:center; }
+  canvas { display:block; background:#140a2e; border-radius:12px;
+    box-shadow:0 0 40px #7b2ff7aa, 0 0 90px #ff2d9555; }
+</style>
+</head>
+<body>
+<div id="wrap"><canvas id="c" width="480" height="720"></canvas></div>
+<script>
+"use strict";
+// DON'T DROP THE GLASS! — Day 43
+// Carry a wobbling tower of glasses across the restaurant. Tilt too far = SHATTER.
+// Twist ladder: 12s SOUP FLOOR (slippery) -> 20s KID ZONE -> 30s DOG DASH ->
+// 40s GOLDEN CHAMPAGNE -> 50s LAST CALL (bread rolls rain). Survive 60s to win.
+const cv = document.getElementById('c');
+const ctx = cv.getContext('2d');
+const W = 480, H = 720;
+const FLOOR = 640;
+
+// ---------- audio (WebAudio, self-generated) ----------
+let AC = null;
+function audio(){ if(!AC){ try{ AC = new (window.AudioContext||window.webkitAudioContext)(); }catch(e){} } return AC; }
+function beep(f, d, type, v){
+  const ac = audio(); if(!ac) return;
+  const o = ac.createOscillator(), g = ac.createGain();
+  o.type = type||'sine'; o.frequency.value = f;
+  g.gain.setValueAtTime(v||0.12, ac.currentTime);
+  g.gain.exponentialRampToValueAtTime(0.001, ac.currentTime + d);
+  o.connect(g); g.connect(ac.destination); o.start(); o.stop(ac.currentTime + d);
+}
+function shatterSnd(){
+  const ac = audio(); if(!ac) return;
+  const len = ac.sampleRate * 0.25, buf = ac.createBuffer(1, len, ac.sampleRate), d = buf.getChannelData(0);
+  for(let i=0;i<len;i++) d[i] = (Math.random()*2-1) * Math.pow(1-i/len, 2);
+  const s = ac.createBufferSource(); s.buffer = buf;
+  const g = ac.createGain(); g.gain.value = 0.25;
+  s.connect(g); g.connect(ac.destination); s.start();
+  beep(180, 0.3, 'sawtooth', 0.06);
+}
+function coinSnd(){ beep(880, 0.08, 'sine', 0.12); setTimeout(()=>beep(1320, 0.12, 'sine', 0.12), 70); }
+function slipSnd(){ const ac=audio(); if(!ac) return; const o=ac.createOscillator(),g=ac.createGain();
+  o.type='sine'; o.frequency.setValueAtTime(900, ac.currentTime);
+  o.frequency.exponentialRampToValueAtTime(200, ac.currentTime+0.35);
+  g.gain.setValueAtTime(0.1, ac.currentTime); g.gain.exponentialRampToValueAtTime(0.001, ac.currentTime+0.4);
+  o.connect(g); g.connect(ac.destination); o.start(); o.stop(ac.currentTime+0.4); }
+
+// ---------- helpers ----------
+const rand = (a,b)=>a+Math.random()*(b-a);
+const clamp = (v,a,b)=>Math.max(a,Math.min(b,v));
+const TAU = Math.PI*2;
+function roundRect(x,y,w,h,r){ ctx.beginPath(); ctx.moveTo(x+r,y); ctx.arcTo(x+w,y,x+w,y+h,r);
+  ctx.arcTo(x+w,y+h,x,y+h,r); ctx.arcTo(x,y+h,x,y,r); ctx.arcTo(x,y,x+w,y,r); ctx.closePath(); }
+function drawFace(x,y,r,mood,scale){
+  ctx.save(); ctx.translate(x,y); ctx.scale(scale||1,scale||1);
+  ctx.fillStyle='#fff'; ctx.beginPath(); ctx.arc(0,0,r,0,TAU); ctx.fill();
+  ctx.fillStyle='#222';
+  if(mood==='happy'){ ctx.beginPath(); ctx.arc(-r*0.35,-r*0.15,r*0.12,0,TAU); ctx.arc(r*0.35,-r*0.15,r*0.12,0,TAU); ctx.fill();
+    ctx.beginPath(); ctx.arc(0,r*0.2,r*0.35,0,Math.PI); ctx.fill(); }
+  else if(mood==='scared'){ ctx.beginPath(); ctx.arc(-r*0.35,-r*0.15,r*0.14,0,TAU); ctx.arc(r*0.35,-r*0.15,r*0.14,0,TAU); ctx.fill();
+    ctx.beginPath(); ctx.arc(0,r*0.35,r*0.18,0,TAU); ctx.fill(); }
+  else if(mood==='angry'){ ctx.beginPath(); ctx.arc(-r*0.35,-r*0.1,r*0.12,0,TAU); ctx.arc(r*0.35,-r*0.1,r*0.12,0,TAU); ctx.fill();
+    ctx.strokeStyle='#222'; ctx.lineWidth=r*0.14; ctx.beginPath();
+    ctx.moveTo(-r*0.6,-r*0.55); ctx.lineTo(-r*0.15,-r*0.3); ctx.moveTo(r*0.6,-r*0.55); ctx.lineTo(r*0.15,-r*0.3); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(-r*0.35,r*0.45); ctx.lineTo(r*0.35,r*0.45); ctx.stroke(); }
+  else if(mood==='dizzy'){ ctx.strokeStyle='#222'; ctx.lineWidth=r*0.12;
+    ctx.beginPath(); ctx.arc(-r*0.35,-r*0.1,r*0.2,0,TAU); ctx.arc(r*0.35,-r*0.1,r*0.2,0,TAU); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(-r*0.3,r*0.4); ctx.lineTo(r*0.3,r*0.4); ctx.stroke(); }
+  else { ctx.beginPath(); ctx.arc(-r*0.35,-r*0.15,r*0.12,0,TAU); ctx.arc(r*0.35,-r*0.15,r*0.12,0,TAU); ctx.fill();
+    ctx.beginPath(); ctx.arc(0,r*0.25,r*0.25,0,Math.PI); ctx.fill(); }
+  ctx.restore();
+}
+
+// ---------- state ----------
+let state = 'menu'; // menu | play | over | win
+let t = 0, score = 0, combo = 0, bestCombo = 0, glasses = 5, lives = 5;
+let high = +(localStorage.getItem('ddtg_high')||0);
+let unlock = localStorage.getItem('ddtg_unlock')||'';
+let tilt = 0, tiltV = 0, wobble = 0;
+let px = W/2, pv = 0, pdir = 0, keys = {};
+let slipT = 0, freezeT = 0, shakeT = 0, slowmo = 0;
+let spawnT = 0, coinT = 1.5, goldT = 38, rollT = 0, kidT = 0, dogT = 0;
+let soupOn = false, kidOn = false, dogOn = false, rollsOn = false;
+let events = []; // banner queue {txt, sub, t}
+let popups = []; // {x,y,txt,color,t}
+let parts = [];  // particles {x,y,vx,vy,life,color,size,shape}
+let shards = []; // falling glasses {x,y,vx,vy,rot,vr,life}
+let hazards = []; // {kind,x,y,vx,vy,rot,vr,face}
+let coins = [];   // {x,y,vy,kind:'coin'|'gold',phase}
+let rolls = [];   // flying bread rolls {x,y,vx,vy,rot,vr}
+let glassOffsets = []; // per-glass slide offset on tray
+let trayY = 470, trayHalf = 78;
+let waiterBob = 0, waiterFace = 'happy', faceT = 0;
+let resultLines = [
+  "The floor sends its regards.",
+  "5 glasses. 0 survivors. Math checks out.",
+  "The dog is still laughing.",
+  "HR has been notified.",
+  "The glasses filed a complaint.",
+  "You carried it 3 meters. Heroic.",
+  "The maître d' saw EVERYTHING.",
+  "Soup: 1. You: 0."
+];
+let resultLine = resultLines[0];
+let overStats = { time:0, coins:0, swats:0, drops:0 };
+let coinsGot = 0, swats = 0, drops = 0;
+
+function reset(){
+  t=0; score=0; combo=0; bestCombo=0; glasses=5; lives=5;
+  tilt=0; tiltV=0; wobble=0; px=W/2; pv=0; slipT=0; freezeT=0; shakeT=0; slowmo=0;
+  spawnT=0; coinT=1.5; goldT=38; rollT=0; kidT=0; dogT=0;
+  soupOn=false; kidOn=false; dogOn=false; rollsOn=false;
+  events=[]; popups=[]; parts=[]; shards=[]; hazards=[]; coins=[]; rolls=[];
+  glassOffsets=[]; for(let i=0;i<5;i++) glassOffsets.push(rand(-30,30));
+  waiterFace='happy'; faceT=0; coinsGot=0; swats=0; drops=0;
+  banner("CARRY THE GLASS", "don't drop it");
+}
+function banner(txt, sub){ events.push({txt, sub:sub||'', t:0}); }
+function popup(x,y,txt,color){ popups.push({x,y,txt,color:color||'#fff',t:0}); }
+function burst(x,y,color,n){
+  for(let i=0;i<(n||12);i++) parts.push({x,y,vx:rand(-160,160),vy:rand(-220,40),
+    life:rand(0.4,0.9),max:0.9,color,size:rand(3,7),shape:Math.random()<0.5?'c':'r'});
+}
+function dropGlass(){
+  if(glasses<=0) return;
+  glasses--; drops++;
+  const off = glassOffsets.pop();
+  const gx = px + (typeof off==='number'?off:0) * Math.cos(tilt);
+  shards.push({x:gx, y:trayY-30, vx:rand(-40,40)+pv*0.4, vy:-30, rot:rand(0,TAU), vr:rand(-6,6), life:1.2});
+  combo = 0;
+  shakeT = 0.3; slowmo = 0.35;
+  shatterSnd();
+  popup(px, trayY-70, "SMASH!", '#ff5b5b');
+  waiterFace='dizzy'; faceT=0.9;
+  if(glasses<=0) gameOver();
+}
+function gameOver(){
+  state='over';
+  resultLine = resultLines[Math.floor(Math.random()*resultLines.length)];
+  overStats = { time:t, coins:coinsGot, swats, drops };
+  if(score>high){ high=score; localStorage.setItem('ddtg_high', String(high)); }
+  if(score>=500 && !unlock){ unlock='GOLDEN TRAY'; localStorage.setItem('ddtg_unlock', unlock); }
+}
+function winGame(){
+  state='win';
+  score += glasses*100;
+  overStats = { time:t, coins:coinsGot, swats, drops };
+  if(score>high){ high=score; localStorage.setItem('ddtg_high', String(high)); }
+  if(!unlock){ unlock='GOLDEN TRAY'; localStorage.setItem('ddtg_unlock', unlock); }
+}
+function rankFor(s){
+  if(s>=1200) return "GLASS LEGEND";
+  if(s>=800) return "HEAD WAITER";
+  if(s>=500) return "STEADY HANDS";
+  if(s>=250) return "SPILLER PRO";
+  if(s>=100) return "TRAY ROOKIE";
+  return "SOUP ENJOYER";
+}
+
+// ---------- update ----------
+function spawnHazard(){
+  const r = Math.random();
+  const dir = Math.random()<0.5 ? 1 : -1;
+  if(t<12){ // early: peels + chairs only
+    if(r<0.55) hazards.push({kind:'peel', x:rand(50,W-50), y:FLOOR-8, vx:0, vy:0, rot:rand(0,TAU), vr:0, face:'angry'});
+    else hazards.push({kind:'chair', x:dir>0?-40:W+40, y:FLOOR-38, vx:dir*rand(90,140), vy:0, rot:0, vr:0, face:'angry'});
+  } else if(t<30){
+    if(r<0.4) hazards.push({kind:'peel', x:rand(50,W-50), y:FLOOR-8, vx:0, vy:0, rot:rand(0,TAU), vr:0, face:'angry'});
+    else if(r<0.75) hazards.push({kind:'chair', x:dir>0?-40:W+40, y:FLOOR-38, vx:dir*rand(110,170), vy:0, rot:0, vr:0, face:'angry'});
+    else hazards.push({kind:'kid', x:dir>0?-50:W+50, y:FLOOR-55, vx:dir*rand(200,260), vy:0, rot:0, vr:0, face:'angry'});
+  } else {
+    if(r<0.3) hazards.push({kind:'peel', x:rand(50,W-50), y:FLOOR-8, vx:0, vy:0, rot:rand(0,TAU), vr:0, face:'angry'});
+    else if(r<0.55) hazards.push({kind:'chair', x:dir>0?-40:W+40, y:FLOOR-38, vx:dir*rand(130,200), vy:0, rot:0, vr:0, face:'angry'});
+    else if(r<0.8) hazards.push({kind:'kid', x:dir>0?-50:W+50, y:FLOOR-55, vx:dir*rand(230,300), vy:0, rot:0, vr:0, face:'angry'});
+    else hazards.push({kind:'dog', x:dir>0?-60:W+60, y:FLOOR-30, vx:dir*rand(320,400), vy:0, rot:0, vr:0, face:'angry'});
+  }
+}
+function update(dt){
+  if(state!=='play') return;
+  t += dt;
+  score += dt*10;
+  // --- twist ladder ---
+  if(t>=12 && !soupOn){ soupOn=true; banner("SOUP FLOOR!", "slippery now"); slipSnd(); }
+  if(t>=20 && !kidOn){ kidOn=true; banner("KID ZONE!", "he runs. you pay."); }
+  if(t>=30 && !dogOn){ dogOn=true; banner("DOG DASH!", "he has opinions"); }
+  if(t>=50 && !rollsOn){ rollsOn=true; banner("LAST CALL!", "bread incoming"); }
+  if(t>=60){ winGame(); return; }
+
+  // --- player movement ---
+  let ax = 0;
+  if(keys['ArrowLeft']||keys['a']) ax -= 1;
+  if(keys['ArrowRight']||keys['d']) ax += 1;
+  if(dragX!==null){ const dx = dragX - px; ax = clamp(dx/40, -1, 1); }
+  const accel = soupOn ? 620 : 900;
+  const maxSp = soupOn ? 300 : 260;
+  pv += ax*accel*dt;
+  pv *= Math.pow(soupOn?0.94:0.86, dt*60); // soup = slides longer
+  pv = clamp(pv, -maxSp, maxSp);
+  px += pv*dt;
+  if(px<40){ px=40; pv=Math.abs(pv)*0.3; } if(px>W-40){ px=W-40; pv=-Math.abs(pv)*0.3; }
+  pdir = pv>20?1:(pv<-20?-1:pdir);
+  waiterBob += dt*(6+Math.abs(pv)/40);
+
+  // --- tray tilt physics: inertia + wobble grows with time ---
+  const wobAmp = 0.35 + t*0.012;
+  wobble += dt*2.2;
+  const wob = Math.sin(wobble)*wobAmp*0.12 + Math.sin(wobble*2.7)*0.05;
+  const target = clamp(-pv*0.0009 + wob, -0.6, 0.6);
+  tiltV += (target - tilt)*14*dt - tiltV*3.2*dt;
+  tilt += tiltV*dt;
+  if(slipT>0) slipT-=dt;
+  if(freezeT>0) freezeT-=dt;
+
+  // --- glasses slide on the tray ---
+  const slide = Math.sin(tilt)*260*dt;
+  for(let i=0;i<glasses;i++){
+    glassOffsets[i] += slide + rand(-6,6)*dt;
+    glassOffsets[i] = clamp(glassOffsets[i], -trayHalf-6, trayHalf+6);
+    if(Math.abs(glassOffsets[i])>trayHalf-4 && Math.random()<dt*2.2){
+      // glass teeters at the edge, then falls
+      dropGlass();
+      break;
+    }
+  }
+  // near-miss: a glass at the very edge that survives
+  if(glasses>0){
+    const edge = Math.max(...glassOffsets.slice(0,glasses).map(Math.abs));
+    if(edge>trayHalf-14 && Math.random()<dt*0.8){
+      popup(px+rand(-60,60), trayY-90, "SO CLOSE!", '#ffe066');
+      score += 5; combo++; bestCombo=Math.max(bestCombo,combo);
+    }
+  }
+
+  // --- spawns ---
+  spawnT -= dt;
+  const rate = Math.max(0.9, 2.4 - t*0.02);
+  if(spawnT<=0){ spawnHazard(); spawnT = rand(rate*0.7, rate*1.3); }
+  coinT -= dt;
+  if(coinT<=0){ coins.push({x:rand(60,W-60), y:rand(180,340), vy:rand(12,26), kind:'coin', phase:rand(0,TAU)}); coinT=rand(2.2,3.6); }
+  goldT -= dt;
+  if(goldT<=0){ coins.push({x:rand(80,W-80), y:rand(160,260), vy:18, kind:'gold', phase:0});
+    banner("GOLDEN GLASS!", "+50 + a glass back"); goldT=rand(16,22); }
+  if(rollsOn){ rollT-=dt; if(rollT<=0){ const dir=Math.random()<0.5?1:-1;
+    rolls.push({x:dir>0?-30:W+30, y:rand(120,300), vx:dir*rand(240,320), vy:rand(20,70), rot:0, vr:rand(-8,8)});
+    rollT=rand(0.9,1.6); } }
+
+  // --- hazards move + collide ---
+  for(let i=hazards.length-1;i>=0;i--){
+    const h=hazards[i];
+    h.x += h.vx*dt; h.y += h.vy*dt; h.rot += h.vr*dt;
+    let dead=false;
+    if(h.kind==='peel'){
+      if(Math.abs(h.x-px)<34 && slipT<=0){
+        slipT=0.6; tiltV += (Math.random()<0.5?-1:1)*rand(2.2,3.2);
+        popup(px, FLOOR-90, "SLIP!", '#ffe066'); slipSnd(); burst(h.x, FLOOR-10, '#ffe066', 8);
+        hazards.splice(i,1); dead=true;
+      }
+    } else if(h.kind==='chair'){
+      if(Math.abs(h.x-px)<42){
+        tiltV += (h.vx>0?1:-1)*rand(2.5,3.5); popup(px, FLOOR-100, "BUMP!", '#ff5b5b');
+        shakeT=0.25; burst(h.x, h.y, '#ff5b5b', 10); hazards.splice(i,1); dead=true;
+      }
+      if(h.x<-70||h.x>W+70){ hazards.splice(i,1); dead=true; }
+    } else if(h.kind==='kid'){
+      if(Math.abs(h.x-px)<40){
+        tiltV += (h.vx>0?1:-1)*rand(3,4); popup(px, FLOOR-110, "HEY!", '#ff5b5b');
+        shakeT=0.3; waiterFace='dizzy'; faceT=0.7; burst(h.x, h.y, '#ff9f43', 12);
+        hazards.splice(i,1); dead=true;
+      }
+      if(h.x<-80||h.x>W+80){ hazards.splice(i,1); dead=true; }
+    } else if(h.kind==='dog'){
+      if(Math.abs(h.x-px)<46){
+        tiltV += (h.vx>0?1:-1)*rand(3.5,4.5); popup(px, FLOOR-100, "WOOF!", '#ff5b5b');
+        shakeT=0.35; waiterFace='scared'; faceT=0.8; burst(h.x, h.y, '#ff9f43', 14);
+        hazards.splice(i,1); dead=true;
+      }
+      if(h.x<-90||h.x>W+90){ hazards.splice(i,1); dead=true; }
+    }
+    if(dead) continue;
+  }
+
+  // --- coins ---
+  for(let i=coins.length-1;i>=0;i--){
+    const c=coins[i]; c.y += c.vy*dt; c.phase += dt*4;
+    const trayTop = trayY-40;
+    if(Math.abs(c.x-px)<52 && Math.abs(c.y-trayTop)<34){
+      if(c.kind==='gold'){
+        score+=50; coinsGot++;
+        if(glasses<5){ glasses++; glassOffsets.push(rand(-20,20)); }
+        popup(c.x, c.y-20, "+50 GOLD!", '#ffd700'); burst(c.x, c.y, '#ffd700', 16);
+        coinSnd();
+      } else {
+        score+=10; combo++; bestCombo=Math.max(bestCombo,combo);
+        coinsGot++;
+        popup(c.x, c.y-16, combo>1?("+"+10+" x"+combo):"+10", '#ffe066');
+        burst(c.x, c.y, '#ffe066', 8); coinSnd();
+      }
+      coins.splice(i,1); continue;
+    }
+    if(c.y>H+20) coins.splice(i,1);
+  }
+
+  // --- bread rolls: tap to swat ---
+  for(let i=rolls.length-1;i>=0;i--){
+    const r=rolls[i]; r.x+=r.vx*dt; r.y+=r.vy*dt; r.rot+=r.vr*dt;
+    if(Math.abs(r.x-px)<44 && Math.abs(r.y-(trayY-20))<50){
+      tiltV += (r.vx>0?1:-1)*rand(2.5,3.5); popup(px, trayY-90, "BREAD!", '#ff5b5b');
+      shakeT=0.25; burst(r.x, r.y, '#d2691e', 10); rolls.splice(i,1); continue;
+    }
+    if(r.x<-50||r.x>W+50||r.y>H+40) rolls.splice(i,1);
+  }
+
+  // --- particles / shards / popups / banners ---
+  for(let i=parts.length-1;i>=0;i--){ const p=parts[i]; p.x+=p.vx*dt; p.y+=p.vy*dt; p.vy+=500*dt; p.life-=dt; if(p.life<=0) parts.splice(i,1); }
+  for(let i=shards.length-1;i>=0;i--){ const s=shards[i]; s.x+=s.vx*dt; s.y+=s.vy*dt; s.vy+=900*dt; s.rot+=s.vr*dt; s.life-=dt;
+    if(s.y>FLOOR-4 && s.vy>0){ burst(s.x, FLOOR-6, '#bfe9ff', 14); shards.splice(i,1); continue; }
+    if(s.life<=0) shards.splice(i,1); }
+  for(let i=popups.length-1;i>=0;i--){ const p=popups[i]; p.y-=40*dt; p.t+=dt; if(p.t>1) popups.splice(i,1); }
+  for(let i=events.length-1;i>=0;i--){ events[i].t+=dt; if(events[i].t>2.2) events.splice(i,1); }
+  if(shakeT>0) shakeT-=dt;
+  if(slowmo>0) slowmo-=dt;
+  if(faceT>0){ faceT-=dt; if(faceT<=0) waiterFace = Math.abs(tilt)>0.3?'scared':'happy'; }
+  else waiterFace = Math.abs(tilt)>0.3?'scared':'happy';
+}
+
+// ---------- input ----------
+let dragX = null;
+function toX(e){ const r=cv.getBoundingClientRect(); const cx=(e.touches?e.touches[0].clientX:e.clientX);
+  return (cx-r.left)/r.width*W; }
+cv.addEventListener('pointerdown', e=>{
+  audio();
+  const x=toX(e), y=((e.clientY-cv.getBoundingClientRect().top)/cv.getBoundingClientRect().height)*H;
+  if(state==='menu'){ reset(); state='play'; return; }
+  if(state==='over'||state==='win'){
+    // copy button zone
+    if(x>140&&x<340&&y>560&&y<606){ copyResult(); return; }
+    reset(); state='play'; return;
+  }
+  // swat bread rolls by tapping them
+  for(let i=rolls.length-1;i>=0;i--){ const r=rolls[i];
+    if(Math.abs(r.x-x)<44 && Math.abs(r.y-y)<44){
+      swats++; score+=5; combo++; bestCombo=Math.max(bestCombo,combo);
+      popup(r.x, r.y-18, "SWAT! +5", '#ffe066'); burst(r.x, r.y, '#ffe066', 12);
+      beep(1200,0.06,'square',0.08); rolls.splice(i,1); return;
+    } }
+  dragX = x;
+});
+cv.addEventListener('pointermove', e=>{ if(state==='play' && dragX!==null) dragX = toX(e); });
+window.addEventListener('pointerup', ()=>{ dragX=null; });
+window.addEventListener('keydown', e=>{
+  keys[e.key]=true;
+  if(e.key===' '||e.key==='ArrowLeft'||e.key==='ArrowRight'){ e.preventDefault(); audio();
+    if(state==='menu'){ reset(); state='play'; }
+    else if(state==='over'||state==='win'){ reset(); state='play'; } }
+  if(e.key==='p'||e.key==='P'){ if(state==='play') state='pause'; else if(state==='pause') state='play'; }
+});
+window.addEventListener('keyup', e=>{ keys[e.key]=false; });
+function copyResult(){
+  const txt = "I carried the glass "+Math.floor(overStats.time)+"s, scored "+Math.floor(score)+
+    " ("+rankFor(score)+") in DON'T DROP THE GLASS! "+location.href;
+  if(navigator.clipboard) navigator.clipboard.writeText(txt).then(()=>popup(W/2, 540, "COPIED!", '#7CFC00'));
+  else popup(W/2, 540, "COPY FAILED", '#ff5b5b');
+}
+
+// ---------- draw ----------
+function drawGlass(x, y, s, scared){
+  ctx.save(); ctx.translate(x,y); ctx.scale(s,s);
+  ctx.strokeStyle = scared ? '#ff5b5b' : '#bfe9ff';
+  ctx.lineWidth = 2.5; ctx.fillStyle = 'rgba(191,233,255,0.35)';
+  ctx.beginPath(); ctx.moveTo(-9,-12); ctx.lineTo(-6,10); ctx.lineTo(6,10); ctx.lineTo(9,-12); ctx.closePath();
+  ctx.fill(); ctx.stroke();
+  ctx.beginPath(); ctx.moveTo(-9,-12); ctx.lineTo(9,-12); ctx.stroke();
+  ctx.beginPath(); ctx.moveTo(0,10); ctx.lineTo(0,16); ctx.moveTo(-6,16); ctx.lineTo(6,16); ctx.stroke();
+  // face on the glass
+  ctx.fillStyle='#1a2b4a';
+  if(scared){ ctx.beginPath(); ctx.arc(-3.5,-3,1.6,0,TAU); ctx.arc(3.5,-3,1.6,0,TAU); ctx.fill();
+    ctx.beginPath(); ctx.arc(0,3,2,0,TAU); ctx.fill(); }
+  else { ctx.beginPath(); ctx.arc(-3.5,-3,1.4,0,TAU); ctx.arc(3.5,-3,1.4,0,TAU); ctx.fill();
+    ctx.beginPath(); ctx.arc(0,2,2.5,0,Math.PI); ctx.fill(); }
+  ctx.restore();
+}
+function drawWaiter(){
+  const bob = Math.sin(waiterBob)*3;
+  const x = px, y = FLOOR;
+  ctx.save(); ctx.translate(x, y);
+  // legs
+  ctx.strokeStyle='#2c2c54'; ctx.lineWidth=10; ctx.lineCap='round';
+  const step = Math.sin(waiterBob)*8;
+  ctx.beginPath(); ctx.moveTo(-6,-52); ctx.lineTo(-10+step,-2); ctx.moveTo(6,-52); ctx.lineTo(10-step,-2); ctx.stroke();
+  // shoes
+  ctx.fillStyle='#ff2d95'; ctx.beginPath(); ctx.ellipse(-10+step,-4,12,6,0,0,TAU); ctx.ellipse(10-step,-4,12,6,0,0,TAU); ctx.fill();
+  // body (apron)
+  ctx.fillStyle='#f5f0ff'; roundRect(-22,-118+bob*0.4,44,68,12); ctx.fill();
+  ctx.fillStyle='#ff2d95'; roundRect(-22,-96+bob*0.4,44,18,6); ctx.fill();
+  // bow tie
+  ctx.fillStyle='#e63946'; ctx.beginPath(); ctx.moveTo(0,-116+bob*0.4); ctx.lineTo(-9,-122+bob*0.4); ctx.lineTo(-9,-110+bob*0.4); ctx.closePath();
+  ctx.moveTo(0,-116+bob*0.4); ctx.lineTo(9,-122+bob*0.4); ctx.lineTo(9,-110+bob*0.4); ctx.closePath(); ctx.fill();
+  // arm up to tray
+  ctx.strokeStyle='#f5f0ff'; ctx.lineWidth=9;
+  ctx.beginPath(); ctx.moveTo(14,-104+bob*0.4); ctx.quadraticCurveTo(30,-150, 18,-172); ctx.stroke();
+  // head
+  drawFace(0, -138+bob*0.4, 20, waiterFace, 1);
+  // hair
+  ctx.fillStyle='#2c2c54'; ctx.beginPath(); ctx.arc(0,-152+bob*0.4,19,Math.PI,TAU); ctx.fill();
+  ctx.restore();
+}
+function drawTray(){
+  ctx.save(); ctx.translate(px, trayY); ctx.rotate(tilt);
+  // tray
+  const gold = unlock==='GOLDEN TRAY';
+  ctx.fillStyle = gold ? '#ffd700' : '#c0c8ff';
+  roundRect(-trayHalf,-8,trayHalf*2,12,6); ctx.fill();
+  ctx.strokeStyle = gold ? '#b8860b' : '#8a94c9'; ctx.lineWidth=2;
+  roundRect(-trayHalf,-8,trayHalf*2,12,6); ctx.stroke();
+  // glasses on tray
+  for(let i=0;i<glasses;i++){
+    const off = glassOffsets[i]||0;
+    const scared = Math.abs(off)>trayHalf-20 || Math.abs(tilt)>0.28;
+    drawGlass(off, -10, 1.15, scared);
+  }
+  ctx.restore();
+}
+function drawHazard(h){
+  ctx.save(); ctx.translate(h.x, h.y);
+  if(h.kind==='peel'){
+    ctx.rotate(h.rot);
+    ctx.fillStyle='#ffe066'; ctx.beginPath(); ctx.ellipse(0,0,20,9,0,0,TAU); ctx.fill();
+    ctx.fillStyle='#ffd23e'; ctx.beginPath(); ctx.moveTo(-16,0); ctx.quadraticCurveTo(-26,-16,-8,-8); ctx.closePath(); ctx.fill();
+    drawFace(0,-2,8,'angry',1);
+  } else if(h.kind==='chair'){
+    ctx.fillStyle='#e63946'; roundRect(-26,-34,52,34,6); ctx.fill();
+    ctx.fillStyle='#c1121f'; roundRect(-26,-58,10,26,4); ctx.fill(); roundRect(16,-58,10,26,4); ctx.fill();
+    ctx.strokeStyle='#7f1d1d'; ctx.lineWidth=4; ctx.beginPath(); ctx.moveTo(-20,0); ctx.lineTo(-24,10); ctx.moveTo(20,0); ctx.lineTo(24,10); ctx.stroke();
+    drawFace(0,-20,11,'angry',1);
+  } else if(h.kind==='kid'){
+    const run = Math.sin(t*18)*6;
+    ctx.fillStyle='#ff9f43'; ctx.beginPath(); ctx.arc(0,-34,15,0,TAU); ctx.fill();
+    ctx.fillStyle='#4361ee'; roundRect(-14,-22,28,26,8); ctx.fill();
+    ctx.strokeStyle='#2c2c54'; ctx.lineWidth=7; ctx.lineCap='round';
+    ctx.beginPath(); ctx.moveTo(-6,4); ctx.lineTo(-12+run,0); ctx.moveTo(6,4); ctx.lineTo(12-run,0); ctx.stroke();
+    drawFace(0,-36,13,'angry',1);
+    ctx.fillStyle='#e63946'; ctx.font='bold 13px Trebuchet MS'; ctx.textAlign='center';
+    ctx.fillText('!', 22, -44);
+  } else if(h.kind==='dog'){
+    ctx.fillStyle='#b08968'; ctx.beginPath(); ctx.ellipse(0,-16,26,13,0,0,TAU); ctx.fill();
+    ctx.beginPath(); ctx.arc(24,-26,11,0,TAU); ctx.fill();
+    ctx.beginPath(); ctx.moveTo(16,-34); ctx.lineTo(14,-44); ctx.lineTo(22,-36); ctx.closePath(); ctx.fill();
+    ctx.fillStyle='#7f5539'; ctx.beginPath(); ctx.ellipse(32,-24,6,4,0,0,TAU); ctx.fill();
+    ctx.strokeStyle='#7f5539'; ctx.lineWidth=5; ctx.lineCap='round';
+    const run=Math.sin(t*22)*7;
+    ctx.beginPath(); ctx.moveTo(-16,-6); ctx.lineTo(-20+run,2); ctx.moveTo(14,-6); ctx.lineTo(18-run,2); ctx.stroke();
+    ctx.fillStyle='#fff'; ctx.beginPath(); ctx.arc(26,-29,3,0,TAU); ctx.fill();
+    ctx.fillStyle='#222'; ctx.beginPath(); ctx.arc(27,-29,1.5,0,TAU); ctx.fill();
+  }
+  ctx.restore();
+}
+function drawBackground(){
+  // wall
+  const g = ctx.createLinearGradient(0,0,0,H);
+  g.addColorStop(0,'#1a0b3d'); g.addColorStop(0.7,'#241040'); g.addColorStop(1,'#2a1248');
+  ctx.fillStyle=g; ctx.fillRect(0,0,W,H);
+  // chandelier (sways)
+  const sw = Math.sin(t*0.9)*10;
+  ctx.strokeStyle='#ffd700'; ctx.lineWidth=3;
+  ctx.beginPath(); ctx.moveTo(W/2,0); ctx.lineTo(W/2+sw,58); ctx.stroke();
+  ctx.fillStyle='#ffd700'; ctx.beginPath(); ctx.arc(W/2+sw,64,14,0,TAU); ctx.fill();
+  ctx.fillStyle='#fff7cc';
+  for(let i=0;i<5;i++){ const a=-Math.PI*0.7+i*0.35;
+    ctx.beginPath(); ctx.arc(W/2+sw+Math.cos(a)*22, 64+Math.sin(a)*16, 4, 0, TAU); ctx.fill(); }
+  // tables left/right
+  ctx.fillStyle='#3d1e6d';
+  roundRect(8, FLOOR-96, 84, 96, 8); ctx.fill();
+  roundRect(W-92, FLOOR-96, 84, 96, 8); ctx.fill();
+  ctx.fillStyle='#fff'; roundRect(14, FLOOR-100, 72, 10, 5); ctx.fill();
+  roundRect(W-86, FLOOR-100, 72, 10, 5); ctx.fill();
+  // plates on tables
+  ctx.fillStyle='#bfe9ff'; ctx.beginPath(); ctx.ellipse(50, FLOOR-100, 14, 5, 0, 0, TAU); ctx.fill();
+  ctx.beginPath(); ctx.ellipse(W-50, FLOOR-100, 14, 5, 0, 0, TAU); ctx.fill();
+  // maître d' judging from the side
+  ctx.fillStyle='#1f1f3d'; ctx.beginPath(); ctx.arc(34, 150, 18, 0, TAU); ctx.fill();
+  ctx.fillStyle='#f5f0ff'; roundRect(16, 166, 36, 60, 8); ctx.fill();
+  ctx.fillStyle='#222'; ctx.beginPath(); ctx.arc(28,146,2.5,0,TAU); ctx.arc(40,146,2.5,0,TAU); ctx.fill();
+  ctx.strokeStyle='#222'; ctx.lineWidth=2; ctx.beginPath(); ctx.moveTo(26,158); ctx.lineTo(42,158); ctx.stroke();
+  ctx.fillStyle='#ffe066'; ctx.font='bold 11px Trebuchet MS'; ctx.textAlign='center';
+  ctx.fillText('judging you', 34, 240);
+  // floor
+  ctx.fillStyle = soupOn ? '#7a5c00' : '#4a2b7a';
+  ctx.fillRect(0, FLOOR, W, H-FLOOR);
+  ctx.fillStyle = soupOn ? '#a8871a' : '#5b3a8c';
+  for(let i=0;i<8;i++){ ctx.fillRect(i*60+((i%2)*30), FLOOR+18, 58, 6); ctx.fillRect(i*60, FLOOR+52, 58, 6); }
+  if(soupOn){
+    ctx.fillStyle='rgba(255,214,64,0.25)';
+    for(let i=0;i<5;i++){ const sx=(i*97+t*30)%W;
+      ctx.beginPath(); ctx.ellipse(sx, FLOOR+30+((i*37)%40), 26, 8, 0, 0, TAU); ctx.fill(); }
+    ctx.fillStyle='#ffe066'; ctx.font='bold 13px Trebuchet MS'; ctx.textAlign='center';
+    ctx.fillText('~ SOUP FLOOR ~', W/2, FLOOR+70);
+  }
+}
+function draw(){
+  ctx.clearRect(0,0,W,H);
+  ctx.save();
+  if(shakeT>0) ctx.translate(rand(-4,4), rand(-4,4));
+  drawBackground();
+  if(state==='menu'){
+    // demo waiter + tray on menu
+    tilt = Math.sin(t*1.4)*0.12;
+    drawWaiter(); drawTray();
+    ctx.fillStyle='#fff'; ctx.textAlign='center';
+    ctx.font='bold 44px Trebuchet MS';
+    ctx.fillText("DON'T DROP", W/2, 120);
+    ctx.fillStyle='#ffe066'; ctx.fillText("THE GLASS!", W/2, 170);
+    ctx.fillStyle='#ff2d95'; ctx.font='bold 20px Trebuchet MS';
+    ctx.fillText("Carry the glass. Don't drop it.", W/2, 210);
+    ctx.fillStyle='#bfe9ff'; ctx.font='16px Trebuchet MS';
+    ctx.fillText("← → / drag to move  •  tap rolls to swat", W/2, 250);
+    ctx.fillText("Glow = grab  •  Angry red = dodge", W/2, 274);
+    ctx.fillStyle='#7CFC00'; ctx.font='bold 22px Trebuchet MS';
+    ctx.fillText("TAP TO START", W/2, 330);
+    ctx.fillStyle='#ffe066'; ctx.font='15px Trebuchet MS';
+    ctx.fillText("Survive 60s. The floor is soup.", W/2, 360);
+    if(high>0){ ctx.fillStyle='#fff'; ctx.fillText("BEST: "+Math.floor(high), W/2, 400); }
+    ctx.restore(); return;
+  }
+  // coins
+  for(const c of coins){
+    const bobY = Math.sin(c.phase)*4;
+    ctx.save(); ctx.translate(c.x, c.y+bobY);
+    if(c.kind==='gold'){
+      ctx.shadowColor='#ffd700'; ctx.shadowBlur=18;
+      ctx.fillStyle='#ffd700'; ctx.beginPath(); ctx.arc(0,0,16,0,TAU); ctx.fill();
+      ctx.shadowBlur=0; ctx.fillStyle='#fff7cc'; ctx.font='bold 18px Trebuchet MS'; ctx.textAlign='center';
+      ctx.fillText('🥂', 0, 6);
+    } else {
+      ctx.shadowColor='#ffe066'; ctx.shadowBlur=12;
+      ctx.fillStyle='#ffe066'; ctx.beginPath(); ctx.arc(0,0,11,0,TAU); ctx.fill();
+      ctx.shadowBlur=0; ctx.fillStyle='#a8871a'; ctx.font='bold 13px Trebuchet MS'; ctx.textAlign='center';
+      ctx.fillText('$', 0, 4.5);
+    }
+    ctx.restore();
+  }
+  for(const h of hazards) drawHazard(h);
+  for(const r of rolls){
+    ctx.save(); ctx.translate(r.x, r.y); ctx.rotate(r.rot);
+    ctx.fillStyle='#d2691e'; roundRect(-18,-8,36,16,8); ctx.fill();
+    ctx.fillStyle='#8b4513'; ctx.fillRect(-12,-8,4,16); ctx.fillRect(2,-8,4,16);
+    drawFace(0,0,7,'angry',1);
+    ctx.restore();
+  }
+  drawWaiter(); drawTray();
+  // falling shards
+  for(const s of shards){ ctx.save(); ctx.translate(s.x,s.y); ctx.rotate(s.rot);
+    ctx.strokeStyle='#bfe9ff'; ctx.lineWidth=2; ctx.fillStyle='rgba(191,233,255,0.5)';
+    ctx.beginPath(); ctx.moveTo(-8,-10); ctx.lineTo(8,-10); ctx.lineTo(5,10); ctx.lineTo(-5,10); ctx.closePath(); ctx.fill(); ctx.stroke();
+    ctx.restore(); }
+  // particles
+  for(const p of parts){ ctx.globalAlpha=clamp(p.life/p.max,0,1); ctx.fillStyle=p.color;
+    if(p.shape==='c'){ ctx.beginPath(); ctx.arc(p.x,p.y,p.size,0,TAU); ctx.fill(); }
+    else ctx.fillRect(p.x-p.size/2, p.y-p.size/2, p.size, p.size); }
+  ctx.globalAlpha=1;
+  // popups
+  ctx.textAlign='center';
+  for(const p of popups){ ctx.globalAlpha=clamp(1-p.t,0,1); ctx.fillStyle=p.color;
+    ctx.font='bold 20px Trebuchet MS'; ctx.fillText(p.txt, p.x, p.y); }
+  ctx.globalAlpha=1;
+  // HUD
+  ctx.fillStyle='#fff'; ctx.textAlign='left'; ctx.font='bold 22px Trebuchet MS';
+  ctx.fillText("SCORE "+Math.floor(score), 14, 34);
+  ctx.fillStyle='#ffe066'; ctx.font='bold 18px Trebuchet MS';
+  ctx.fillText("⏱ "+Math.max(0, 60-Math.floor(t))+"s", 14, 60);
+  if(combo>1){ ctx.fillStyle='#ff2d95'; ctx.fillText("COMBO x"+combo, 14, 86); }
+  ctx.textAlign='right'; ctx.fillStyle='#bfe9ff'; ctx.font='bold 16px Trebuchet MS';
+  ctx.fillText("BEST "+Math.floor(high), W-14, 34);
+  // glasses remaining icons
+  for(let i=0;i<5;i++){ ctx.globalAlpha = i<glasses?1:0.25;
+    drawGlass(W-30-i*30, 62, 0.9, false); }
+  ctx.globalAlpha=1;
+  // progress bar to 60s
+  ctx.fillStyle='#2a1248'; roundRect(14, H-24, W-28, 10, 5); ctx.fill();
+  ctx.fillStyle='#7CFC00'; roundRect(14, H-24, (W-28)*clamp(t/60,0,1), 10, 5); ctx.fill();
+  // event banners
+  events.forEach((e,i)=>{
+    const a = e.t<0.2 ? e.t/0.2 : (e.t>1.8 ? (2.2-e.t)/0.4 : 1);
+    ctx.globalAlpha=clamp(a,0,1); ctx.textAlign='center';
+    ctx.fillStyle='#ff2d95'; ctx.font='bold 34px Trebuchet MS';
+    ctx.fillText(e.txt, W/2, 300+i*0);
+    if(e.sub){ ctx.fillStyle='#fff'; ctx.font='bold 18px Trebuchet MS'; ctx.fillText(e.sub, W/2, 328); }
+    ctx.globalAlpha=1;
+  });
+  if(state==='pause'){
+    ctx.fillStyle='rgba(0,0,0,0.6)'; ctx.fillRect(0,0,W,H);
+    ctx.fillStyle='#fff'; ctx.textAlign='center'; ctx.font='bold 40px Trebuchet MS';
+    ctx.fillText('PAUSED', W/2, H/2);
+  }
+  if(state==='over'||state==='win'){
+    ctx.fillStyle='rgba(11,6,24,0.82)'; ctx.fillRect(0,0,W,H);
+    ctx.textAlign='center';
+    ctx.fillStyle = state==='win' ? '#7CFC00' : '#ff5b5b';
+    ctx.font='bold 40px Trebuchet MS';
+    ctx.fillText(state==='win' ? 'YOU DID IT!' : 'SHATTERED!', W/2, 180);
+    ctx.fillStyle='#fff'; ctx.font='bold 19px Trebuchet MS';
+    ctx.fillText(state==='win' ? 'All glasses survived. The maître d’ nods.' : resultLine, W/2, 220);
+    ctx.fillStyle='#ffe066'; ctx.font='bold 24px Trebuchet MS';
+    ctx.fillText('SCORE '+Math.floor(score)+'  •  '+rankFor(score), W/2, 270);
+    ctx.fillStyle='#bfe9ff'; ctx.font='17px Trebuchet MS';
+    ctx.fillText(Math.floor(overStats.time)+'s  •  '+overStats.coins+' tips  •  '+overStats.swats+' swats  •  '+overStats.drops+' drops', W/2, 305);
+    if(overStats.time>=60||state==='win') ctx.fillText('🏆 UNLOCKED: GOLDEN TRAY', W/2, 335);
+    ctx.fillStyle='#fff'; ctx.font='16px Trebuchet MS';
+    ctx.fillText('BEST '+Math.floor(high), W/2, 365);
+    ctx.fillStyle='#7CFC00'; ctx.font='bold 22px Trebuchet MS';
+    ctx.fillText('TAP TO PLAY AGAIN', W/2, 420);
+    ctx.fillStyle='#ff2d95'; roundRect(140,560,200,46,10); ctx.fill();
+    ctx.fillStyle='#fff'; ctx.font='bold 18px Trebuchet MS';
+    ctx.fillText('📋 COPY RESULT', W/2, 589);
+  }
+  ctx.restore();
+}
+
+// ---------- main loop ----------
+let last = performance.now();
+function loop(now){
+  let dt = Math.min(0.05, (now-last)/1000); last = now;
+  if(slowmo>0) dt *= 0.45;
+  if(state==='play') update(dt);
+  else if(state==='menu') t += dt;
+  draw();
+  requestAnimationFrame(loop);
+}
+function fit(){
+  const s = Math.min(window.innerWidth/W, window.innerHeight/H);
+  cv.style.width = (W*s*0.98)+'px'; cv.style.height = (H*s*0.98)+'px';
+}
+window.addEventListener('resize', fit); fit();
+reset(); state='menu';
+requestAnimationFrame(loop);
+</script>
+</body>
+</html>

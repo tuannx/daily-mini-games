@@ -375,5 +375,14 @@
   "mechanic": "Slingshot slipper physics (drag, aim, throw; kid ducks/jumps/hides, pillow shield at 12s, toy revenge at 25s, golden slipper at 40s, grandma at 50s)",
   "tagline": "Drag, aim, throw. The kid ducks. The pillow blocks. Grandma has two.",
   "title": "MOM'S SLIPPER!"
+ },
+ {
+  "date": "2026-11-12",
+  "day": 43,
+  "emoji": "🥂",
+  "file": "games/dont-drop-the-glass.html",
+  "mechanic": "Wobble-balance tray carry (tilt physics, soup floor at 12s, kid zone at 20s, dog dash at 30s, golden glass at 40s, bread-roll rain at 50s)",
+  "tagline": "Carry the glass. The floor is soup, the kid is loose, and the dog has opinions.",
+  "title": "DON'T DROP THE GLASS!"
  }
 ]
