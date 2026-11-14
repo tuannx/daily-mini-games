@@ -1,0 +1,594 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<title>STOP THE MICROWAVE! — Day 45</title>
+<style>
+  * { margin:0; padding:0; box-sizing:border-box; }
+  html,body { width:100%; height:100%; background:#0b0618; overflow:hidden; touch-action:none;
+    font-family:'Trebuchet MS','Comic Sans MS',sans-serif; }
+  #wrap { position:fixed; inset:0; display:flex; align-items:center; justify-content:center; }
+  canvas { display:block; background:#241533; border-radius:12px;
+    box-shadow:0 0 40px #ff9f1caa, 0 0 90px #ff2d55aa; }
+</style>
+</head>
+<body>
+<div id="wrap"><canvas id="c" width="480" height="720"></canvas></div>
+<script>
+"use strict";
+// STOP THE MICROWAVE! — Day 45
+// A microwave counts down from 10.00. Tap STOP when the display reads 0.00.
+// TWIST: the display LIES. Real time runs faster/slower than shown — trust
+// the food's spin and the beeps, not the digits. Twist ladder: 12s DISPLAY
+// LIES (digits scramble) -> 20s BUTTON RUNS (STOP dodges) -> 30s DEMON MODE
+// (random digits, screaming food) -> 40s GOLDEN POPCORN (+200) -> 50s FINALE.
+// Let real time hit 0 and the food EXPLODES. 3 lives. Survive 60s to win.
+const cv = document.getElementById('c');
+const ctx = cv.getContext('2d');
+const W = 480, H = 720;
+
+// ---------- audio (WebAudio, self-generated) ----------
+let AC = null;
+function audio(){ if(!AC){ try{ AC = new (window.AudioContext||window.webkitAudioContext)(); }catch(e){} } return AC; }
+function beep(f, d, type, v){
+  const ac = audio(); if(!ac) return;
+  const o = ac.createOscillator(), g = ac.createGain();
+  o.type = type||'sine'; o.frequency.value = f;
+  g.gain.setValueAtTime(v||0.12, ac.currentTime);
+  g.gain.exponentialRampToValueAtTime(0.001, ac.currentTime + d);
+  o.connect(g); g.connect(ac.destination); o.start(); o.stop(ac.currentTime + d);
+}
+function tickSnd(r){ beep(500 + (10-r)*90, 0.05, 'square', 0.05); }
+function dingSnd(q){ // q: 0 perfect, 1 good, 2 ok
+  const f = q===0 ? 1320 : q===1 ? 990 : 660;
+  beep(f, 0.09, 'sine', 0.14); setTimeout(()=>beep(f*1.5, 0.14, 'sine', 0.14), 70);
+}
+function earlySnd(){ beep(220, 0.15, 'sawtooth', 0.10); }
+function boomSnd(){
+  const ac = audio(); if(!ac) return;
+  const len = ac.sampleRate * 0.45, buf = ac.createBuffer(1, len, ac.sampleRate), d = buf.getChannelData(0);
+  for(let i=0;i<len;i++) d[i] = (Math.random()*2-1) * Math.pow(1-i/len, 2.2);
+  const s = ac.createBufferSource(); s.buffer = buf;
+  const g = ac.createGain(); g.gain.value = 0.28;
+  s.connect(g); g.connect(ac.destination); s.start();
+  beep(90, 0.5, 'sawtooth', 0.10);
+}
+function goldenSnd(){ beep(1568, 0.08, 'sine', 0.12); setTimeout(()=>beep(2093, 0.16, 'sine', 0.12), 80); }
+
+// ---------- helpers ----------
+const rand = (a,b)=>a+Math.random()*(b-a);
+const clamp = (v,a,b)=>Math.max(a,Math.min(b,v));
+const TAU = Math.PI*2;
+function roundRect(x,y,w,h,r){ ctx.beginPath(); ctx.moveTo(x+r,y); ctx.arcTo(x+w,y,x+w,y+h,r);
+  ctx.arcTo(x+w,y+h,x,y+h,r); ctx.arcTo(x,y+h,x,y,r); ctx.arcTo(x,y,x+w,y,r); ctx.closePath(); }
+function circle(x,y,r){ ctx.beginPath(); ctx.arc(x,y,r,0,TAU); ctx.fill(); }
+function drawFace(x,y,r,mood){ // mood: 'calm' | 'worried' | 'scream' | 'dead'
+  ctx.fillStyle = '#1a1a1a';
+  if(mood==='scream'){
+    circle(x-r*0.35,y-r*0.15,r*0.14); circle(x+r*0.35,y-r*0.15,r*0.14);
+    ctx.beginPath(); ctx.ellipse(x,y+r*0.35,r*0.28,r*0.42,0,0,TAU); ctx.fill();
+  } else if(mood==='worried'){
+    ctx.beginPath(); ctx.arc(x-r*0.35,y-r*0.1,r*0.13,Math.PI,TAU); ctx.fill();
+    ctx.beginPath(); ctx.arc(x+r*0.35,y-r*0.1,r*0.13,Math.PI,TAU); ctx.fill();
+    ctx.beginPath(); ctx.ellipse(x,y+r*0.35,r*0.22,r*0.12,0,0,TAU); ctx.fill();
+  } else if(mood==='dead'){
+    ctx.strokeStyle = '#1a1a1a'; ctx.lineWidth = 2.5;
+    ctx.beginPath(); ctx.moveTo(x-r*0.5,y-r*0.25); ctx.lineTo(x-r*0.2,y+r*0.05);
+    ctx.moveTo(x-r*0.2,y-r*0.25); ctx.lineTo(x-r*0.5,y+r*0.05); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(x+r*0.2,y-r*0.25); ctx.lineTo(x+r*0.5,y+r*0.05);
+    ctx.moveTo(x+r*0.5,y-r*0.25); ctx.lineTo(x+r*0.2,y+r*0.05); ctx.stroke();
+    ctx.beginPath(); ctx.arc(x,y+r*0.3,r*0.2,0,Math.PI); ctx.stroke();
+  } else { // calm
+    circle(x-r*0.35,y-r*0.1,r*0.11); circle(x+r*0.35,y-r*0.1,r*0.11);
+    ctx.beginPath(); ctx.arc(x,y+r*0.15,r*0.22,0.15*Math.PI,0.85*Math.PI); ctx.strokeStyle='#1a1a1a';
+    ctx.lineWidth = 2.5; ctx.stroke();
+  }
+}
+
+// ---------- state ----------
+let state = 'menu'; // menu | play | over | win
+let t = 0, score = 0, combo = 0, bestCombo = 0, lives = 3;
+let cycle = 0, stops = 0, perfects = 0, explosions = 0;
+let D = 10, R = 10, speedFactor = 1, foodKind = 0, foodAngle = 0;
+let demon = false, lieMode = false, buttonRun = false, finale = false;
+let goldenCycle = false, goldenHit = false;
+let btnX = 150, btnY = 540, btnMoveT = 0, btnSquash = 0;
+let pauseT = 0, scrambleT = 0, scrambleOn = 0, beepT = 0;
+let shake = 0, slowmo = 0, catEars = 0;
+let parts = [];    // {x,y,vx,vy,life,col,r,grav}
+let popups = [];   // {x,y,txt,life,col,size}
+let confetti = [];
+let twistMsg = '', twistMsgT = 0, twistsDone = {};
+let high = +(localStorage.getItem('stm_high')||0);
+let unlock = localStorage.getItem('stm_unlock')||'';
+let copied = false, copyT = 0;
+let failLine = '';
+let menuT = 0;
+
+const FOODS = [
+  { name:'SOUP',    col:'#ff9f1c', col2:'#ffbf69' },
+  { name:'BURRITO', col:'#e07b39', col2:'#f4a259' },
+  { name:'POPCORN', col:'#fff3b0', col2:'#ffd60a' },
+  { name:'PIZZA',   col:'#ff6b35', col2:'#ffc300' },
+  { name:'EGG',     col:'#ffffff', col2:'#ffd60a' },
+];
+const FAILS = [
+  "The burrito achieved sentience and left.",
+  "Your soup is now on the ceiling.",
+  "The popcorn union has filed a complaint.",
+  "The microwave is pressing charges.",
+  "Dinner exploded. Again.",
+  "The cat saw everything. It judges you.",
+  "0.00 was right there. You blinked.",
+  "The display lied. You believed it.",
+  "Your egg is now modern art.",
+  "The kitchen has seen enough."
+];
+const RANKS = [
+  [1500,'ZERO HERO'],[1000,'MICROWAVE WHISPERER'],[500,'WARM-UP CHEF'],
+  [200,'COLD LUNCH'],[0,'BURNT TOAST']
+];
+function rankFor(s){ for(const [min,r] of RANKS) if(s>=min) return r; return 'BURNT TOAST'; }
+
+const MW = { x:70, y:170, w:340, h:250 }; // microwave body
+const WIN = { x:95, y:195, w:200, h:200 }; // door window
+
+function newCycle(){
+  cycle++;
+  const prev = foodKind;
+  do { foodKind = Math.floor(Math.random()*FOODS.length); } while(foodKind===prev);
+  const lo = demon ? 0.6 : 0.85, hi = demon ? 1.6 : 1.25;
+  speedFactor = rand(lo, hi);
+  D = 10; R = 10; foodAngle = 0;
+  goldenCycle = (cycle === 5); // golden bag shows up around the 40s mark
+  goldenHit = false;
+  beepT = 0.4;
+}
+function reset(){
+  t=0; score=0; combo=0; bestCombo=0; lives=3;
+  cycle=0; stops=0; perfects=0; explosions=0;
+  demon=false; lieMode=false; buttonRun=false; finale=false;
+  btnX=150; btnY=540; btnMoveT=0; btnSquash=0;
+  pauseT=0; scrambleT=2; scrambleOn=0; beepT=0;
+  shake=0; slowmo=0; catEars=0;
+  parts=[]; popups=[]; confetti=[];
+  twistMsg=''; twistMsgT=0; twistsDone={};
+  copied=false; copyT=0;
+  newCycle();
+}
+function addPopup(x,y,txt,col,size){ popups.push({x,y,txt,life:1.1,col:col||'#fff',size:size||26}); }
+function burst(x,y,col,n,spd){
+  for(let i=0;i<(n||18);i++){
+    const a = Math.random()*TAU, s = rand(40,spd||220);
+    parts.push({x,y,vx:Math.cos(a)*s,vy:Math.sin(a)*s-60,life:rand(0.5,1.1),col,r:rand(3,8),grav:420});
+  }
+}
+function twistAt(sec, key, msg, fn){
+  if(t>=sec && !twistsDone[key]){ twistsDone[key]=1; twistMsg=msg; twistMsgT=2.2; if(fn) fn(); }
+}
+
+function explode(){
+  explosions++; lives--; combo=0; shake=16; slowmo=0.35; catEars=1.4;
+  boomSnd();
+  const cx = WIN.x+WIN.w/2, cy = WIN.y+WIN.h/2;
+  burst(cx, cy, '#ff9f1c', 26, 300);
+  burst(cx, cy, '#ffffff', 14, 200);
+  burst(cx, cy, '#ff2d55', 12, 260);
+  addPopup(cx, cy-70, 'BOOM!', '#ff2d55', 40);
+  if(lives<=0){
+    failLine = FAILS[Math.floor(Math.random()*FAILS.length)];
+    if(score>high){ high=score; localStorage.setItem('stm_high', String(high)); }
+    if(perfects>=5 && !unlock){ unlock='golden-burrito'; localStorage.setItem('stm_unlock','golden-burrito'); }
+    state='over';
+  } else {
+    pauseT=1.1; newCycle();
+  }
+}
+
+function stopPressed(){
+  if(state!=='play' || pauseT>0) return;
+  stops++;
+  const err = R; // real seconds left when tapped
+  let pts=0, label='', col='#fff', q=2;
+  if(err<=0.05){ pts=100; label='PERFECT!'; col='#ffd60a'; q=0; perfects++; combo++; }
+  else if(err<=0.10){ pts=50; label='SO CLOSE!'; col='#ff9f1c'; q=1; combo++; }
+  else if(err<=0.20){ pts=50; label='GOOD!'; col='#7CFC98'; q=1; combo++; }
+  else if(err<=0.5){ pts=20; label='OK...'; col='#8ecae6'; q=2; }
+  else { label='TOO EARLY!'; col='#ff6b6b'; q=2; combo=0; }
+  if(combo>bestCombo) bestCombo=combo;
+  if(pts>0){
+    score += pts + 10*combo;
+    if(goldenCycle && q===0){ score+=200; goldenHit=true; addPopup(240,300,'GOLDEN! +200','#ffd60a',34); goldenSnd(); }
+    dingSnd(q);
+  } else earlySnd();
+  addPopup(240, 300, label, col, q===0?40:30);
+  if(combo>=3) addPopup(240, 340, 'COMBO x'+combo, '#ff9f1c', 24);
+  btnSquash=1;
+  pauseT=0.45;
+  newCycle();
+}
+
+function winGame(){
+  state='win';
+  score += lives*150;
+  if(score>high){ high=score; localStorage.setItem('stm_high', String(high)); }
+  if(perfects>=5 && !unlock){ unlock='golden-burrito'; localStorage.setItem('stm_unlock','golden-burrito'); }
+  for(let i=0;i<90;i++) confetti.push({x:rand(0,W),y:rand(-80,0),vx:rand(-30,30),vy:rand(60,160),
+    life:rand(2,4),col:['#ffd60a','#ff2d55','#7CFC98','#8ecae6','#ff9f1c'][i%5],r:rand(3,7)});
+  goldenSnd();
+}
+
+function copyResult(){
+  const txt = 'I stopped the microwave '+stops+'x ('+perfects+' PERFECT). It lied every time. Score '+score+' — '+rankFor(score)+'. Play: https://tuannx.github.io/daily-mini-games/games/stop-the-microwave.html';
+  const done = ()=>{ copied=true; copyT=1.6; };
+  if(navigator.clipboard && navigator.clipboard.writeText){ navigator.clipboard.writeText(txt).then(done, ()=>fallbackCopy(txt, done)); }
+  else fallbackCopy(txt, done);
+}
+function fallbackCopy(txt, done){
+  try{
+    const ta=document.createElement('textarea'); ta.value=txt; document.body.appendChild(ta);
+    ta.select(); document.execCommand('copy'); document.body.removeChild(ta); done();
+  }catch(e){}
+}
+
+// ---------- update ----------
+let last = 0;
+function loop(ts){
+  requestAnimationFrame(loop);
+  const now = ts/1000;
+  let dt = Math.min(0.05, now-(last||now)); last = now;
+  if(slowmo>0){ slowmo-=dt; dt*=0.25; }
+  update(dt);
+  draw();
+}
+function update(dt){
+  menuT += dt;
+  if(shake>0) shake = Math.max(0, shake - dt*30);
+  if(btnSquash>0) btnSquash = Math.max(0, btnSquash - dt*4);
+  if(catEars>0) catEars -= dt;
+  if(copyT>0) copyT -= dt; else copied=false;
+  for(const p of parts){ p.life-=dt; p.x+=p.vx*dt; p.y+=p.vy*dt; p.vy+=(p.grav||0)*dt; }
+  parts = parts.filter(p=>p.life>0 && p.y<H+20);
+  for(const p of popups){ p.life-=dt; p.y-=28*dt; }
+  popups = popups.filter(p=>p.life>0);
+  for(const c of confetti){ c.life-=dt; c.x+=c.vx*dt; c.y+=c.vy*dt; }
+  confetti = confetti.filter(c=>c.life>0 && c.y<H+20);
+  if(twistMsgT>0) twistMsgT-=dt;
+  if(state!=='play') return;
+  if(pauseT>0){ pauseT-=dt; return; }
+
+  t += dt;
+  twistAt(12,'lie','DISPLAY LIES!', ()=>{ lieMode=true; });
+  twistAt(20,'run','BUTTON RUNS!', ()=>{ buttonRun=true; });
+  twistAt(30,'demon','DEMON MODE!', ()=>{ demon=true; });
+  twistAt(40,'gold','GOLDEN POPCORN!', ()=>{});
+  twistAt(50,'fin','FINALE!', ()=>{ finale=true; });
+
+  D -= dt;
+  R -= dt * speedFactor * (finale?1.5:1);
+  foodAngle += dt * (1.6 + (10-R)*0.4) * (demon?1.7:1);
+
+  // lying display: digits scramble now and then
+  if(lieMode){
+    scrambleT -= dt;
+    if(scrambleT<=0){ scrambleOn=0.45; scrambleT=rand(1.4,2.6); }
+  }
+  if(scrambleOn>0) scrambleOn-=dt;
+
+  // STOP button runs away
+  if(buttonRun){
+    btnMoveT -= dt;
+    if(btnMoveT<=0){
+      btnX = rand(40, 290); btnY = rand(520, 600);
+      btnMoveT = 1.2; burst(btnX+65, btnY+25, '#ff9f1c', 8, 120);
+      if(Math.random()<0.5) addPopup(btnX+65, btnY-14, 'NOPE!', '#ff9f1c', 22);
+    }
+  }
+
+  // beeps track REAL time — the honest signal
+  beepT -= dt;
+  if(beepT<=0){
+    tickSnd(R);
+    beepT = R>5 ? 0.6 : R>2 ? 0.35 : 0.15;
+  }
+
+  if(R<=0){ explode(); return; }
+  if(t>=60){ winGame(); return; }
+}
+
+// ---------- draw ----------
+function drawFood(x, y, r, kind, golden){
+  const f = FOODS[kind];
+  ctx.save();
+  ctx.translate(x, y);
+  ctx.rotate(foodAngle*0.4);
+  const heat = clamp((10-R)/10, 0, 1);
+  const puff = 1 + heat*0.18 + Math.sin(menuT*9)*0.04;
+  ctx.scale(puff, puff);
+  const mood = demon ? 'scream' : R<2.5 ? 'worried' : 'calm';
+  if(golden){ ctx.shadowColor='#ffd60a'; ctx.shadowBlur=26; }
+  ctx.fillStyle = golden ? '#ffd60a' : f.col;
+  if(kind===0){ // soup bowl
+    ctx.beginPath(); ctx.ellipse(0, 6, r, r*0.62, 0, 0, TAU); ctx.fill();
+    ctx.fillStyle = golden ? '#ffe066' : f.col2;
+    ctx.beginPath(); ctx.ellipse(0, 0, r*0.82, r*0.42, 0, 0, TAU); ctx.fill();
+    drawFace(0, 2, r*0.7, mood);
+    ctx.fillStyle='#ff6b6b'; circle(-r*0.5,-r*0.55,r*0.16); circle(r*0.45,-r*0.6,r*0.14);
+  } else if(kind===1){ // burrito
+    ctx.beginPath(); ctx.ellipse(0, 0, r*1.15, r*0.62, 0, 0, TAU); ctx.fill();
+    ctx.fillStyle = golden ? '#ffe066' : f.col2;
+    ctx.beginPath(); ctx.ellipse(0, -r*0.12, r*0.85, r*0.34, 0, 0, TAU); ctx.fill();
+    drawFace(0, -r*0.05, r*0.7, mood);
+    ctx.strokeStyle='#b5651d'; ctx.lineWidth=3;
+    ctx.beginPath(); ctx.moveTo(-r*0.7,-r*0.3); ctx.lineTo(-r*0.4,r*0.25); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(r*0.5,-r*0.35); ctx.lineTo(r*0.75,r*0.2); ctx.stroke();
+  } else if(kind===2){ // popcorn bag
+    ctx.fillStyle = golden ? '#ffd60a' : '#e63946';
+    roundRect(-r*0.8, -r*0.3, r*1.6, r*1.1, 8); ctx.fill();
+    ctx.fillStyle = golden ? '#ffe066' : '#fff3b0';
+    for(let i=-2;i<=2;i++){ circle(i*r*0.32, -r*0.5, r*0.28); }
+    drawFace(0, r*0.25, r*0.62, mood);
+  } else if(kind===3){ // pizza slice
+    ctx.beginPath(); ctx.moveTo(0,-r); ctx.lineTo(r*0.9,r*0.8); ctx.lineTo(-r*0.9,r*0.8); ctx.closePath(); ctx.fill();
+    ctx.fillStyle = golden ? '#ffe066' : f.col2;
+    circle(-r*0.3,-r*0.1,r*0.2); circle(r*0.25,r*0.15,r*0.2); circle(0,-r*0.45,r*0.16);
+    drawFace(0, r*0.25, r*0.6, mood);
+  } else { // egg
+    ctx.beginPath(); ctx.ellipse(0, 0, r*0.85, r*1.05, 0, 0, TAU); ctx.fill();
+    ctx.fillStyle = golden ? '#ffe066' : f.col2;
+    circle(0, r*0.15, r*0.42);
+    drawFace(0, -r*0.3, r*0.6, mood);
+  }
+  ctx.restore();
+}
+
+function drawCat(x, y, s){
+  ctx.save(); ctx.translate(x, y); ctx.scale(s, s);
+  // body
+  ctx.fillStyle = '#8d6b9e';
+  ctx.beginPath(); ctx.ellipse(0, 0, 34, 26, 0, 0, TAU); ctx.fill();
+  // tail (wags faster when food is hot)
+  const wag = Math.sin(menuT*(4+(10-R)*1.2))*10;
+  ctx.strokeStyle='#8d6b9e'; ctx.lineWidth=9; ctx.lineCap='round';
+  ctx.beginPath(); ctx.moveTo(-30, 8); ctx.quadraticCurveTo(-52, -6+wag, -44, -26+wag); ctx.stroke();
+  // head
+  ctx.fillStyle = '#a87fc0';
+  circle(0, -34, 26);
+  ctx.beginPath(); ctx.moveTo(-20,-52); ctx.lineTo(-14,-72); ctx.lineTo(-4,-54); ctx.closePath(); ctx.fill();
+  ctx.beginPath(); ctx.moveTo(20,-52); ctx.lineTo(14,-72); ctx.lineTo(4,-54); ctx.closePath(); ctx.fill();
+  ctx.fillStyle='#ff9f1c';
+  ctx.beginPath(); ctx.moveTo(-18,-54); ctx.lineTo(-14,-66); ctx.lineTo(-8,-55); ctx.closePath(); ctx.fill();
+  ctx.beginPath(); ctx.moveTo(18,-54); ctx.lineTo(14,-66); ctx.lineTo(8,-55); ctx.closePath(); ctx.fill();
+  if(catEars>0){
+    // paws over ears — explosion!
+    ctx.fillStyle='#a87fc0'; circle(-16,-46,9); circle(16,-46,9);
+    ctx.fillStyle='#1a1a1a';
+    ctx.beginPath(); ctx.arc(-9,-32,3,Math.PI,TAU); ctx.fill();
+    ctx.beginPath(); ctx.arc(9,-32,3,Math.PI,TAU); ctx.fill();
+  } else {
+    // eyes follow the food
+    const look = clamp((WIN.x+WIN.w/2 - x)/220, -1, 1);
+    ctx.fillStyle='#1a1a1a';
+    circle(-10+look*3, -38, 3.5); circle(10+look*3, -38, 3.5);
+    ctx.fillStyle='#ff6b9e';
+    ctx.beginPath(); ctx.moveTo(-4,-30); ctx.lineTo(4,-30); ctx.lineTo(0,-26); ctx.closePath(); ctx.fill();
+    ctx.strokeStyle='#1a1a1a'; ctx.lineWidth=2;
+    ctx.beginPath(); ctx.arc(0,-24,5,0.15*Math.PI,0.85*Math.PI); ctx.stroke();
+  }
+  ctx.restore();
+}
+
+function draw(){
+  ctx.clearRect(0,0,W,H);
+  const shx = shake>0 ? rand(-shake,shake)*0.4 : 0;
+  const shy = shake>0 ? rand(-shake,shake)*0.4 : 0;
+  ctx.save(); ctx.translate(shx, shy);
+
+  // kitchen background
+  ctx.fillStyle = '#241533'; ctx.fillRect(-20,-20,W+40,H+40);
+  ctx.fillStyle = '#2d1b40';
+  for(let i=0;i<5;i++) ctx.fillRect(0, 96+i*120, W, 4);
+  // fridge (left, door slightly open, light on)
+  ctx.fillStyle = '#b8c4d0'; roundRect(14, 120, 74, 190, 8); ctx.fill();
+  ctx.fillStyle = '#8fa3b5'; ctx.fillRect(14, 200, 74, 5);
+  ctx.fillStyle = '#ffe066'; ctx.fillRect(84, 150, 6, 60); // open-door light
+  ctx.fillStyle = '#1a1a1a'; ctx.fillRect(30, 150, 8, 40); // handle
+  // wall clock (hands spin fast — it lies too)
+  ctx.fillStyle = '#fff'; circle(428, 90, 30);
+  ctx.strokeStyle='#1a1a1a'; ctx.lineWidth=3; ctx.beginPath(); ctx.arc(428,90,30,0,TAU); ctx.stroke();
+  const ca = menuT*2.2;
+  ctx.beginPath(); ctx.moveTo(428,90); ctx.lineTo(428+Math.cos(ca)*18, 90+Math.sin(ca)*18); ctx.stroke();
+  ctx.beginPath(); ctx.moveTo(428,90); ctx.lineTo(428+Math.cos(ca*0.3)*24, 90+Math.sin(ca*0.3)*24); ctx.stroke();
+  // plant (sways)
+  ctx.fillStyle='#e63946'; roundRect(392, 640, 56, 44, 6); ctx.fill();
+  ctx.strokeStyle='#7CFC98'; ctx.lineWidth=5;
+  for(let i=-1;i<=1;i++){
+    ctx.beginPath(); ctx.moveTo(420, 640);
+    ctx.quadraticCurveTo(420+i*18+Math.sin(menuT*2+i)*6, 610, 420+i*26, 588+Math.sin(menuT*2+i)*4);
+    ctx.stroke();
+  }
+  // counter
+  ctx.fillStyle = '#3a2350'; ctx.fillRect(0, 660, W, 60);
+  ctx.fillStyle = '#4a2d63'; ctx.fillRect(0, 660, W, 6);
+
+  // ---------- microwave ----------
+  const mShake = (demon ? Math.sin(menuT*30)*3 : 0) + (R<2 && state==='play' ? Math.sin(menuT*22)*1.5 : 0);
+  ctx.save(); ctx.translate(mShake, 0);
+  ctx.fillStyle = '#3d3d5c'; roundRect(MW.x, MW.y, MW.w, MW.h, 14); ctx.fill();
+  ctx.fillStyle = '#2a2a40'; roundRect(MW.x+8, MW.y+8, MW.w-16, MW.h-16, 10); ctx.fill();
+  // door window
+  ctx.fillStyle = '#0e0a1a'; roundRect(WIN.x, WIN.y, WIN.w, WIN.h, 8); ctx.fill();
+  // inside glow (hot = orange)
+  const heat = clamp((10-R)/10, 0, 1);
+  ctx.fillStyle = demon ? 'rgba(255,45,85,0.25)' : 'rgba(255,159,28,'+(0.12+heat*0.25)+')';
+  roundRect(WIN.x, WIN.y, WIN.w, WIN.h, 8); ctx.fill();
+  // turntable
+  ctx.strokeStyle='#ffffff22'; ctx.lineWidth=2;
+  ctx.beginPath(); ctx.arc(WIN.x+WIN.w/2, WIN.y+WIN.h/2, 78, 0, TAU); ctx.stroke();
+  // food (spins inside)
+  if(state!=='over' || lives>0) drawFood(WIN.x+WIN.w/2, WIN.y+WIN.h/2, 52, foodKind, goldenCycle);
+  // door frame
+  ctx.strokeStyle='#55557a'; ctx.lineWidth=4; roundRect(WIN.x, WIN.y, WIN.w, WIN.h, 8); ctx.stroke();
+  // display panel
+  ctx.fillStyle = '#101018'; roundRect(315, 195, 78, 110, 8); ctx.fill();
+  let disp;
+  if(scrambleOn>0){ disp = (Math.floor(Math.random()*10))+''+(Math.floor(Math.random()*10))+'.'+(Math.floor(Math.random()*10))+''+(Math.floor(Math.random()*10)); }
+  else if(demon){ disp = '6.66'; }
+  else { const dd = Math.max(0, D); disp = String(Math.floor(dd)).padStart(2,'0')+'.'+String(Math.floor((dd%1)*100)).padStart(2,'0'); }
+  ctx.fillStyle = demon ? '#ff2d55' : scrambleOn>0 ? '#ff9f1c' : '#7CFC98';
+  ctx.font = 'bold 26px monospace'; ctx.textAlign='center';
+  ctx.fillText(disp, 354, 228);
+  ctx.fillStyle = '#8ecae6'; ctx.font='bold 11px Trebuchet MS';
+  ctx.fillText(demon ? 'LIES!' : 'TIME LEFT?', 354, 252);
+  // deco buttons
+  for(let i=0;i<3;i++){ ctx.fillStyle='#55557a'; circle(332+i*22, 282, 7); }
+  ctx.restore();
+
+  // ---------- STOP button (runs away after 20s) ----------
+  const sq = btnSquash>0 ? 1 - btnSquash*0.25 : 1;
+  ctx.save(); ctx.translate(btnX+65, btnY+25); ctx.scale(2-sq, sq);
+  ctx.fillStyle = '#d90429'; roundRect(-65, -25, 130, 50, 25); ctx.fill();
+  ctx.fillStyle = '#ff2d55'; roundRect(-65, -25, 130, 38, 25); ctx.fill();
+  ctx.fillStyle = '#fff'; ctx.font='bold 26px Trebuchet MS'; ctx.textAlign='center';
+  ctx.fillText('STOP', 0, 9);
+  ctx.restore();
+
+  // ---------- cat judge ----------
+  drawCat(72, 640, 1);
+
+  // ---------- HUD ----------
+  ctx.fillStyle='#fff'; ctx.textAlign='left'; ctx.font='bold 20px Trebuchet MS';
+  ctx.fillText('SCORE '+score, 16, 36);
+  ctx.fillStyle='#ffd60a'; ctx.textAlign='right';
+  ctx.fillText('BEST '+high, W-16, 36);
+  ctx.fillStyle='#8ecae6'; ctx.textAlign='left'; ctx.font='bold 16px Trebuchet MS';
+  ctx.fillText('TIME '+Math.max(0, Math.ceil(60-t))+'s', 16, 62);
+  if(combo>=2){ ctx.fillStyle='#ff9f1c'; ctx.textAlign='center'; ctx.fillText('COMBO x'+combo, W/2, 62); }
+  // lives = 3 little bowls
+  for(let i=0;i<3;i++){
+    ctx.fillStyle = i<lives ? '#ff9f1c' : '#ffffff22';
+    ctx.beginPath(); ctx.ellipse(W-30-i*30, 56, 11, 8, 0, 0, TAU); ctx.fill();
+  }
+  // golden cycle indicator
+  if(goldenCycle && state==='play'){
+    ctx.fillStyle='#ffd60a'; ctx.textAlign='center'; ctx.font='bold 15px Trebuchet MS';
+    ctx.fillText('★ GOLDEN POPCORN — PERFECT = +200 ★', W/2, 150);
+  }
+
+  // ---------- twist banner ----------
+  if(twistMsgT>0){
+    ctx.globalAlpha = Math.min(1, twistMsgT);
+    ctx.fillStyle='#ff2d55'; ctx.font='bold 34px Trebuchet MS'; ctx.textAlign='center';
+    ctx.fillText(twistMsg, W/2, 470);
+    ctx.globalAlpha = 1;
+  }
+
+  // ---------- particles / popups / confetti ----------
+  for(const p of parts){ ctx.globalAlpha = Math.max(0, p.life); ctx.fillStyle=p.col; circle(p.x,p.y,p.r); }
+  ctx.globalAlpha = 1;
+  for(const c of confetti){ ctx.fillStyle=c.col; ctx.fillRect(c.x, c.y, c.r, c.r*1.4); }
+  for(const p of popups){
+    ctx.globalAlpha = Math.min(1, p.life);
+    ctx.fillStyle=p.col; ctx.font='bold '+p.size+'px Trebuchet MS'; ctx.textAlign='center';
+    ctx.fillText(p.txt, p.x, p.y);
+  }
+  ctx.globalAlpha = 1;
+
+  // ---------- overlays ----------
+  if(state==='menu'){
+    ctx.fillStyle='rgba(11,6,24,0.72)'; ctx.fillRect(-20,-20,W+40,H+40);
+    ctx.fillStyle='#ffd60a'; ctx.font='bold 40px Trebuchet MS'; ctx.textAlign='center';
+    ctx.fillText('STOP THE', W/2, 150);
+    ctx.fillText('MICROWAVE!', W/2, 196);
+    ctx.fillStyle='#fff'; ctx.font='bold 19px Trebuchet MS';
+    ctx.fillText('Stop it at zero. It lies.', W/2, 236);
+    // mini microwave preview with a calm burrito
+    ctx.save(); ctx.translate(W/2, 330);
+    ctx.fillStyle='#3d3d5c'; roundRect(-110,-70,220,140,12); ctx.fill();
+    ctx.fillStyle='#0e0a1a'; roundRect(-95,-55,130,110,8); ctx.fill();
+    ctx.save(); ctx.translate(-30, 0); ctx.rotate(Math.sin(menuT*2)*0.2);
+    ctx.fillStyle='#e07b39'; ctx.beginPath(); ctx.ellipse(0,0,44,24,0,0,TAU); ctx.fill();
+    ctx.fillStyle='#1a1a1a'; circle(-14,-4,4); circle(14,-4,4);
+    ctx.beginPath(); ctx.arc(0,6,9,0.15*Math.PI,0.85*Math.PI); ctx.strokeStyle='#1a1a1a'; ctx.lineWidth=2.5; ctx.stroke();
+    ctx.restore();
+    ctx.fillStyle='#101018'; roundRect(50,-55,55,70,6); ctx.fill();
+    ctx.fillStyle='#7CFC98'; ctx.font='bold 20px monospace'; ctx.fillText('9.99', 78, -18);
+    ctx.restore();
+    ctx.fillStyle='#7CFC98'; ctx.font='bold 17px Trebuchet MS';
+    ctx.fillText('Tap the red STOP — or the microwave.', W/2, 470);
+    ctx.fillStyle='#ff9f1c';
+    ctx.fillText('The beeps tell the truth. The digits don\'t.', W/2, 496);
+    ctx.fillStyle='#fff'; ctx.font='bold 24px Trebuchet MS';
+    ctx.fillText('TAP TO START', W/2, 560);
+    if(high>0){ ctx.fillStyle='#ffd60a'; ctx.font='bold 17px Trebuchet MS'; ctx.fillText('BEST '+high+' — '+rankFor(high), W/2, 592); }
+    if(unlock==='golden-burrito'){ ctx.fillStyle='#ffd60a'; ctx.font='bold 16px Trebuchet MS'; ctx.fillText('★ GOLDEN BURRITO UNLOCKED ★', W/2, 620); }
+  }
+
+  if(state==='over' || state==='win'){
+    ctx.fillStyle='rgba(11,6,24,0.78)'; ctx.fillRect(-20,-20,W+40,H+40);
+    ctx.fillStyle = state==='win' ? '#7CFC98' : '#ff2d55';
+    ctx.font='bold 38px Trebuchet MS'; ctx.textAlign='center';
+    ctx.fillText(state==='win' ? 'YOU SURVIVED!' : 'KITCHEN CLOSED', W/2, 170);
+    ctx.fillStyle='#fff'; ctx.font='bold 19px Trebuchet MS';
+    if(state==='over'){ ctx.fillText(failLine, W/2, 208); }
+    else { ctx.fillText('The microwave fears you now.', W/2, 208); }
+    ctx.fillStyle='#ffd60a'; ctx.font='bold 30px Trebuchet MS';
+    ctx.fillText('SCORE '+score, W/2, 268);
+    ctx.fillStyle='#fff'; ctx.font='bold 20px Trebuchet MS';
+    ctx.fillText('RANK: '+rankFor(score), W/2, 302);
+    ctx.fillText('STOPS '+stops+'   PERFECT '+perfects+'   BEST COMBO x'+bestCombo, W/2, 334);
+    if(unlock==='golden-burrito' && perfects>=5){
+      ctx.fillStyle='#ffd60a'; ctx.fillText('★ GOLDEN BURRITO UNLOCKED ★', W/2, 366);
+    }
+    // buttons
+    ctx.fillStyle='#ff9f1c'; roundRect(90, 420, 300, 56, 28); ctx.fill();
+    ctx.fillStyle='#fff'; ctx.font='bold 24px Trebuchet MS';
+    ctx.fillText('PLAY AGAIN', W/2, 456);
+    ctx.fillStyle='#3d3d5c'; roundRect(90, 492, 300, 56, 28); ctx.fill();
+    ctx.fillStyle='#fff'; ctx.font='bold 20px Trebuchet MS';
+    ctx.fillText(copied ? 'COPIED!' : 'COPY RESULT', W/2, 528);
+    ctx.fillStyle='#8ecae6'; ctx.font='bold 15px Trebuchet MS';
+    ctx.fillText('BEST '+high, W/2, 580);
+  }
+
+  ctx.restore();
+}
+
+// ---------- input ----------
+function toGame(e){
+  const r = cv.getBoundingClientRect();
+  const cx = (e.clientX - r.left) * (W / r.width);
+  const cy = (e.clientY - r.top) * (H / r.height);
+  return {x:cx, y:cy};
+}
+function onTap(e){
+  e.preventDefault();
+  audio();
+  const p = toGame(e);
+  if(state==='menu'){ reset(); state='play'; return; }
+  if(state==='over' || state==='win'){
+    if(p.y>=420 && p.y<=476 && p.x>=90 && p.x<=390){ reset(); state='play'; return; }
+    if(p.y>=492 && p.y<=548 && p.x>=90 && p.x<=390){ copyResult(); return; }
+    return;
+  }
+  if(state==='play'){
+    const inBtn = p.x>=btnX && p.x<=btnX+130 && p.y>=btnY && p.y<=btnY+50;
+    const inMW = p.x>=MW.x && p.x<=MW.x+MW.w && p.y>=MW.y && p.y<=MW.y+MW.h;
+    if(inBtn || inMW) stopPressed();
+  }
+}
+cv.addEventListener('pointerdown', onTap);
+window.addEventListener('keydown', (e)=>{
+  if(e.code==='Space' || e.code==='Enter'){
+    e.preventDefault(); audio();
+    if(state==='menu'){ reset(); state='play'; }
+    else if(state==='over' || state==='win'){ reset(); state='play'; }
+    else stopPressed();
+  }
+});
+
+requestAnimationFrame(loop);
+</script>
+</body>
+</html>

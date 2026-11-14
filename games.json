@@ -393,5 +393,14 @@
   "mechanic": "Alternating-tap wobbly runway walk",
   "tagline": "Walk the runway. Two legs. Zero balance. The judges are cats.",
   "title": "WOBBLY CATWALK!"
+ },
+ {
+  "date": "2026-11-14",
+  "day": 45,
+  "emoji": "⏱️",
+  "file": "games/stop-the-microwave.html",
+  "mechanic": "Lying-display precision timer",
+  "tagline": "Stop it at zero. It lies. Trust the burrito.",
+  "title": "STOP THE MICROWAVE!"
  }
 ]
