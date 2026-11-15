@@ -1,0 +1,679 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<title>HAUNTED COIN PUSHER! — Day 46</title>
+<style>
+  * { margin:0; padding:0; box-sizing:border-box; }
+  html,body { width:100%; height:100%; background:#0b0618; overflow:hidden; touch-action:none;
+    font-family:'Trebuchet MS','Comic Sans MS',sans-serif; }
+  #wrap { position:fixed; inset:0; display:flex; align-items:center; justify-content:center; }
+  canvas { display:block; background:#1a0b2e; border-radius:12px;
+    box-shadow:0 0 40px #ffd60aaa, 0 0 90px #7b2ff7aa; }
+</style>
+</head>
+<body>
+<div id="wrap"><canvas id="c" width="480" height="720"></canvas></div>
+<script>
+"use strict";
+// HAUNTED COIN PUSHER! — Day 46
+// Drop coins from the claw, the grumpy pusher shoves the pile off the edge.
+// Score $10 per coin, $100 per golden coin, bomb coins cost -$50.
+// TWIST LADDER: 12s GHOST WIND (coins drift sideways) -> 20s PUSHER NAPS
+// (stops 4s, then SLAMS fast) -> 30s GREEDY HAND (steals 3 coins) ->
+// 40s GOLDEN RAIN (3 golden coins) -> 50s MACHINE REVERSES (suction pulls
+// coins back). Reach $200 rent in 60s or the landlord evicts you.
+const cv = document.getElementById('c');
+const ctx = cv.getContext('2d');
+const W = 480, H = 720;
+
+// ---------- audio (WebAudio, self-generated) ----------
+let AC = null;
+function audio(){ if(!AC){ try{ AC = new (window.AudioContext||window.webkitAudioContext)(); }catch(e){} } return AC; }
+function beep(f, d, type, v){
+  const ac = audio(); if(!ac) return;
+  const o = ac.createOscillator(), g = ac.createGain();
+  o.type = type||'sine'; o.frequency.value = f;
+  g.gain.setValueAtTime(v||0.12, ac.currentTime);
+  g.gain.exponentialRampToValueAtTime(0.001, ac.currentTime + d);
+  o.connect(g); g.connect(ac.destination); o.start(); o.stop(ac.currentTime + d);
+}
+function clinkSnd(){ beep(1568, 0.06, 'triangle', 0.10); setTimeout(()=>beep(2093, 0.08, 'triangle', 0.08), 40); }
+function dropSnd(){ beep(880, 0.05, 'sine', 0.08); }
+function coinSnd(){ beep(1175, 0.07, 'sine', 0.12); setTimeout(()=>beep(1568, 0.12, 'sine', 0.12), 60); }
+function goldenSnd(){ [1319,1568,2093].forEach((f,i)=>setTimeout(()=>beep(f,0.12,'sine',0.12), i*70)); }
+function boomSnd(){
+  const ac = audio(); if(!ac) return;
+  const len = ac.sampleRate * 0.4, buf = ac.createBuffer(1, len, ac.sampleRate), d = buf.getChannelData(0);
+  for(let i=0;i<len;i++) d[i] = (Math.random()*2-1) * Math.pow(1-i/len, 2.2);
+  const s = ac.createBufferSource(); s.buffer = buf;
+  const g = ac.createGain(); g.gain.value = 0.25;
+  s.connect(g); g.connect(ac.destination); s.start();
+  beep(90, 0.4, 'sawtooth', 0.10);
+}
+function ghostSnd(){ beep(660, 0.25, 'sine', 0.08); setTimeout(()=>beep(440, 0.3, 'sine', 0.08), 120); }
+function handSnd(){ beep(300, 0.15, 'sawtooth', 0.10); setTimeout(()=>beep(180, 0.2, 'sawtooth', 0.10), 100); }
+function winSnd(){ [523,659,784,1047].forEach((f,i)=>setTimeout(()=>beep(f,0.15,'triangle',0.12), i*90)); }
+
+// ---------- helpers ----------
+const rand = (a,b)=>a+Math.random()*(b-a);
+const clamp = (v,a,b)=>Math.max(a,Math.min(b,v));
+const TAU = Math.PI*2;
+function roundRect(x,y,w,h,r){ ctx.beginPath(); ctx.moveTo(x+r,y); ctx.arcTo(x+w,y,x+w,y+h,r);
+  ctx.arcTo(x+w,y+h,x,y+h,r); ctx.arcTo(x,y+h,x,y,r); ctx.arcTo(x,y,x+w,y,r); ctx.closePath(); }
+function circle(x,y,r){ ctx.beginPath(); ctx.arc(x,y,r,0,TAU); ctx.fill(); }
+
+// ---------- state ----------
+const SHELF_Y = 520, SHELF_L = 20, SHELF_R = 460;
+const QUOTA = 200, ROUND = 60;
+let state = 'menu'; // menu | play | over | win
+let t = 0, timeLeft = ROUND, score = 0, combo = 0, comboT = 0, bestCombo = 0;
+let coins = [], parts = [], popups = [], confetti = [];
+let dropperX = 240, dropCd = 0, dropperSquash = 0;
+let pusherX = 30, pusherDir = 1, pusherSpeed = 55, pusherNap = 0, pusherSlam = 0, pusherReverse = 0;
+let windT = 0, windDir = 1, ghostX = -60, ghostOn = false;
+let hand = null; // {x,y,phase,steal:[coins]}
+let goldenRainT = 0, goldenDropped = 0, rainTimer = 0;
+let shake = 0, teeterShown = {};
+let twistMsg = '', twistMsgT = 0, twistsDone = {};
+let high = +(localStorage.getItem('hcp_high')||0);
+let unlock = localStorage.getItem('hcp_unlock')||'';
+let copied = false, copyT = 0, failLine = '', menuT = 0, pauseT = 0;
+let keys = {};
+
+const FAILS = [
+  "The landlord changed the locks.",
+  "Your coins filed for eviction.",
+  "The machine ate your rent.",
+  "Ghost paid the deposit. In vibes.",
+  "The pusher unionized. You lost.",
+  "Rent's due. The claw is sorry.",
+  "The hand took the last coin. And your dignity.",
+  "You owe $200. The ghost owes nothing.",
+];
+function rankFor(s){
+  if(s>=400) return "LANDLORD'S NIGHTMARE";
+  if(s>=300) return "PUSHER WHISPERER";
+  if(s>=QUOTA) return "RENT DODGER";
+  if(s>=100) return "COIN GOBLIN";
+  return "BROKE";
+}
+function popup(x,y,txt,col,size){ popups.push({x,y,txt,life:1.2,col:col||'#fff',size:size||26}); }
+function burst(x,y,col,n,spd){
+  for(let i=0;i<(n||12);i++){
+    const a = rand(0,TAU), s = rand(40,spd||160);
+    parts.push({x,y,vx:Math.cos(a)*s,vy:Math.sin(a)*s-60,life:rand(0.4,0.9),col,r:rand(2,5),grav:500});
+  }
+}
+function addScore(n, x, y, label){
+  score += n;
+  if(score < 0) score = 0;
+  if(label) popup(x, y, label, n>=0 ? '#ffd60a' : '#ff2d55', n>=100 ? 30 : 24);
+  if(score >= QUOTA && state==='play'){ winGame(); }
+}
+
+// ---------- coins ----------
+function spawnCoin(kind, x, y){
+  const r = kind==='gold' ? 15 : 13;
+  coins.push({ x: x!==undefined?x:dropperX, y: y!==undefined?y:195, vx: rand(-8,8), vy: 0,
+    r, kind: kind||'coin', rot: rand(0,TAU), spin: rand(-2,2), falling:false, dead:false,
+    teeter:false, fuse: rand(0,TAU) });
+}
+function dropCoin(){
+  if(state!=='play' || dropCd>0) return;
+  if(coins.length >= 80){ popup(dropperX, 210, "TOO MANY!", '#ff2d55', 24); return; }
+  dropCd = 0.45; dropperSquash = 1;
+  let kind = 'coin';
+  const roll = Math.random();
+  if(t > 10 && roll < 0.12) kind = 'bomb';
+  else if(roll < 0.15) kind = 'gold';
+  spawnCoin(kind);
+  dropSnd();
+}
+function scoreCoin(c){
+  c.dead = true;
+  combo++; comboT = 1.5; if(combo>bestCombo) bestCombo = combo;
+  if(c.kind==='gold'){ addScore(100, c.x, 600, "GOLD! +$100"); goldenSnd(); burst(c.x, 620, '#ffd60a', 20, 220); }
+  else if(c.kind==='bomb'){ addScore(-50, c.x, 600, "BOOM! -$50"); boomSnd(); shake = 10; burst(c.x, 620, '#ff2d55', 22, 240); }
+  else { const v = 10 + combo*2; addScore(v, c.x, 600, "+$"+v); coinSnd(); burst(c.x, 620, '#ffd60a', 8, 120); }
+  if(combo>=3) popup(c.x, 560, "COMBO x"+combo+"!", '#7bff5e', 24);
+}
+
+// ---------- twists ----------
+function fireTwist(name){
+  if(twistsDone[name]) return; twistsDone[name] = true;
+  if(name==='wind'){ twistMsg = "GHOST WIND!"; windT = 6; ghostOn = true; ghostSnd(); }
+  if(name==='nap'){ twistMsg = "PUSHER NAPS!"; pusherNap = 4; }
+  if(name==='hand'){ twistMsg = "GREEDY HAND!"; handSnd();
+    const onShelf = coins.filter(c=>!c.falling && !c.dead);
+    const steal = [];
+    for(let i=0;i<3 && onShelf.length;i++){ steal.push(onShelf.splice(Math.floor(Math.random()*onShelf.length),1)[0]); }
+    hand = { x: 520, y: 300, phase: 0, steal };
+    steal.forEach(c=>{ c.dead = true; });
+  }
+  if(name==='rain'){ twistMsg = "GOLDEN RAIN!"; goldenRainT = 3; rainTimer = 0; goldenSnd(); }
+  if(name==='reverse'){ twistMsg = "MACHINE REVERSES!"; pusherReverse = 5; }
+  twistMsgT = 2.2;
+  popup(W/2, 300, twistMsg, '#ff9f1c', 34);
+}
+
+// ---------- update ----------
+function update(dt){
+  menuT += dt;
+  if(state==='menu'){ ghostX = -60 + ((menuT*40)%(W+120)); return; }
+  if(state==='over' || state==='win'){
+    confetti.forEach(p=>{ p.vy += 300*dt; p.x += p.vx*dt; p.y += p.vy*dt; p.rot += p.spin*dt; });
+    confetti = confetti.filter(p=>p.y < H+20);
+    parts.forEach(p=>{ p.vy += (p.grav||0)*dt; p.x += p.vx*dt; p.y += p.vy*dt; p.life -= dt; });
+    parts = parts.filter(p=>p.life>0);
+    return;
+  }
+  // play
+  t += dt; timeLeft = Math.max(0, ROUND - t);
+  if(timeLeft<=0){ endGame(); return; }
+  if(t>=12) fireTwist('wind');
+  if(t>=20) fireTwist('nap');
+  if(t>=30) fireTwist('hand');
+  if(t>=40) fireTwist('rain');
+  if(t>=50) fireTwist('reverse');
+
+  // dropper movement
+  const spd = 320;
+  if(keys['arrowleft']||keys['a']) dropperX -= spd*dt;
+  if(keys['arrowright']||keys['d']) dropperX += spd*dt;
+  dropperX = clamp(dropperX, 60, 420);
+  dropCd = Math.max(0, dropCd-dt);
+  dropperSquash = Math.max(0, dropperSquash - dt*4);
+  if(comboT>0){ comboT -= dt; if(comboT<=0) combo = 0; }
+
+  // pusher
+  if(pusherNap>0){ pusherNap -= dt; if(pusherNap<=0){ pusherSlam = 4; twistMsg = "PUSHER RAGES!"; twistMsgT = 1.5; popup(W/2, 300, "PUSHER RAGES!", '#ff2d55', 30); } }
+  else if(pusherSlam>0){ pusherSlam -= dt; pusherSpeed = 170; }
+  else if(pusherReverse>0){ pusherReverse -= dt; pusherSpeed = 55; }
+  else pusherSpeed = 55;
+  const oldPX = pusherX;
+  if(pusherNap<=0){
+    if(pusherReverse>0){ pusherX -= 90*dt; if(pusherX<30){ pusherX = 30; } }
+    else { pusherX += pusherDir*pusherSpeed*dt; if(pusherX>150){ pusherX=150; pusherDir=-1; } if(pusherX<30){ pusherX=30; pusherDir=1; } }
+  }
+  const pusherVX = (pusherX - oldPX)/Math.max(dt, 0.001);
+
+  // ghost wind
+  if(windT>0){ windT -= dt; windDir = Math.sin(t*2.2)>0?1:-1; ghostX += 60*dt; if(ghostX>W+80) ghostX=-80; }
+  else ghostOn = false;
+
+  // golden rain
+  if(goldenRainT>0){
+    rainTimer -= dt;
+    if(rainTimer<=0 && goldenDropped<3){ spawnCoin('gold', rand(120,360), 195); goldenDropped++; rainTimer = 0.7; }
+    if(goldenDropped>=3) goldenRainT = 0;
+  }
+
+  // greedy hand
+  if(hand){
+    hand.phase += dt;
+    if(hand.phase < 0.7){ hand.x -= 260*dt; }
+    else if(hand.phase < 1.6){ hand.x += 40*dt; popup(hand.x-40, hand.y-30, "MINE!", '#ff9f1c', 26); }
+    else { hand.x += 420*dt; if(hand.x > 560) hand = null; }
+  }
+
+  // coins physics
+  for(const c of coins){
+    if(c.dead) continue;
+    c.rot += c.spin*dt; c.fuse += dt*6;
+    // gravity
+    c.vy += 900*dt;
+    // ghost wind
+    if(windT>0) c.vx += windDir*140*dt;
+    // reverse suction
+    if(pusherReverse>0) c.vx -= 90*dt;
+    // friction on shelf
+    if(!c.falling && Math.abs(c.y + c.r - SHELF_Y) < 3) c.vx *= Math.pow(0.35, dt);
+    c.x += c.vx*dt; c.y += c.vy*dt;
+    // pusher wall (bar spans y 380..SHELF_Y, x pusherX..pusherX+26)
+    if(c.y + c.r > 380 && c.x - c.r < pusherX+26 && c.x > pusherX-40){
+      c.x = pusherX+26+c.r; c.vx = Math.max(c.vx, pusherVX*0.9 + 20);
+    }
+    // side walls
+    if(c.x - c.r < SHELF_L){ c.x = SHELF_L + c.r; c.vx = Math.abs(c.vx)*0.3; }
+    if(c.x + c.r > W-16){ c.x = W-16 - c.r; c.vx = -Math.abs(c.vx)*0.3; }
+    // shelf floor
+    if(!c.falling){
+      if(c.y + c.r >= SHELF_Y && c.x <= SHELF_R){
+        c.y = SHELF_Y - c.r; c.vy = c.vy < -140 ? -c.vy*0.25 : 0;
+        if(Math.abs(c.vy) > 60) clinkSnd();
+      }
+      if(c.x - c.r > SHELF_R){ c.falling = true; c.vy = Math.max(c.vy, 30); }
+      // teeter near-miss
+      if(!c.teeter && c.x > SHELF_R-22 && c.x <= SHELF_R){
+        c.teeter = true; popup(c.x, SHELF_Y-50, "SO CLOSE!", '#7bff5e', 24);
+      }
+    }
+    if(c.falling && c.y > 700){ scoreCoin(c); }
+  }
+  // coin-coin collisions (2 passes)
+  for(let pass=0; pass<2; pass++){
+    for(let i=0;i<coins.length;i++){
+      const a = coins[i]; if(a.dead) continue;
+      for(let j=i+1;j<coins.length;j++){
+        const b = coins[j]; if(b.dead) continue;
+        const dx = b.x-a.x, dy = b.y-a.y, rr = a.r+b.r;
+        const d2 = dx*dx+dy*dy;
+        if(d2 < rr*rr && d2 > 0.01){
+          const d = Math.sqrt(d2), nx = dx/d, ny = dy/d, overlap = (rr-d)/2;
+          a.x -= nx*overlap; a.y -= ny*overlap; b.x += nx*overlap; b.y += ny*overlap;
+          const rvx = b.vx-a.vx, rvy = b.vy-a.vy, vn = rvx*nx+rvy*ny;
+          if(vn < 0){
+            const imp = -vn*0.6;
+            a.vx -= nx*imp; a.vy -= ny*imp; b.vx += nx*imp; b.vy += ny*imp;
+          }
+        }
+      }
+    }
+  }
+  coins = coins.filter(c=>!c.dead);
+  if(coins.length > 90) coins.splice(0, coins.length-90);
+
+  // particles / popups
+  parts.forEach(p=>{ p.vy += (p.grav||0)*dt; p.x += p.vx*dt; p.y += p.vy*dt; p.life -= dt; });
+  parts = parts.filter(p=>p.life>0);
+  popups.forEach(p=>{ p.y -= 30*dt; p.life -= dt; });
+  popups = popups.filter(p=>p.life>0);
+  if(twistMsgT>0) twistMsgT -= dt;
+  if(shake>0) shake = Math.max(0, shake - dt*30);
+  if(copyT>0) copyT -= dt;
+  if(pauseT>0) pauseT -= dt;
+}
+
+function endGame(){
+  state = 'over';
+  failLine = FAILS[Math.floor(Math.random()*FAILS.length)];
+  if(score > high){ high = score; localStorage.setItem('hcp_high', String(high)); }
+  if(score >= 300 && !unlock){ unlock = 'golden-claw'; localStorage.setItem('hcp_unlock', unlock); }
+  boomSnd();
+}
+function winGame(){
+  state = 'win';
+  if(score > high){ high = score; localStorage.setItem('hcp_high', String(high)); }
+  if(score >= 300 && !unlock){ unlock = 'golden-claw'; localStorage.setItem('hcp_unlock', unlock); }
+  winSnd();
+  for(let i=0;i<90;i++) confetti.push({x:rand(0,W), y:rand(-80,-10), vx:rand(-40,40), vy:rand(60,160),
+    rot:rand(0,TAU), spin:rand(-4,4), col:['#ffd60a','#ff2d55','#7bff5e','#7b2ff7','#ff9f1c'][i%5], w:rand(6,10), h:rand(8,14)});
+}
+function resetGame(){
+  t = 0; timeLeft = ROUND; score = 0; combo = 0; comboT = 0; bestCombo = 0;
+  coins = []; parts = []; popups = []; confetti = [];
+  dropperX = 240; dropCd = 0; pusherX = 30; pusherDir = 1; pusherSpeed = 55;
+  pusherNap = 0; pusherSlam = 0; pusherReverse = 0;
+  windT = 0; ghostOn = false; hand = null;
+  goldenRainT = 0; goldenDropped = 0; rainTimer = 0;
+  shake = 0; twistMsg = ''; twistMsgT = 0; twistsDone = {}; copied = false; failLine = '';
+  // starter pile so the pusher has something to shove immediately
+  for(let i=0;i<6;i++) spawnCoin('coin', rand(180, 400), SHELF_Y - 13 - Math.floor(i/3)*26);
+  state = 'play';
+}
+
+// ---------- drawing ----------
+function drawCoin(c){
+  ctx.save(); ctx.translate(c.x, c.y);
+  if(c.kind==='gold'){
+    ctx.shadowColor = '#ffd60a'; ctx.shadowBlur = 18;
+    ctx.fillStyle = '#ffd60a'; circle(0,0,c.r+2);
+    ctx.shadowBlur = 0;
+    ctx.fillStyle = '#fff3b0'; circle(0,0,c.r);
+    ctx.strokeStyle = '#b8860b'; ctx.lineWidth = 2; ctx.beginPath(); ctx.arc(0,0,c.r-3,0,TAU); ctx.stroke();
+    ctx.fillStyle = '#b8860b'; ctx.font = 'bold 15px Trebuchet MS'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+    ctx.fillText('$', 0, 1);
+  } else if(c.kind==='bomb'){
+    ctx.fillStyle = '#3a0d0d'; circle(0,0,c.r+1);
+    ctx.fillStyle = '#ff2d55'; circle(0,0,c.r);
+    ctx.strokeStyle = '#7a0e22'; ctx.lineWidth = 2; ctx.beginPath(); ctx.arc(0,0,c.r-3,0,TAU); ctx.stroke();
+    // angry eyes + fuse
+    ctx.fillStyle = '#1a1a1a';
+    ctx.beginPath(); ctx.moveTo(-8,-4); ctx.lineTo(-2,-7); ctx.lineTo(-2,-2); ctx.closePath(); ctx.fill();
+    ctx.beginPath(); ctx.moveTo(8,-4); ctx.lineTo(2,-7); ctx.lineTo(2,-2); ctx.closePath(); ctx.fill();
+    ctx.beginPath(); ctx.arc(0,4,4,0.15*Math.PI,0.85*Math.PI); ctx.strokeStyle='#1a1a1a'; ctx.lineWidth=2.5; ctx.stroke();
+    ctx.strokeStyle = '#8b5a2b'; ctx.lineWidth = 3;
+    ctx.beginPath(); ctx.moveTo(0,-c.r); ctx.quadraticCurveTo(6,-c.r-8, 10,-c.r-6); ctx.stroke();
+    ctx.fillStyle = Math.sin(c.fuse)>0 ? '#ffd60a' : '#ff6b35';
+    circle(11, -c.r-7, 4);
+  } else {
+    ctx.fillStyle = '#b8860b'; circle(0,0,c.r+1);
+    ctx.fillStyle = '#ffc300'; circle(0,0,c.r);
+    ctx.strokeStyle = '#d4a017'; ctx.lineWidth = 2; ctx.beginPath(); ctx.arc(0,0,c.r-3,0,TAU); ctx.stroke();
+    // smug smile face
+    ctx.fillStyle = '#7a5c00';
+    circle(-4.5,-3,1.8); circle(4.5,-3,1.8);
+    ctx.beginPath(); ctx.arc(0,2,5,0.15*Math.PI,0.85*Math.PI); ctx.strokeStyle='#7a5c00'; ctx.lineWidth=2; ctx.stroke();
+  }
+  ctx.restore();
+}
+function drawLandlord(){
+  // big landlord face at top, angrier as time runs out
+  const anger = state==='play' ? 1 - timeLeft/ROUND : 0;
+  const cx = W/2, cy = 52, r = 34 + anger*6;
+  ctx.save();
+  ctx.fillStyle = anger>0.6 ? '#ff2d55' : anger>0.3 ? '#ff6b35' : '#8b5a2b';
+  ctx.beginPath(); ctx.arc(cx, cy, r, 0, TAU); ctx.fill();
+  // moustache + hat
+  ctx.fillStyle = '#1a1a1a';
+  ctx.fillRect(cx-r-4, cy-r-6, r*2+8, 10);
+  ctx.beginPath(); ctx.ellipse(cx, cy+10, 14, 5, 0, 0, TAU); ctx.fill();
+  // eyes
+  const ey = cy-8, brow = anger*5;
+  ctx.fillStyle = '#fff'; circle(cx-13, ey, 7); circle(cx+13, ey, 7);
+  ctx.fillStyle = '#1a1a1a'; circle(cx-13 + anger*3, ey+2, 3.5); circle(cx+13 - anger*3, ey+2, 3.5);
+  ctx.strokeStyle = '#1a1a1a'; ctx.lineWidth = 3;
+  ctx.beginPath(); ctx.moveTo(cx-20, ey-10-brow); ctx.lineTo(cx-6, ey-7); ctx.stroke();
+  ctx.beginPath(); ctx.moveTo(cx+20, ey-10-brow); ctx.lineTo(cx+6, ey-7); ctx.stroke();
+  // mouth
+  ctx.beginPath(); ctx.arc(cx, cy+20, 8+anger*4, anger>0.5?Math.PI*1.15:0.15*Math.PI, anger>0.5?Math.PI*1.85:0.85*Math.PI); ctx.stroke();
+  ctx.restore();
+  // rent speech bubble
+  ctx.fillStyle = '#fff'; ctx.font = 'bold 13px Trebuchet MS'; ctx.textAlign = 'left'; ctx.textBaseline = 'middle';
+  const msg = state==='play' ? (timeLeft>30 ? "RENT: $"+QUOTA : timeLeft>10 ? "PAY UP!" : "TIME'S UP SOON!") : "RENT: $"+QUOTA;
+  ctx.fillText(msg, cx+r+10, cy-4);
+}
+function drawGhost(){
+  if(!ghostOn && state!=='menu') return;
+  const gx = ghostOn ? ghostX : (state==='menu' ? ghostX : -100);
+  const gy = 260 + Math.sin(menuT*3)*10;
+  ctx.save(); ctx.translate(gx, gy); ctx.globalAlpha = 0.85;
+  ctx.fillStyle = '#e8f6ff';
+  ctx.beginPath();
+  ctx.moveTo(0,-26); ctx.arc(0,-6,26,Math.PI,0);
+  ctx.lineTo(26,18);
+  for(let i=0;i<3;i++){ ctx.quadraticCurveTo(26-(i*17+8), 28, 26-(i+1)*17, 18); }
+  ctx.lineTo(-26,18); ctx.closePath(); ctx.fill();
+  ctx.fillStyle = '#1a1a1a';
+  circle(-9,-8,4); circle(9,-8,4);
+  ctx.beginPath(); ctx.ellipse(0,6,5,8,0,0,TAU); ctx.fill();
+  ctx.restore();
+}
+function drawHand(){
+  if(!hand) return;
+  ctx.save(); ctx.translate(hand.x, hand.y);
+  ctx.fillStyle = '#ff9f1c';
+  roundRect(-14,-60,28,70,10); ctx.fill(); // arm
+  ctx.fillStyle = '#ffb703';
+  circle(0,-58,20); // palm
+  ctx.fillStyle = '#ffb703';
+  for(let i=-1;i<=1;i++){ roundRect(i*11-4,-86,9,26,4); ctx.fill(); } // fingers
+  roundRect(-24,-66,10,22,4); ctx.fill(); // thumb
+  ctx.fillStyle = '#1a1a1a';
+  circle(-7,-60,2.5); circle(7,-60,2.5);
+  ctx.restore();
+}
+function drawPusher(){
+  const nap = pusherNap>0, rage = pusherSlam>0, rev = pusherReverse>0;
+  ctx.save();
+  ctx.fillStyle = rev ? '#ff2d55' : nap ? '#7a6a9a' : rage ? '#ff6b35' : '#7b2ff7';
+  roundRect(pusherX-6, 380, 38, SHELF_Y-380, 8); ctx.fill();
+  ctx.strokeStyle = '#2a1a4a'; ctx.lineWidth = 3; roundRect(pusherX-6, 380, 38, SHELF_Y-380, 8); ctx.stroke();
+  // face on the bar
+  const fx = pusherX+13, fy = 440;
+  ctx.fillStyle = '#fff';
+  if(nap){
+    ctx.font = 'bold 20px Trebuchet MS'; ctx.textAlign='center'; ctx.textBaseline='middle';
+    ctx.fillText('Z', fx+2, fy-26); ctx.fillText('z', fx+10, fy-40); ctx.fillText('z', fx+18, fy-52);
+    ctx.strokeStyle = '#1a1a1a'; ctx.lineWidth = 3;
+    ctx.beginPath(); ctx.moveTo(fx-10,fy-4); ctx.lineTo(fx+10,fy-4); ctx.stroke();
+  } else {
+    circle(fx-7, fy-8, 3.5); circle(fx+7, fy-8, 3.5);
+    ctx.strokeStyle = '#1a1a1a'; ctx.lineWidth = 3;
+    if(rev || rage){
+      ctx.beginPath(); ctx.moveTo(fx-11,fy-16); ctx.lineTo(fx-3,fy-12); ctx.stroke();
+      ctx.beginPath(); ctx.moveTo(fx+11,fy-16); ctx.lineTo(fx+3,fy-12); ctx.stroke();
+      ctx.beginPath(); ctx.arc(fx, fy+16, 7, Math.PI*1.15, Math.PI*1.85); ctx.stroke();
+    } else {
+      ctx.beginPath(); ctx.arc(fx, fy+6, 6, 0.15*Math.PI, 0.85*Math.PI); ctx.stroke();
+    }
+  }
+  // arrows showing push direction
+  ctx.fillStyle = '#ffffff88'; ctx.font = 'bold 16px Trebuchet MS'; ctx.textAlign='center';
+  ctx.fillText(rev ? '◀◀' : '▶▶', fx, 500);
+  ctx.restore();
+}
+function drawDropper(){
+  const sq = dropperSquash;
+  const w = 54 - sq*8, h = 30 + sq*10;
+  const golden = unlock==='golden-claw';
+  ctx.save(); ctx.translate(dropperX, 168);
+  // rail
+  ctx.strokeStyle = '#3a2a5a'; ctx.lineWidth = 6;
+  ctx.beginPath(); ctx.moveTo(-W/2, -14); ctx.lineTo(W/2, -14); ctx.stroke();
+  // claw body
+  ctx.fillStyle = golden ? '#ffd60a' : '#ff9f1c';
+  roundRect(-w/2, -h/2, w, h, 8); ctx.fill();
+  ctx.strokeStyle = '#7a4a00'; ctx.lineWidth = 2.5; roundRect(-w/2, -h/2, w, h, 8); ctx.stroke();
+  // claw fingers
+  ctx.fillStyle = golden ? '#ffd60a' : '#ff9f1c';
+  ctx.beginPath(); ctx.moveTo(-16, h/2-2); ctx.lineTo(-24, h/2+22); ctx.lineTo(-12, h/2+22); ctx.closePath(); ctx.fill();
+  ctx.beginPath(); ctx.moveTo(16, h/2-2); ctx.lineTo(24, h/2+22); ctx.lineTo(12, h/2+22); ctx.closePath(); ctx.fill();
+  // eyes
+  ctx.fillStyle = '#1a1a1a'; circle(-8, 0, 3); circle(8, 0, 3);
+  ctx.fillStyle = '#fff'; circle(-7, -1, 1.2); circle(9, -1, 1.2);
+  ctx.restore();
+  // drop hint arrow
+  ctx.fillStyle = '#ffffff66'; ctx.font = 'bold 14px Trebuchet MS'; ctx.textAlign='center';
+  ctx.fillText('▼ TAP TO DROP ▼', dropperX, 208);
+}
+function drawMachine(){
+  // neon frame + shelf
+  ctx.save();
+  ctx.strokeStyle = '#7b2ff7'; ctx.lineWidth = 5;
+  roundRect(10, 220, W-20, 340, 14); ctx.stroke();
+  // shelf
+  ctx.fillStyle = '#2a1a4a'; roundRect(SHELF_L, SHELF_Y, SHELF_R-SHELF_L, 16, 6); ctx.fill();
+  ctx.fillStyle = '#ffd60a'; ctx.fillRect(SHELF_R-4, SHELF_Y, 6, 16); // edge lip
+  // tray below (where coins land)
+  ctx.fillStyle = '#1a0b2e'; roundRect(30, 560, W-60, 60, 10); ctx.fill();
+  ctx.strokeStyle = '#ffd60a'; ctx.lineWidth = 3; roundRect(30, 560, W-60, 60, 10); ctx.stroke();
+  ctx.fillStyle = '#ffd60a'; ctx.font = 'bold 15px Trebuchet MS'; ctx.textAlign='center';
+  ctx.fillText('💰 TRAY 💰', W/2, 592);
+  // blinking neon dots on frame
+  for(let i=0;i<10;i++){
+    const on = Math.sin(menuT*4 + i*1.3) > 0;
+    ctx.fillStyle = on ? '#ff2d55' : '#7b2ff7';
+    circle(20 + i*48, 228, 4);
+  }
+  ctx.restore();
+}
+function drawHUD(){
+  ctx.save();
+  ctx.textAlign = 'left'; ctx.textBaseline = 'middle';
+  ctx.fillStyle = '#fff'; ctx.font = 'bold 22px Trebuchet MS';
+  ctx.fillText('$' + score, 18, 108);
+  ctx.fillStyle = '#ffd60a'; ctx.font = 'bold 14px Trebuchet MS';
+  ctx.fillText('RENT $' + QUOTA, 18, 130);
+  // quota bar
+  ctx.fillStyle = '#2a1a4a'; roundRect(18, 142, 180, 12, 6); ctx.fill();
+  ctx.fillStyle = score>=QUOTA ? '#7bff5e' : '#ffd60a';
+  roundRect(18, 142, clamp(180*score/QUOTA, 0, 180), 12, 6); ctx.fill();
+  // timer
+  ctx.textAlign = 'right'; ctx.fillStyle = timeLeft<=10 ? '#ff2d55' : '#fff';
+  ctx.font = 'bold 26px Trebuchet MS';
+  ctx.fillText(Math.ceil(timeLeft) + 's', W-18, 112);
+  if(combo>=2){ ctx.fillStyle = '#7bff5e'; ctx.font = 'bold 18px Trebuchet MS'; ctx.fillText('COMBO x'+combo, W-18, 138); }
+  // high score
+  ctx.fillStyle = '#ffffff88'; ctx.font = 'bold 12px Trebuchet MS'; ctx.textAlign='left';
+  ctx.fillText('BEST $' + high, 18, 168);
+  ctx.restore();
+}
+function drawPopups(){
+  ctx.save(); ctx.textAlign='center'; ctx.textBaseline='middle';
+  for(const p of popups){
+    ctx.globalAlpha = clamp(p.life, 0, 1);
+    ctx.font = 'bold ' + p.size + 'px Trebuchet MS';
+    ctx.strokeStyle = '#1a1a1a'; ctx.lineWidth = 4;
+    ctx.strokeText(p.txt, p.x, p.y);
+    ctx.fillStyle = p.col; ctx.fillText(p.txt, p.x, p.y);
+  }
+  ctx.restore();
+}
+function drawParts(){
+  for(const p of parts){ ctx.globalAlpha = clamp(p.life, 0, 1); ctx.fillStyle = p.col; circle(p.x, p.y, p.r); }
+  ctx.globalAlpha = 1;
+}
+function drawTwistBanner(){
+  if(twistMsgT<=0 || !twistMsg) return;
+  ctx.save(); ctx.globalAlpha = clamp(twistMsgT, 0, 1);
+  ctx.font = 'bold 30px Trebuchet MS'; ctx.textAlign='center'; ctx.textBaseline='middle';
+  ctx.strokeStyle = '#1a1a1a'; ctx.lineWidth = 6;
+  ctx.strokeText(twistMsg, W/2, 330);
+  ctx.fillStyle = '#ff9f1c'; ctx.fillText(twistMsg, W/2, 330);
+  ctx.restore();
+}
+function draw(){
+  ctx.clearRect(0,0,W,H);
+  ctx.save();
+  if(shake>0) ctx.translate(rand(-shake,shake), rand(-shake,shake));
+  // bg gradient dots
+  ctx.fillStyle = '#1a0b2e'; ctx.fillRect(-20,-20,W+40,H+40);
+  ctx.fillStyle = '#ffffff10';
+  for(let i=0;i<24;i++){ circle((i*97)%W, (i*61)%H, 2); }
+
+  if(state==='menu'){
+    drawGhost();
+    drawLandlord();
+    ctx.textAlign='center'; ctx.textBaseline='middle';
+    ctx.font = 'bold 44px Trebuchet MS';
+    ctx.fillStyle = '#ffd60a';
+    ctx.strokeStyle = '#1a1a1a'; ctx.lineWidth = 8;
+    ctx.strokeText('HAUNTED', W/2, 200); ctx.fillText('HAUNTED', W/2, 200);
+    ctx.strokeText('COIN PUSHER!', W/2, 250); ctx.fillText('COIN PUSHER!', W/2, 250);
+    // mini machine preview
+    ctx.fillStyle = '#ffc300';
+    for(let i=0;i<5;i++){ ctx.save(); ctx.translate(120+i*60, 340+Math.sin(menuT*2+i)*6); ctx.rotate(Math.sin(menuT*2+i)*0.2); circle(0,0,18); ctx.fillStyle='#7a5c00'; ctx.font='bold 20px Trebuchet MS'; ctx.textAlign='center'; ctx.textBaseline='middle'; ctx.fillText('$',0,1); ctx.restore(); ctx.fillStyle='#ffc300'; }
+    ctx.fillStyle = '#fff'; ctx.font = 'bold 20px Trebuchet MS';
+    ctx.fillText('Drop coins. Pay rent. It\'s haunted.', W/2, 430);
+    ctx.fillStyle = '#7bff5e'; ctx.font = 'bold 18px Trebuchet MS';
+    ctx.fillText('BEST $' + high + (unlock ? '  •  GOLDEN CLAW ✓' : ''), W/2, 470);
+    ctx.fillStyle = '#ff9f1c';
+    roundRect(W/2-110, 510, 220, 56, 14); ctx.fill();
+    ctx.fillStyle = '#1a1a1a'; ctx.font = 'bold 24px Trebuchet MS';
+    ctx.fillText('▶ TAP TO PLAY', W/2, 539);
+    ctx.fillStyle = '#ffffff88'; ctx.font = 'bold 14px Trebuchet MS';
+    ctx.fillText('Move: drag / ← →  •  Drop: tap / SPACE', W/2, 600);
+    ctx.fillText('Gold = $100  •  Red bomb = -$50', W/2, 624);
+    ctx.restore();
+    return;
+  }
+
+  drawLandlord();
+  drawHUD();
+  drawMachine();
+  drawGhost();
+  drawPusher();
+  drawDropper();
+  for(const c of coins) if(!c.dead) drawCoin(c);
+  drawHand();
+  drawParts();
+  drawPopups();
+  drawTwistBanner();
+  // wind arrows
+  if(windT>0){
+    ctx.save(); ctx.globalAlpha = 0.5; ctx.fillStyle = '#e8f6ff'; ctx.font = 'bold 22px Trebuchet MS'; ctx.textAlign='center';
+    ctx.fillText(windDir>0 ? '💨 💨 💨 ▶' : '◀ 💨 💨 💨', W/2, 280);
+    ctx.restore();
+  }
+  ctx.restore();
+
+  if(state==='over' || state==='win'){
+    ctx.save();
+    ctx.fillStyle = 'rgba(11,6,24,0.82)'; ctx.fillRect(0,0,W,H);
+    for(const p of confetti){ ctx.save(); ctx.translate(p.x,p.y); ctx.rotate(p.rot); ctx.fillStyle = p.col; ctx.fillRect(-p.w/2,-p.h/2,p.w,p.h); ctx.restore(); }
+    ctx.textAlign='center'; ctx.textBaseline='middle';
+    if(state==='win'){
+      ctx.font = 'bold 44px Trebuchet MS'; ctx.fillStyle = '#7bff5e';
+      ctx.strokeStyle = '#1a1a1a'; ctx.lineWidth = 8;
+      ctx.strokeText('RENT PAID!', W/2, 220); ctx.fillText('RENT PAID!', W/2, 220);
+      ctx.fillStyle = '#fff'; ctx.font = 'bold 20px Trebuchet MS';
+      ctx.fillText('The landlord leaves. The ghost claps.', W/2, 280);
+    } else {
+      ctx.font = 'bold 40px Trebuchet MS'; ctx.fillStyle = '#ff2d55';
+      ctx.strokeStyle = '#1a1a1a'; ctx.lineWidth = 8;
+      ctx.strokeText('EVICTED!', W/2, 220); ctx.fillText('EVICTED!', W/2, 220);
+      ctx.fillStyle = '#fff'; ctx.font = 'bold 19px Trebuchet MS';
+      const words = failLine.split(' ');
+      let line1 = '', line2 = '';
+      words.forEach(w=>{ if((line1+' '+w).trim().length <= 26) line1 = (line1+' '+w).trim(); else line2 = (line2+' '+w).trim(); });
+      ctx.fillText(line1, W/2, 280); if(line2) ctx.fillText(line2, W/2, 306);
+    }
+    ctx.fillStyle = '#ffd60a'; ctx.font = 'bold 30px Trebuchet MS';
+    ctx.fillText('$' + score + '  •  ' + rankFor(score), W/2, 360);
+    ctx.fillStyle = '#fff'; ctx.font = 'bold 16px Trebuchet MS';
+    ctx.fillText('BEST COMBO x' + bestCombo + '   •   BEST $' + high, W/2, 398);
+    if(unlock==='golden-claw'){ ctx.fillStyle = '#7bff5e'; ctx.fillText('🏆 GOLDEN CLAW UNLOCKED!', W/2, 428); }
+    // copy button
+    ctx.fillStyle = copied ? '#7bff5e' : '#ff9f1c';
+    roundRect(W/2-120, 460, 240, 48, 12); ctx.fill();
+    ctx.fillStyle = '#1a1a1a'; ctx.font = 'bold 19px Trebuchet MS';
+    ctx.fillText(copied ? 'COPIED!' : '📋 COPY RESULT', W/2, 485);
+    // restart button
+    ctx.fillStyle = '#7b2ff7';
+    roundRect(W/2-120, 524, 240, 52, 12); ctx.fill();
+    ctx.fillStyle = '#fff'; ctx.font = 'bold 22px Trebuchet MS';
+    ctx.fillText('↻ PLAY AGAIN', W/2, 551);
+    ctx.fillStyle = '#ffffff88'; ctx.font = 'bold 13px Trebuchet MS';
+    ctx.fillText('tap R to restart', W/2, 600);
+    ctx.restore();
+  }
+}
+
+// ---------- input ----------
+function posFromEvent(e){
+  const r = cv.getBoundingClientRect();
+  const sx = W / r.width, sy = H / r.height;
+  const cx = (e.touches ? e.touches[0].clientX : e.clientX);
+  const cy = (e.touches ? e.touches[0].clientY : e.clientY);
+  return { x: (cx - r.left) * sx, y: (cy - r.top) * sy };
+}
+function shareText(){
+  return "I paid $" + score + " rent to a HAUNTED COIN PUSHER. The ghost stole my coins. " + location.href;
+}
+cv.addEventListener('pointerdown', e=>{
+  e.preventDefault();
+  const p = posFromEvent(e);
+  if(state==='menu'){ resetGame(); return; }
+  if(state==='over' || state==='win'){
+    if(p.y>=460 && p.y<=508 && Math.abs(p.x-W/2)<=120){
+      const txt = shareText();
+      if(navigator.clipboard && navigator.clipboard.writeText){
+        navigator.clipboard.writeText(txt).then(()=>{ copied = true; copyT = 2; }).catch(()=>{ copied = true; copyT = 2; });
+      } else { copied = true; copyT = 2; }
+      return;
+    }
+    if(p.y>=524 && p.y<=576 && Math.abs(p.x-W/2)<=120){ resetGame(); return; }
+    return;
+  }
+  dropperX = clamp(p.x, 60, 420);
+  dropCoin();
+});
+cv.addEventListener('pointermove', e=>{
+  if(state!=='play') return;
+  const p = posFromEvent(e);
+  dropperX = clamp(p.x, 60, 420);
+});
+window.addEventListener('keydown', e=>{
+  const k = e.key.toLowerCase();
+  keys[k] = true;
+  if(k===' '){ e.preventDefault(); if(state==='menu') resetGame(); else if(state==='play') dropCoin(); }
+  if(k==='r' && (state==='over'||state==='win'||state==='play')) resetGame();
+  if(k==='p' && state==='play'){ pauseT = 0.5; }
+});
+window.addEventListener('keyup', e=>{ keys[e.key.toLowerCase()] = false; });
+
+// ---------- loop ----------
+let last = performance.now();
+function loop(now){
+  const dt = Math.min(0.033, (now-last)/1000); last = now;
+  update(dt);
+  draw();
+  requestAnimationFrame(loop);
+}
+requestAnimationFrame(loop);
+</script>
+</body>
+</html>

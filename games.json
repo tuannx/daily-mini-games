@@ -402,5 +402,14 @@
   "mechanic": "Lying-display precision timer",
   "tagline": "Stop it at zero. It lies. Trust the burrito.",
   "title": "STOP THE MICROWAVE!"
+ },
+ {
+  "date": "2026-11-15",
+  "day": 46,
+  "emoji": "🪙",
+  "file": "games/haunted-coin-pusher.html",
+  "mechanic": "Haunted coin-pusher rent panic",
+  "tagline": "Drop coins. Pay rent. The machine is possessed.",
+  "title": "HAUNTED COIN PUSHER!"
  }
 ]
