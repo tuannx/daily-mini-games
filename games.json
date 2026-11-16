@@ -411,5 +411,14 @@
   "mechanic": "Haunted coin-pusher rent panic",
   "tagline": "Drop coins. Pay rent. The machine is possessed.",
   "title": "HAUNTED COIN PUSHER!"
+ },
+ {
+  "date": "2026-11-16",
+  "day": 47,
+  "emoji": "📶",
+  "file": "games/ninety-nine-percent-loaded.html",
+  "mechanic": "Loading-bar survival (tap to fill, bar dodges, viruses steal %, popups block, overheat, final 1% stall)",
+  "tagline": "Tap the bar. Reach 100%. It fights back — it squirms, it runs, it lies.",
+  "title": "99% LOADED!"
  }
 ]
