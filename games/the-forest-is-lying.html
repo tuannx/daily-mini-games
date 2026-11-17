@@ -1,0 +1,811 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<title>THE FOREST IS LYING! — Day 48</title>
+<style>
+  * { margin:0; padding:0; box-sizing:border-box; }
+  html,body { width:100%; height:100%; background:#06180c; overflow:hidden; touch-action:none;
+    font-family:'Trebuchet MS','Comic Sans MS',sans-serif; }
+  #wrap { position:fixed; inset:0; display:flex; align-items:center; justify-content:center; }
+  canvas { display:block; background:#0d2b16; border-radius:12px;
+    box-shadow:0 0 40px #22c55eaa, 0 0 90px #a855f7aa; }
+</style>
+</head>
+<body>
+<div id="wrap"><canvas id="c" width="480" height="720"></canvas></div>
+<script>
+"use strict";
+// THE FOREST IS LYING! — Day 48
+// A trap-first betrayal runner. The trees look friendly. They are not.
+// Innocent trees shake, shift color, grow spikes, turn angry and glow red
+// (0.6s warning, 4 signals) BEFORE they attack: branch swings, apple
+// bombs, acorn spit. Jump the roots, dodge the bombs, grab the glowing
+// picnic baskets, and if a golden axe drops — take your revenge.
+// TWIST LADDER: 8s FIRST BETRAYAL -> 15s APPLE BOMBS! -> 25s THEY SPIT
+// NOW! -> 35s THAT SIGN LIED! (fake sign + logs) -> 45s FOREST RAGE!
+// Trend: "Trees Hate You" (Tykenn, full release Nov 16, 2026) — the
+// viral trap-first rage game where the forest itself is the villain.
+const cv = document.getElementById('c');
+const ctx = cv.getContext('2d');
+const W = 480, H = 720;
+const GROUND = 624;
+
+// ---------- audio (WebAudio, self-generated) ----------
+let AC = null;
+function audio(){ if(!AC){ try{ AC = new (window.AudioContext||window.webkitAudioContext)(); }catch(e){} } return AC; }
+function beep(f, d, type, v){
+  const ac = audio(); if(!ac) return;
+  const o = ac.createOscillator(), g = ac.createGain();
+  o.type = type||'sine'; o.frequency.value = f;
+  g.gain.setValueAtTime(v||0.12, ac.currentTime);
+  g.gain.exponentialRampToValueAtTime(0.001, ac.currentTime + d);
+  o.connect(g); g.connect(ac.destination); o.start(); o.stop(ac.currentTime + d);
+}
+function jumpSnd(){ beep(420, 0.12, 'square', 0.07); setTimeout(()=>beep(700, 0.1, 'square', 0.06), 60); }
+function popSnd(){ [880,1175,1568].forEach((f,i)=>setTimeout(()=>beep(f,0.09,'sine',0.10), i*55)); }
+function axeSnd(){ beep(1200, 0.06, 'sawtooth', 0.10); setTimeout(()=>beep(300, 0.18, 'sawtooth', 0.12), 70); }
+function hurtSnd(){ beep(200, 0.2, 'sawtooth', 0.13); setTimeout(()=>beep(120, 0.3, 'sawtooth', 0.13), 100); }
+function betraySnd(){ beep(660, 0.1, 'square', 0.09); setTimeout(()=>beep(440, 0.12, 'square', 0.09), 90); setTimeout(()=>beep(220, 0.2, 'sawtooth', 0.11), 190); }
+function boomSnd(){
+  const ac = audio(); if(!ac) return;
+  const len = ac.sampleRate * 0.35, buf = ac.createBuffer(1, len, ac.sampleRate), d = buf.getChannelData(0);
+  for(let i=0;i<len;i++) d[i] = (Math.random()*2-1) * Math.pow(1-i/len, 2.2);
+  const s = ac.createBufferSource(); s.buffer = buf;
+  const g = ac.createGain(); g.gain.value = 0.22;
+  s.connect(g); g.connect(ac.destination); s.start();
+  beep(90, 0.35, 'sawtooth', 0.10);
+}
+function winSnd(){ [523,659,784,1047,1319].forEach((f,i)=>setTimeout(()=>beep(f,0.15,'triangle',0.12), i*90)); }
+
+// ---------- helpers ----------
+const rand = (a,b)=>a+Math.random()*(b-a);
+const clamp = (v,a,b)=>Math.max(a,Math.min(b,v));
+const TAU = Math.PI*2;
+function roundRect(x,y,w,h,r){ ctx.beginPath(); ctx.moveTo(x+r,y); ctx.arcTo(x+w,y,x+w,y+h,r);
+  ctx.arcTo(x+w,y+h,x,y+h,r); ctx.arcTo(x,y+h,x,y,r); ctx.arcTo(x,y,x+w,y,r); ctx.closePath(); }
+function circle(x,y,r){ ctx.beginPath(); ctx.arc(x,y,r,0,TAU); ctx.fill(); }
+
+// ---------- state ----------
+let state = 'menu'; // menu | play | over
+let t = 0, score = 0, scoreF = 0, dist = 0, hearts = 3, combo = 0, comboT = 0, bestCombo = 0;
+let speed = 175;
+let hiker = { x: 110, y: GROUND, vy: 0, jumps: 0, run: 0, invuln: 0, splat: 0, moveDir: 0, face: 'happy' };
+let trees = [], roots = [], logs = [], bombs = [], acorns = [], baskets = [], axes = [], signs = [];
+let parts = [], popupsTxt = [], confetti = [], birds = [], clouds = [], tufts = [];
+let shake = 0, twistMsg = '', twistMsgT = 0, twistsDone = {};
+let spawnT = 1.2, basketT = 3, axeT = 22, birdT = 0, signT = 0;
+let axeTime = 0, nearMissCd = 0;
+let high = +(localStorage.getItem('tfil_high')||0);
+let unlock = localStorage.getItem('tfil_unlock')||'';
+let copied = false, failLine = '', menuT = 0;
+let keys = {}, dragX = null;
+
+const FAILS = [
+  "Betrayed by a bush. A BUSH.",
+  "The oak sends its regards.",
+  "You trusted a tree. Again.",
+  "Timber. That was you.",
+  "The forest clapped. With branches.",
+  "A root did that. A ROOT.",
+  "Nature: 1. You: 0.",
+  "The sign said SAFE. It lied.",
+];
+function rankFor(s){
+  if(s>=2500) return "THE TREES FEAR YOU";
+  if(s>=1500) return "FOREST'S NIGHTMARE";
+  if(s>=800) return "BRANCH DODGER";
+  if(s>=300) return "TREE SNACK";
+  return "PICNIC ROOKIE";
+}
+function popup(x,y,txt,col,size){ popupsTxt.push({x,y,txt,life:1.1,col:col||'#fff',size:size||24}); }
+function burst(x,y,col,n,spd){
+  for(let i=0;i<(n||12);i++){
+    const a = rand(0,TAU), s = rand(40,spd||170);
+    parts.push({x,y,vx:Math.cos(a)*s,vy:Math.sin(a)*s-70,life:rand(0.4,0.9),col,r:rand(2,5),grav:520});
+  }
+}
+function addScore(n, x, y, label, col){
+  scoreF += n; score = Math.floor(scoreF);
+  combo++; comboT = 4; if(combo>bestCombo) bestCombo = combo;
+  if(label) popup(x, y, label, col||'#7bff5e', n>=100 ? 28 : 22);
+}
+
+// ---------- spawns ----------
+function spawnTree(){
+  trees.push({ x: W+70, phase: 'nice', warnT: 0, attack: null, attackT: 0, fired: false,
+    sway: rand(0,TAU), r: rand(44,56), chopped: false, passed: false });
+}
+function spawnRoot(){
+  roots.push({ x: W+40, w: rand(38,52), grow: 0, passed: false });
+}
+function spawnLog(){
+  logs.push({ x: W+60, w: 74, passed: false, rot: 0 });
+}
+function spawnBasket(){
+  const air = Math.random() < 0.55;
+  baskets.push({ x: W+40, y: air ? GROUND-118 : GROUND-34, bob: rand(0,TAU), dead: false });
+}
+function spawnAxe(){
+  axes.push({ x: W+40, y: GROUND-120, bob: rand(0,TAU), dead: false });
+  popup(W/2, 220, "GOLDEN AXE!", '#ffd60a', 30);
+}
+function spawnSign(){
+  signs.push({ x: W+50, flipped: false });
+  roots.push({ x: W+150, w: 44, grow: 0, passed: false }); // the lie sprouts a root
+}
+
+// ---------- twists ----------
+function fireTwist(name, msg){
+  if(twistsDone[name]) return; twistsDone[name] = true;
+  twistMsg = msg; twistMsgT = 2.2;
+  popup(W/2, 250, msg, '#ff9f1c', 32);
+  betraySnd();
+}
+
+// ---------- damage ----------
+function hurt(srcX){
+  if(hiker.invuln > 0 || state !== 'play') return;
+  hearts--;
+  hiker.invuln = 1.3; hiker.splat = 0.35; hiker.face = 'dizzy';
+  combo = 0; comboT = 0;
+  shake = 11;
+  burst(hiker.x, hiker.y-30, '#ff2d55', 16, 200);
+  popup(hiker.x+10, hiker.y-110, hearts>0 ? "OUCH!" : "TIMBER!", '#ff2d55', 28);
+  hurtSnd();
+  if(hearts <= 0) endGame();
+}
+
+// ---------- update ----------
+function update(dt){
+  menuT += dt;
+  if(state==='menu'){
+    for(const b of birds){ b.x -= b.spd*dt; b.flap += dt*10; if(b.x < -30){ b.x = W+30; b.y = rand(60,180); } }
+    if(!birds.length) for(let i=0;i<3;i++) birds.push({x:rand(40,440), y:rand(60,180), spd:rand(24,44), flap:rand(0,TAU)});
+    for(const c of clouds){ c.x -= 12*dt; if(c.x < -80){ c.x = W+80; c.y = rand(30,130); } }
+    if(!clouds.length) for(let i=0;i<4;i++) clouds.push({x:rand(0,460), y:rand(30,130), s:rand(0.7,1.3)});
+    return;
+  }
+  if(state==='over'){
+    confetti.forEach(p=>{ p.vy += 300*dt; p.x += p.vx*dt; p.y += p.vy*dt; p.rot += p.spin*dt; });
+    confetti = confetti.filter(p=>p.y < H+20);
+    parts.forEach(p=>{ p.vy += (p.grav||0)*dt; p.x += p.vx*dt; p.y += p.vy*dt; p.life -= dt; });
+    parts = parts.filter(p=>p.life>0);
+    popupsTxt.forEach(p=>{ p.y -= 30*dt; p.life -= dt; });
+    popupsTxt = popupsTxt.filter(p=>p.life>0);
+    return;
+  }
+  // play
+  t += dt;
+  speed = Math.min(330, 175 + t*2.6 + (t>=45 ? 40 : 0));
+  dist += speed*dt;
+  scoreF += speed*dt*0.06; score = Math.floor(scoreF);
+  if(t>=8) fireTwist('betray', "IT MOVED!");
+  if(t>=15) fireTwist('bombs', "APPLE BOMBS!");
+  if(t>=25) fireTwist('spit', "THEY SPIT NOW!");
+  if(t>=35) fireTwist('sign', "THAT SIGN LIED!");
+  if(t>=45) fireTwist('rage', "FOREST RAGE!");
+
+  if(comboT>0){ comboT -= dt; if(comboT<=0) combo = 0; }
+  if(nearMissCd>0) nearMissCd -= dt;
+  if(axeTime>0) axeTime -= dt;
+  if(hiker.invuln>0) hiker.invuln -= dt;
+  if(hiker.splat>0) hiker.splat -= dt; else if(hiker.face==='dizzy') hiker.face = 'happy';
+
+  // hiker movement
+  let dir = hiker.moveDir;
+  if(keys['arrowleft'] || keys['a']) dir = -1;
+  if(keys['arrowright'] || keys['d']) dir = 1;
+  if(dragX !== null){
+    const dx = dragX - hiker.x;
+    hiker.x += clamp(dx, -speed*1.5*dt, speed*1.5*dt);
+  } else {
+    hiker.x = clamp(hiker.x + dir*230*dt, 44, 330);
+  }
+  hiker.vy += 1500*dt;
+  hiker.y += hiker.vy*dt;
+  if(hiker.y >= GROUND){ hiker.y = GROUND; hiker.vy = 0; hiker.jumps = 0; }
+  hiker.run += dt * (hiker.y>=GROUND ? speed/16 : 2);
+
+  // spawns
+  spawnT -= dt;
+  if(spawnT<=0){
+    const roll = Math.random();
+    if(roll < 0.42) spawnTree();
+    else if(roll < 0.72) spawnRoot();
+    else if(t>=35 && roll < 0.86) spawnLog();
+    else spawnTree();
+    spawnT = clamp(rand(1.05, 1.6) - t*0.006, 0.62, 1.6);
+  }
+  basketT -= dt;
+  if(basketT<=0){ spawnBasket(); basketT = rand(3.2, 5.2); }
+  axeT -= dt;
+  if(axeT<=0){ spawnAxe(); axeT = rand(20, 28); }
+  if(t>=35){ signT -= dt; if(signT<=0){ spawnSign(); signT = rand(11, 16); } }
+  birdT -= dt;
+  if(birdT<=0 && birds.length<4){ birds.push({x:W+30, y:rand(60,180), spd:rand(24,44), flap:rand(0,TAU)}); birdT = rand(2,5); }
+
+  const dx = speed*dt;
+
+  // trees
+  for(const tr of trees){
+    tr.x -= dx; tr.sway += dt*2;
+    if(tr.phase==='nice' && tr.x < 385 && !tr.chopped){
+      tr.phase = 'warn'; tr.warnT = 0; betraySnd();
+    } else if(tr.phase==='warn'){
+      tr.warnT += dt;
+      if(tr.warnT >= 0.6){
+        tr.phase = 'evil';
+        const opts = ['swing'];
+        if(t>=15) opts.push('bomb');
+        if(t>=25) opts.push('spit');
+        tr.attack = opts[Math.floor(Math.random()*opts.length)];
+        tr.attackT = 0;
+      }
+    } else if(tr.phase==='evil' && !tr.fired){
+      tr.attackT += dt;
+      if(tr.attack==='swing' && tr.attackT > 0.25){ tr.fired = true; tr.attackT = 0; }
+      if(tr.attack==='bomb' && tr.attackT > 0.3){
+        tr.fired = true;
+        bombs.push({ x: tr.x-10, y: GROUND-190, vy: 0, r: 15, state: 'fall' });
+      }
+      if(tr.attack==='spit' && tr.attackT > 0.3){
+        tr.fired = true;
+        acorns.push({ x: tr.x-24, y: GROUND-96, vx: -(speed+170), vy: -40, dead: false });
+        acorns.push({ x: tr.x-24, y: GROUND-60, vx: -(speed+210), vy: -10, dead: false });
+      }
+    }
+    // golden axe revenge: chop an evil tree up close
+    if(axeTime>0 && !tr.chopped && tr.phase==='evil' && Math.abs(tr.x - hiker.x) < 95){
+      tr.chopped = true; tr.phase = 'stump';
+      addScore(150, tr.x, GROUND-190, "REVENGE! +150", '#ffd60a');
+      burst(tr.x, GROUND-170, '#22c55e', 22, 240);
+      burst(tr.x, GROUND-170, '#a16207', 10, 180);
+      axeSnd(); shake = 7;
+    }
+    // branch swing collision: high branch — only hits an airborne hiker
+    if(tr.phase==='evil' && tr.attack==='swing' && tr.fired && tr.attackT < 0.75){
+      tr.attackT += dt;
+      const bx = tr.x - 62;
+      if(Math.abs(hiker.x - bx) < 30 && hiker.y < GROUND-52 && hiker.invuln<=0){
+        hurt(bx); popup(bx, GROUND-170, "BONK!", '#ff2d55', 24);
+      }
+      if(!tr.passed && hiker.x > bx && hiker.y >= GROUND-52){ tr.passed = true; nearMiss(bx, GROUND-160); }
+    }
+    if(tr.phase==='evil' && tr.attack!=='swing' && !tr.passed && tr.x < hiker.x-40){ tr.passed = true; }
+  }
+  trees = trees.filter(tr=>tr.x > -110);
+
+  // roots
+  for(const r of roots){
+    r.x -= dx; r.grow = Math.min(1, r.grow + dt*2.4);
+    if(r.grow>=1 && Math.abs(hiker.x - r.x) < r.w*0.42 && hiker.y >= GROUND-6 && hiker.invuln<=0){
+      hurt(r.x);
+    }
+    if(!r.passed && r.x < hiker.x-30){ r.passed = true; if(hiker.y < GROUND-6) nearMiss(r.x, GROUND-70); }
+  }
+  roots = roots.filter(r=>r.x > -70);
+
+  // logs
+  for(const l of logs){
+    l.x -= dx; l.rot -= dx/26;
+    if(Math.abs(hiker.x - l.x) < l.w*0.44 && hiker.y >= GROUND-24 && hiker.invuln<=0){
+      hurt(l.x);
+    }
+    if(!l.passed && l.x < hiker.x-44){ l.passed = true; if(hiker.y < GROUND-24) nearMiss(l.x, GROUND-90); }
+  }
+  logs = logs.filter(l=>l.x > -100);
+
+  // bombs
+  for(const b of bombs){
+    if(b.state==='fall'){
+      b.x -= dx*0.35; b.vy += 1300*dt; b.y += b.vy*dt;
+      if(b.y >= GROUND-14){
+        b.y = GROUND-14; b.state = 'boom'; b.boomT = 0.28;
+        boomSnd(); shake = Math.max(shake, 6);
+        burst(b.x, b.y, '#ff9f1c', 14, 220);
+        if(Math.abs(hiker.x - b.x) < 58 && hiker.y >= GROUND-40 && hiker.invuln<=0) hurt(b.x);
+        else if(Math.abs(hiker.x - b.x) < 110 && nearMissCd<=0) nearMiss(b.x, GROUND-90);
+      }
+    } else { b.boomT -= dt; }
+  }
+  bombs = bombs.filter(b=>b.state==='fall' || b.boomT>0);
+
+  // acorns
+  for(const a of acorns){
+    a.x += a.vx*dt; a.vy += 300*dt; a.y += a.vy*dt;
+    if(a.y > GROUND) a.dead = true;
+    if(!a.dead && Math.abs(hiker.x - a.x) < 24 && Math.abs((hiker.y-42) - a.y) < 40 && hiker.invuln<=0){
+      a.dead = true; hurt(a.x);
+    }
+  }
+  acorns = acorns.filter(a=>!a.dead && a.x > -30);
+
+  // baskets (the ONLY glowing collectible family, plus the axe)
+  for(const b of baskets){
+    b.x -= dx; b.bob += dt*4;
+    if(!b.dead && Math.abs(hiker.x - b.x) < 36 && Math.abs((hiker.y-46) - b.y) < 52){
+      b.dead = true;
+      addScore(50, b.x, b.y-30, "+50", '#7bff5e');
+      popSnd(); burst(b.x, b.y, '#ffd60a', 10, 150);
+    }
+  }
+  baskets = baskets.filter(b=>!b.dead && b.x > -50);
+
+  // axes
+  for(const a of axes){
+    a.x -= dx; a.bob += dt*4;
+    if(!a.dead && Math.abs(hiker.x - a.x) < 38 && Math.abs((hiker.y-46) - a.y) < 56){
+      a.dead = true; axeTime = 7;
+      popup(hiker.x, hiker.y-120, "REVENGE MODE!", '#ffd60a', 26);
+      axeSnd();
+    }
+  }
+  axes = axes.filter(a=>!a.dead && a.x > -50);
+
+  // signs
+  for(const s of signs){
+    s.x -= dx;
+    if(!s.flipped && s.x < 360){ s.flipped = true; betraySnd(); }
+  }
+  signs = signs.filter(s=>s.x > -60);
+
+  // background life
+  for(const b of birds){ b.x -= (b.spd + speed*0.25)*dt; b.flap += dt*10; }
+  birds = birds.filter(b=>b.x > -40);
+  for(const c of clouds){ c.x -= (12 + speed*0.08)*dt; if(c.x < -90) { c.x = W+90; c.y = rand(30,130); } }
+  for(const g of tufts){ g.x -= dx; if(g.x < -16){ g.x = W + rand(0,60); g.s = rand(0.7,1.3); } }
+  if(!tufts.length) for(let i=0;i<9;i++) tufts.push({x:rand(0,480), s:rand(0.7,1.3)});
+
+  // particles / floating texts
+  parts.forEach(p=>{ p.vy += (p.grav||0)*dt; p.x += p.vx*dt; p.y += p.vy*dt; p.life -= dt; });
+  parts = parts.filter(p=>p.life>0);
+  popupsTxt.forEach(p=>{ p.y -= 30*dt; p.life -= dt; });
+  popupsTxt = popupsTxt.filter(p=>p.life>0);
+  if(twistMsgT>0) twistMsgT -= dt;
+  if(shake>0) shake = Math.max(0, shake - dt*30);
+}
+function nearMiss(x, y){
+  if(nearMissCd>0) return;
+  nearMissCd = 0.8;
+  addScore(25, x, y, "SO CLOSE! +25", '#00d4ff');
+  beep(990, 0.08, 'sine', 0.08);
+}
+function endGame(){
+  state = 'over';
+  failLine = FAILS[Math.floor(Math.random()*FAILS.length)];
+  if(score > high){ high = score; localStorage.setItem('tfil_high', String(high)); }
+  if(score >= 1500 && !unlock){ unlock = 'gold-cap'; localStorage.setItem('tfil_unlock', unlock); }
+  boomSnd();
+  for(let i=0;i<50;i++) parts.push({x:hiker.x, y:hiker.y-30, vx:rand(-160,160), vy:rand(-260,-40),
+    life:rand(0.5,1), col:['#22c55e','#a16207','#ff2d55'][i%3], r:rand(2,5), grav:520});
+}
+function doJump(){
+  if(state==='menu'){ resetGame(); return; }
+  if(state!=='play') return;
+  if(hiker.y >= GROUND-2){ hiker.vy = -660; hiker.jumps = 1; jumpSnd(); }
+  else if(hiker.jumps < 2){ hiker.vy = -600; hiker.jumps = 2; jumpSnd(); burst(hiker.x, hiker.y, '#ffffff', 6, 90); }
+}
+function resetGame(){
+  t = 0; score = 0; scoreF = 0; dist = 0; hearts = 3; combo = 0; comboT = 0; bestCombo = 0;
+  speed = 175;
+  hiker = { x: 110, y: GROUND, vy: 0, jumps: 0, run: 0, invuln: 0, splat: 0, moveDir: 0, face: 'happy' };
+  trees = []; roots = []; logs = []; bombs = []; acorns = []; baskets = []; axes = []; signs = [];
+  parts = []; popupsTxt = []; confetti = [];
+  shake = 0; twistMsg = ''; twistMsgT = 0; twistsDone = {};
+  spawnT = 1.4; basketT = 2.6; axeT = 20; signT = 6; nearMissCd = 0; axeTime = 0;
+  copied = false; failLine = '';
+  // one friendly-looking tree is already waiting...
+  trees.push({ x: 430, phase: 'nice', warnT: 0, attack: null, attackT: 0, fired: false, sway: 1, r: 50, chopped: false, passed: false });
+  state = 'play';
+}
+
+// ---------- drawing ----------
+function drawFace(x, y, kind, s){
+  ctx.fillStyle = '#1a1a1a';
+  if(kind==='angry'){
+    circle(x-8*s, y-3*s, 2.6*s); circle(x+8*s, y-3*s, 2.6*s);
+    ctx.strokeStyle = '#1a1a1a'; ctx.lineWidth = 2.4*s;
+    ctx.beginPath(); ctx.moveTo(x-12*s, y-10*s); ctx.lineTo(x-3*s, y-6*s); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(x+12*s, y-10*s); ctx.lineTo(x+3*s, y-6*s); ctx.stroke();
+    ctx.beginPath(); ctx.arc(x, y+11*s, 5*s, Math.PI*1.1, Math.PI*1.9); ctx.stroke();
+  } else if(kind==='dizzy'){
+    ctx.font = 'bold ' + Math.round(13*s) + 'px Trebuchet MS'; ctx.textAlign='center'; ctx.textBaseline='middle';
+    ctx.fillText('×', x-8*s, y-3*s); ctx.fillText('×', x+8*s, y-3*s);
+    ctx.beginPath(); ctx.ellipse(x, y+7*s, 4*s, 5*s, 0, 0, TAU); ctx.fill();
+  } else if(kind==='panic'){
+    circle(x-8*s, y-4*s, 3.4*s); circle(x+8*s, y-4*s, 3.4*s);
+    ctx.beginPath(); ctx.ellipse(x, y+7*s, 3.6*s, 5*s, 0, 0, TAU); ctx.fill();
+  } else { // happy
+    circle(x-8*s, y-3*s, 2.4*s); circle(x+8*s, y-3*s, 2.4*s);
+    ctx.strokeStyle = '#1a1a1a'; ctx.lineWidth = 2.2*s;
+    ctx.beginPath(); ctx.arc(x, y+2*s, 6*s, Math.PI*0.15, Math.PI*0.85); ctx.stroke();
+  }
+}
+function drawHiker(){
+  const h = hiker;
+  if(h.invuln>0 && Math.floor(h.invuln*12)%2===0 && h.splat<=0) ctx.globalAlpha = 0.35;
+  const squash = h.splat>0 ? 0.55 : (h.y>=GROUND ? 1 + Math.sin(h.run*2)*0.04 : 1.08);
+  ctx.save(); ctx.translate(h.x, h.y); ctx.scale(1/Math.sqrt(squash), squash);
+  // legs
+  ctx.strokeStyle = '#1e3a8a'; ctx.lineWidth = 7; ctx.lineCap = 'round';
+  const lp = h.y>=GROUND ? Math.sin(h.run)*13 : 8;
+  ctx.beginPath(); ctx.moveTo(0,-26); ctx.lineTo(-lp, -2); ctx.stroke();
+  ctx.beginPath(); ctx.moveTo(0,-26); ctx.lineTo(lp, -2); ctx.stroke();
+  // body
+  ctx.fillStyle = '#f97316'; roundRect(-13, -58, 26, 34, 8); ctx.fill();
+  // backpack
+  ctx.fillStyle = '#0ea5e9'; roundRect(-24, -54, 10, 24, 4); ctx.fill();
+  // head
+  ctx.fillStyle = '#fcd9b8'; circle(2, -70, 13);
+  drawFace(2, -70, h.face, 0.85);
+  // cap (golden if unlocked)
+  ctx.fillStyle = unlock==='gold-cap' ? '#ffd60a' : '#22c55e';
+  ctx.beginPath(); ctx.arc(2, -76, 13, Math.PI, TAU); ctx.fill();
+  ctx.fillRect(2, -78, 20, 5);
+  // axe in hand during revenge mode
+  if(axeTime>0){
+    ctx.save(); ctx.translate(16, -44); ctx.rotate(Math.sin(h.run*2)*0.5 - 0.4);
+    ctx.fillStyle = '#a16207'; ctx.fillRect(-2.5, -4, 5, 26);
+    ctx.fillStyle = '#ffd60a'; ctx.beginPath(); ctx.moveTo(0,-12); ctx.lineTo(15,-6); ctx.lineTo(15,6); ctx.lineTo(0,2); ctx.closePath(); ctx.fill();
+    ctx.restore();
+  }
+  ctx.restore();
+  ctx.globalAlpha = 1;
+}
+function drawTree(tr){
+  const baseY = GROUND+6;
+  ctx.save(); ctx.translate(tr.x, baseY);
+  if(tr.phase==='stump'){
+    ctx.fillStyle = '#8a5a2b'; roundRect(-16, -26, 32, 26, 4); ctx.fill();
+    ctx.fillStyle = '#d9a05b'; ctx.beginPath(); ctx.ellipse(0, -26, 16, 5, 0, 0, TAU); ctx.fill();
+    ctx.restore(); return;
+  }
+  // trunk
+  ctx.fillStyle = '#7c4a21';
+  roundRect(-9, -120, 18, 122, 6); ctx.fill();
+  // branch arm (swings when evil+swing)
+  const swinging = tr.phase==='evil' && tr.attack==='swing' && tr.fired && tr.attackT < 0.75;
+  ctx.strokeStyle = '#7c4a21'; ctx.lineWidth = 9; ctx.lineCap = 'round';
+  ctx.beginPath(); ctx.moveTo(-4, -96);
+  if(swinging) ctx.lineTo(-64, -78 + Math.sin(tr.attackT*20)*8);
+  else if(tr.phase==='evil') ctx.lineTo(-40, -104);
+  else ctx.lineTo(-26, -108 + Math.sin(tr.sway)*3);
+  ctx.stroke();
+  ctx.beginPath(); ctx.moveTo(4, -104); ctx.lineTo(28, -116 + Math.cos(tr.sway)*3); ctx.stroke();
+  // canopy: color + shape morph during warn (4-signal transition)
+  let cr=34, cg=197, cb=94, spike = 0, haloA = 0;
+  if(tr.phase==='warn'){
+    const k = tr.warnT/0.6;
+    cr = 34 + (168-34)*k; cg = 197 - (197-85)*k; cb = 94 + (247-94)*k;
+    spike = k; haloA = k*0.55;
+  } else if(tr.phase==='evil'){ cr=168; cg=85; cb=247; spike = 1; haloA = 0.55; }
+  const shakeX = tr.phase==='warn' ? Math.sin(tr.warnT*46)*4 : 0;
+  ctx.translate(shakeX, 0);
+  if(haloA>0){ ctx.shadowColor = '#ff2d55'; ctx.shadowBlur = 26*haloA + 8; }
+  ctx.fillStyle = 'rgb('+Math.round(cr)+','+Math.round(cg)+','+Math.round(cb)+')';
+  const R = tr.r;
+  ctx.beginPath();
+  const pts = 10;
+  for(let i=0;i<pts;i++){
+    const a = i*TAU/pts;
+    const rr = R + (i%2===0 ? spike*13 : -spike*4) + Math.sin(tr.sway + i)*3;
+    const px = Math.cos(a)*rr, py = -168 + Math.sin(a)*rr*0.82;
+    if(i===0) ctx.moveTo(px, py); else ctx.lineTo(px, py);
+  }
+  ctx.closePath(); ctx.fill();
+  ctx.shadowBlur = 0;
+  // face on canopy
+  if(tr.phase==='nice') drawFace(0, -168, 'happy', 1.15);
+  else if(tr.phase==='warn') drawFace(0, -168, tr.warnT<0.3 ? 'happy' : 'panic', 1.15);
+  else drawFace(0, -168, 'angry', 1.15);
+  ctx.restore();
+}
+function drawRoot(r){
+  ctx.save(); ctx.translate(r.x, GROUND+4);
+  const g = r.grow;
+  ctx.strokeStyle = '#a16207'; ctx.lineWidth = 8; ctx.lineCap = 'round';
+  ctx.beginPath(); ctx.moveTo(-r.w/2, 0);
+  ctx.quadraticCurveTo(-r.w/4, -26*g, 0, -6*g);
+  ctx.quadraticCurveTo(r.w/4, -26*g, r.w/2, 0);
+  ctx.stroke();
+  ctx.strokeStyle = '#854d0e'; ctx.lineWidth = 5;
+  ctx.beginPath(); ctx.moveTo(-8, -2); ctx.quadraticCurveTo(0, -30*g, 8, -2); ctx.stroke();
+  if(g>=1) drawFace(0, -14, 'angry', 0.62);
+  ctx.restore();
+}
+function drawLog(l){
+  ctx.save(); ctx.translate(l.x, GROUND-16);
+  ctx.fillStyle = '#8a5a2b'; roundRect(-l.w/2, -15, l.w, 30, 14); ctx.fill();
+  ctx.fillStyle = '#d9a05b'; ctx.beginPath(); ctx.ellipse(-l.w/2+4, 0, 7, 13, 0, 0, TAU); ctx.fill();
+  ctx.strokeStyle = '#7c4a21'; ctx.lineWidth = 2;
+  ctx.beginPath(); ctx.ellipse(-l.w/2+4, 0, 4, 8, 0, 0, TAU); ctx.stroke();
+  drawFace(6, 0, 'angry', 0.8);
+  ctx.restore();
+}
+function drawBomb(b){
+  ctx.save(); ctx.translate(b.x, b.y);
+  if(b.state==='boom'){
+    ctx.globalAlpha = clamp(b.boomT/0.28, 0, 1);
+    ctx.fillStyle = '#ff9f1c'; circle(0, 0, 44*(1.3-b.boomT));
+    ctx.fillStyle = '#ffd60a'; circle(0, 0, 26*(1.3-b.boomT));
+    ctx.restore(); return;
+  }
+  ctx.fillStyle = '#e11d48'; circle(0, 0, b.r);
+  ctx.fillStyle = '#22c55e'; ctx.beginPath(); ctx.ellipse(0, -b.r-2, 7, 4, 0.4, 0, TAU); ctx.fill();
+  drawFace(0, 0, 'angry', 0.72);
+  ctx.restore();
+}
+function drawAcorn(a){
+  ctx.save(); ctx.translate(a.x, a.y); ctx.rotate(a.x*0.05);
+  ctx.fillStyle = '#b45309'; ctx.beginPath(); ctx.ellipse(0, 2, 8, 10, 0, 0, TAU); ctx.fill();
+  ctx.fillStyle = '#78350f'; ctx.beginPath(); ctx.ellipse(0, -5, 9, 5, 0, 0, TAU); ctx.fill();
+  drawFace(0, 3, 'angry', 0.5);
+  ctx.restore();
+}
+function drawBasket(b){
+  ctx.save(); ctx.translate(b.x, b.y + Math.sin(b.bob)*5);
+  ctx.shadowColor = '#ffd60a'; ctx.shadowBlur = 18;
+  ctx.fillStyle = '#d97706'; roundRect(-19, -8, 38, 22, 5); ctx.fill();
+  ctx.shadowBlur = 0;
+  ctx.strokeStyle = '#92400e'; ctx.lineWidth = 4;
+  ctx.beginPath(); ctx.arc(0, -8, 13, Math.PI, TAU); ctx.stroke();
+  ctx.fillStyle = '#ef4444'; circle(-8, -10, 6); circle(4, -12, 6); circle(12, -9, 5);
+  ctx.fillStyle = '#fff'; circle(-9.5, -12, 1.8); circle(2.5, -14, 1.8);
+  ctx.restore();
+}
+function drawAxeItem(a){
+  ctx.save(); ctx.translate(a.x, a.y + Math.sin(a.bob)*6); ctx.rotate(-0.5 + Math.sin(a.bob)*0.15);
+  ctx.shadowColor = '#ffd60a'; ctx.shadowBlur = 20;
+  ctx.fillStyle = '#a16207'; ctx.fillRect(-3, -6, 6, 34);
+  ctx.fillStyle = '#ffd60a'; ctx.beginPath(); ctx.moveTo(0,-16); ctx.lineTo(20,-8); ctx.lineTo(20,8); ctx.lineTo(0,3); ctx.closePath(); ctx.fill();
+  ctx.shadowBlur = 0;
+  ctx.restore();
+}
+function drawSign(s){
+  ctx.save(); ctx.translate(s.x, GROUND+4);
+  ctx.fillStyle = '#78716c'; ctx.fillRect(-4, -64, 8, 64);
+  ctx.fillStyle = s.flipped ? '#e11d48' : '#22c55e';
+  roundRect(-34, -96, 68, 34, 6); ctx.fill();
+  ctx.fillStyle = '#fff'; ctx.font = 'bold 17px Trebuchet MS'; ctx.textAlign='center'; ctx.textBaseline='middle';
+  ctx.fillText(s.flipped ? 'RUN!' : 'SAFE →', 0, -78);
+  ctx.restore();
+}
+function drawBG(){
+  // sky
+  const g = ctx.createLinearGradient(0, 0, 0, GROUND);
+  g.addColorStop(0, '#7dd3fc'); g.addColorStop(0.7, '#bbf7d0'); g.addColorStop(1, '#86efac');
+  ctx.fillStyle = g; ctx.fillRect(0, 0, W, GROUND+2);
+  // sun with a face (scared during rage)
+  ctx.save(); ctx.translate(428, 62);
+  ctx.fillStyle = '#fde047'; circle(0, 0, 27);
+  ctx.strokeStyle = '#facc15'; ctx.lineWidth = 4;
+  for(let i=0;i<8;i++){ const a = i*TAU/8 + menuT*0.2;
+    ctx.beginPath(); ctx.moveTo(Math.cos(a)*32, Math.sin(a)*32); ctx.lineTo(Math.cos(a)*40, Math.sin(a)*40); ctx.stroke(); }
+  drawFace(0, 0, (state==='play' && t>=45) ? 'panic' : 'happy', 0.95);
+  ctx.restore();
+  // clouds
+  ctx.fillStyle = '#ffffffcc';
+  for(const c of clouds){
+    ctx.save(); ctx.translate(c.x, c.y); ctx.scale(c.s, c.s);
+    circle(0, 0, 17); circle(18, 4, 13); circle(-18, 5, 12);
+    ctx.restore();
+  }
+  // birds
+  ctx.strokeStyle = '#1a1a1a'; ctx.lineWidth = 2.4;
+  for(const b of birds){
+    const f = Math.sin(b.flap)*6;
+    ctx.beginPath(); ctx.moveTo(b.x-10, b.y+f); ctx.quadraticCurveTo(b.x-3, b.y-5, b.x, b.y);
+    ctx.quadraticCurveTo(b.x+3, b.y-5, b.x+10, b.y+f); ctx.stroke();
+  }
+  // distant tree line (plain silhouettes, no faces — scenery only)
+  ctx.fillStyle = '#16a34a55';
+  for(let i=0;i<7;i++){
+    const x = ((i*83 - (dist*0.25)%83) + W+83) % (W+83) - 41;
+    ctx.beginPath(); ctx.moveTo(x, GROUND); ctx.lineTo(x+20, GROUND-86); ctx.lineTo(x+40, GROUND); ctx.closePath(); ctx.fill();
+  }
+  // ground
+  ctx.fillStyle = '#65a30d'; ctx.fillRect(0, GROUND, W, H-GROUND);
+  ctx.fillStyle = '#4d7c0f'; ctx.fillRect(0, GROUND, W, 8);
+  // path dashes
+  ctx.fillStyle = '#fef3c788';
+  for(let i=0;i<6;i++){
+    const x = ((i*96 - dist%96) + W+96) % (W+96) - 48;
+    ctx.fillRect(x, GROUND+44, 46, 7);
+  }
+  // grass tufts
+  ctx.strokeStyle = '#3f6212'; ctx.lineWidth = 3; ctx.lineCap = 'round';
+  for(const gf of tufts){
+    ctx.beginPath(); ctx.moveTo(gf.x, GROUND+16); ctx.lineTo(gf.x-4*gf.s, GROUND+2);
+    ctx.moveTo(gf.x+5*gf.s, GROUND+16); ctx.lineTo(gf.x+8*gf.s, GROUND+3); ctx.stroke();
+  }
+}
+function drawHUD(){
+  ctx.save(); ctx.textBaseline = 'middle';
+  // hearts
+  for(let i=0;i<3;i++){
+    ctx.font = '24px Trebuchet MS'; ctx.textAlign = 'left';
+    ctx.globalAlpha = i < hearts ? 1 : 0.25;
+    ctx.fillText('❤️', 14 + i*30, 30);
+  }
+  ctx.globalAlpha = 1;
+  ctx.fillStyle = '#1a1a1a'; ctx.font = 'bold 15px Trebuchet MS'; ctx.textAlign = 'left';
+  ctx.fillText(Math.floor(dist/10) + 'm', 16, 58);
+  ctx.textAlign = 'right'; ctx.fillStyle = '#1a1a1a';
+  ctx.font = 'bold 24px Trebuchet MS';
+  ctx.fillText(score, W-16, 30);
+  ctx.font = 'bold 12px Trebuchet MS'; ctx.fillStyle = '#365314';
+  ctx.fillText(rankFor(score), W-16, 54);
+  if(combo>=2){ ctx.fillStyle = '#b45309'; ctx.font = 'bold 17px Trebuchet MS'; ctx.fillText('COMBO x'+combo, W-16, 76); }
+  if(axeTime>0){ ctx.fillStyle = '#b45309'; ctx.font = 'bold 15px Trebuchet MS'; ctx.textAlign='left'; ctx.fillText('🪓 REVENGE ' + axeTime.toFixed(0) + 's', 16, 82); }
+  ctx.fillStyle = '#365314'; ctx.font = 'bold 12px Trebuchet MS'; ctx.textAlign='left';
+  ctx.fillText('BEST ' + high, 16, 100);
+  ctx.restore();
+}
+function drawPopupsTxt(){
+  ctx.save(); ctx.textAlign='center'; ctx.textBaseline='middle';
+  for(const p of popupsTxt){
+    ctx.globalAlpha = clamp(p.life, 0, 1);
+    ctx.font = 'bold ' + p.size + 'px Trebuchet MS';
+    ctx.strokeStyle = '#1a1a1a'; ctx.lineWidth = 4;
+    ctx.strokeText(p.txt, p.x, p.y);
+    ctx.fillStyle = p.col; ctx.fillText(p.txt, p.x, p.y);
+  }
+  ctx.restore();
+}
+function drawParts(){
+  for(const p of parts){ ctx.globalAlpha = clamp(p.life, 0, 1); ctx.fillStyle = p.col; circle(p.x, p.y, p.r); }
+  ctx.globalAlpha = 1;
+}
+function drawTwistBanner(){
+  if(twistMsgT<=0 || !twistMsg) return;
+  ctx.save(); ctx.globalAlpha = clamp(twistMsgT, 0, 1);
+  ctx.font = 'bold 32px Trebuchet MS'; ctx.textAlign='center'; ctx.textBaseline='middle';
+  ctx.strokeStyle = '#1a1a1a'; ctx.lineWidth = 6;
+  ctx.strokeText(twistMsg, W/2, 300);
+  ctx.fillStyle = '#ff9f1c'; ctx.fillText(twistMsg, W/2, 300);
+  ctx.restore();
+}
+function draw(){
+  ctx.clearRect(0,0,W,H);
+  ctx.save();
+  if(shake>0) ctx.translate(rand(-shake,shake), rand(-shake,shake));
+  drawBG();
+
+  if(state==='menu'){
+    // preview: one nice tree, one traitor tree
+    drawTree({ x: 120, phase: 'nice', warnT: 0, attack: null, attackT: 0, fired: false, sway: menuT*2, r: 48, chopped: false, passed: false });
+    drawTree({ x: 368, phase: 'evil', warnT: 0.6, attack: null, attackT: 0, fired: false, sway: menuT*2, r: 48, chopped: false, passed: false });
+    hiker.x = 240; hiker.y = GROUND; hiker.run = menuT*9; hiker.face = 'panic';
+    drawHiker();
+    ctx.save(); ctx.textAlign='center'; ctx.textBaseline='middle';
+    ctx.font = 'bold 43px Trebuchet MS';
+    ctx.strokeStyle = '#1a1a1a'; ctx.lineWidth = 8;
+    ctx.fillStyle = '#22c55e';
+    ctx.strokeText('THE FOREST', W/2, 128); ctx.fillText('THE FOREST', W/2, 128);
+    ctx.fillStyle = '#e11d48';
+    ctx.strokeText('IS LYING!', W/2, 178); ctx.fillText('IS LYING!', W/2, 178);
+    ctx.fillStyle = '#fff'; ctx.font = 'bold 20px Trebuchet MS';
+    ctx.strokeStyle = '#1a1a1a'; ctx.lineWidth = 5;
+    ctx.strokeText('Those friendly trees? They lie.', W/2, 300);
+    ctx.fillText('Those friendly trees? They lie.', W/2, 300);
+    ctx.fillStyle = '#7bff5e'; ctx.font = 'bold 17px Trebuchet MS';
+    ctx.fillText('BEST ' + high + (unlock ? '  •  GOLD CAP ✓' : ''), W/2, 336);
+    ctx.fillStyle = '#22c55e';
+    roundRect(W/2-115, 366, 230, 56, 14); ctx.fill();
+    ctx.fillStyle = '#fff'; ctx.font = 'bold 24px Trebuchet MS';
+    ctx.fillText('▶ TAP TO RUN', W/2, 395);
+    ctx.fillStyle = '#1a1a1a'; ctx.font = 'bold 14px Trebuchet MS';
+    ctx.fillText('TAP / SPACE = jump (×2 = double)', W/2, 452);
+    ctx.fillText('◀ ▶ or drag = dodge  •  glowing = good', W/2, 476);
+    ctx.fillText('angry + red = RUN', W/2, 500);
+    ctx.restore();
+    ctx.restore();
+    return;
+  }
+
+  for(const s of signs) drawSign(s);
+  for(const tr of trees) drawTree(tr);
+  for(const b of baskets) drawBasket(b);
+  for(const a of axes) drawAxeItem(a);
+  for(const l of logs) drawLog(l);
+  for(const r of roots) drawRoot(r);
+  for(const b of bombs) drawBomb(b);
+  for(const a of acorns) drawAcorn(a);
+  drawHiker();
+  drawHUD();
+  drawParts();
+  drawPopupsTxt();
+  drawTwistBanner();
+  ctx.restore();
+
+  if(state==='over'){
+    ctx.save();
+    ctx.fillStyle = 'rgba(6,24,12,0.86)'; ctx.fillRect(0,0,W,H);
+    for(const p of confetti){ ctx.save(); ctx.translate(p.x,p.y); ctx.rotate(p.rot); ctx.fillStyle = p.col; ctx.fillRect(-p.w/2,-p.h/2,p.w,p.h); ctx.restore(); }
+    ctx.textAlign='center'; ctx.textBaseline='middle';
+    ctx.font = 'bold 40px Trebuchet MS'; ctx.fillStyle = '#ff2d55';
+    ctx.strokeStyle = '#1a1a1a'; ctx.lineWidth = 8;
+    ctx.strokeText('TIMBER!', W/2, 200); ctx.fillText('TIMBER!', W/2, 200);
+    ctx.fillStyle = '#fff'; ctx.font = 'bold 19px Trebuchet MS';
+    ctx.fillText(failLine, W/2, 258);
+    ctx.fillStyle = '#7bff5e'; ctx.font = 'bold 30px Trebuchet MS';
+    ctx.fillText(score + '  •  ' + rankFor(score), W/2, 322);
+    ctx.fillStyle = '#fff'; ctx.font = 'bold 16px Trebuchet MS';
+    ctx.fillText(Math.floor(dist/10) + 'm   •   BEST COMBO x' + bestCombo + '   •   BEST ' + high, W/2, 360);
+    if(unlock==='gold-cap'){ ctx.fillStyle = '#ffd60a'; ctx.fillText('🏆 GOLD CAP UNLOCKED!', W/2, 392); }
+    ctx.fillStyle = copied ? '#7bff5e' : '#00d4ff';
+    roundRect(W/2-120, 430, 240, 48, 12); ctx.fill();
+    ctx.fillStyle = '#1a1a1a'; ctx.font = 'bold 19px Trebuchet MS';
+    ctx.fillText(copied ? 'COPIED!' : '📋 COPY RESULT', W/2, 455);
+    ctx.fillStyle = '#7b2ff7';
+    roundRect(W/2-120, 494, 240, 52, 12); ctx.fill();
+    ctx.fillStyle = '#fff'; ctx.font = 'bold 22px Trebuchet MS';
+    ctx.fillText('↻ RUN AGAIN', W/2, 521);
+    ctx.fillStyle = '#ffffff88'; ctx.font = 'bold 13px Trebuchet MS';
+    ctx.fillText('tap R to restart', W/2, 570);
+    ctx.restore();
+  }
+}
+
+// ---------- input ----------
+function posFromEvent(e){
+  const r = cv.getBoundingClientRect();
+  const sx = W / r.width, sy = H / r.height;
+  const cx = (e.touches ? e.touches[0].clientX : e.clientX);
+  const cy = (e.touches ? e.touches[0].clientY : e.clientY);
+  return { x: (cx - r.left) * sx, y: (cy - r.top) * sy };
+}
+function shareText(){
+  return "I scored " + score + " (" + rankFor(score) + ") before the forest betrayed me. THE FOREST IS LYING! " + location.href;
+}
+let downT = 0, downX = 0, dragged = false;
+cv.addEventListener('pointerdown', e=>{
+  e.preventDefault();
+  const p = posFromEvent(e);
+  downT = performance.now(); downX = p.x; dragged = false; dragX = p.x;
+  if(state==='menu'){ resetGame(); return; }
+  if(state==='over'){
+    if(p.y>=430 && p.y<=478 && Math.abs(p.x-W/2)<=120){
+      const txt = shareText();
+      if(navigator.clipboard && navigator.clipboard.writeText){
+        navigator.clipboard.writeText(txt).then(()=>{ copied = true; }).catch(()=>{ copied = true; });
+      } else { copied = true; }
+      return;
+    }
+    if(p.y>=494 && p.y<=546 && Math.abs(p.x-W/2)<=120){ resetGame(); return; }
+    return;
+  }
+});
+cv.addEventListener('pointermove', e=>{
+  if(state!=='play' || dragX===null) return;
+  const p = posFromEvent(e);
+  if(Math.abs(p.x - downX) > 14) dragged = true;
+  dragX = p.x;
+});
+cv.addEventListener('pointerup', e=>{
+  if(state==='play' && !dragged && performance.now()-downT < 350) doJump();
+  dragX = null; dragged = false;
+});
+cv.addEventListener('pointercancel', ()=>{ dragX = null; });
+window.addEventListener('keydown', e=>{
+  const k = e.key.toLowerCase();
+  keys[k] = true;
+  if(k===' ' || k==='arrowup' || k==='w'){ e.preventDefault(); doJump(); }
+  if(k==='r' && state!=='menu') resetGame();
+});
+window.addEventListener('keyup', e=>{ keys[e.key.toLowerCase()] = false; });
+
+// ---------- loop ----------
+let last = performance.now();
+function loop(now){
+  const dt = Math.min(0.033, (now-last)/1000); last = now;
+  update(dt);
+  draw();
+  requestAnimationFrame(loop);
+}
+requestAnimationFrame(loop);
+</script>
+</body>
+</html>

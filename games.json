@@ -420,5 +420,14 @@
   "mechanic": "Loading-bar survival (tap to fill, bar dodges, viruses steal %, popups block, overheat, final 1% stall)",
   "tagline": "Tap the bar. Reach 100%. It fights back — it squirms, it runs, it lies.",
   "title": "99% LOADED!"
+ },
+ {
+  "date": "2026-11-17",
+  "day": 48,
+  "emoji": "🌲",
+  "file": "games/the-forest-is-lying.html",
+  "mechanic": "Trap-first betrayal runner (innocent trees turn traitor, apple bombs, trip roots)",
+  "tagline": "The trees look friendly. They are not. One just pulled a branch on you.",
+  "title": "THE FOREST IS LYING!"
  }
 ]
