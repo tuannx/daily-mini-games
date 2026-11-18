@@ -1,0 +1,911 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<title>YEET FROG! — Day 49</title>
+<style>
+  * { margin:0; padding:0; box-sizing:border-box; }
+  html,body { width:100%; height:100%; background:#04141c; overflow:hidden; touch-action:none;
+    font-family:'Trebuchet MS','Comic Sans MS',sans-serif; }
+  #wrap { position:fixed; inset:0; display:flex; align-items:center; justify-content:center; }
+  canvas { display:block; background:#082f3f; border-radius:12px;
+    box-shadow:0 0 40px #22d3ee88, 0 0 90px #84cc1688; }
+</style>
+</head>
+<body>
+<div id="wrap"><canvas id="c" width="480" height="720"></canvas></div>
+<script>
+"use strict";
+// YEET FROG! — Day 49
+// The frog forgot how to jump. It only has a tongue. HOLD to latch onto a
+// lily pad and swing, RELEASE to yeet. Grab the glowing flies, dodge the
+// angry wasps, ride the bubbles. Fall in the pond and it's a splash fail.
+// TWIST LADDER: 10s WIND! -> 20s SHY PADS! (pads flee your tongue)
+// -> 32s GRAVITY SNACKS! (gravity pulses light/heavy) -> 44s WASP STORM!
+// Trend: "Latch" (Essential Code, itch.io, Nov 18 2026) — movement ONLY by
+// latching and flinging, no jump button; plus "So Mad Smash" rage-timing
+// energy (Nov 16-17, 2026). Not a clone: new character, tongue mechanic.
+const cv = document.getElementById('c');
+const ctx = cv.getContext('2d');
+const W = 480, H = 720;
+const START_Y = 560; // world y of the home lily (frog start)
+
+// ---------- audio (WebAudio, self-generated) ----------
+let AC = null;
+function audio(){ if(!AC){ try{ AC = new (window.AudioContext||window.webkitAudioContext)(); }catch(e){} } return AC; }
+function beep(f, d, type, v){
+  const ac = audio(); if(!ac) return;
+  const o = ac.createOscillator(), g = ac.createGain();
+  o.type = type||'sine'; o.frequency.value = f;
+  g.gain.setValueAtTime(v||0.12, ac.currentTime);
+  g.gain.exponentialRampToValueAtTime(0.001, ac.currentTime + d);
+  o.connect(g); g.connect(ac.destination); o.start(); o.stop(ac.currentTime + d);
+}
+function latchSnd(){ beep(300, 0.07, 'square', 0.08); setTimeout(()=>beep(520, 0.08, 'square', 0.07), 55); }
+function yeetSnd(){ beep(500, 0.16, 'sawtooth', 0.06); setTimeout(()=>beep(900, 0.14, 'sine', 0.08), 70); }
+function popSnd(){ [880,1175,1568].forEach((f,i)=>setTimeout(()=>beep(f,0.09,'sine',0.10), i*55)); }
+function bubSnd(){ beep(700, 0.1, 'sine', 0.09); setTimeout(()=>beep(1100, 0.12, 'sine', 0.08), 60); }
+function hurtSnd(){ beep(200, 0.2, 'sawtooth', 0.13); setTimeout(()=>beep(120, 0.3, 'sawtooth', 0.13), 100); }
+function splashSnd(){
+  const ac = audio(); if(!ac) return;
+  const len = ac.sampleRate * 0.4, buf = ac.createBuffer(1, len, ac.sampleRate), d = buf.getChannelData(0);
+  for(let i=0;i<len;i++) d[i] = (Math.random()*2-1) * Math.pow(1-i/len, 2.0);
+  const s = ac.createBufferSource(); s.buffer = buf;
+  const g = ac.createGain(); g.gain.value = 0.20;
+  s.connect(g); g.connect(ac.destination); s.start();
+  beep(160, 0.35, 'sine', 0.10);
+}
+function winSnd(){ [523,659,784,1047,1319].forEach((f,i)=>setTimeout(()=>beep(f,0.15,'triangle',0.12), i*90)); }
+
+// ---------- helpers ----------
+const rand = (a,b)=>a+Math.random()*(b-a);
+const clamp = (v,a,b)=>Math.max(a,Math.min(b,v));
+const TAU = Math.PI*2;
+function roundRect(x,y,w,h,r){ ctx.beginPath(); ctx.moveTo(x+r,y); ctx.arcTo(x+w,y,x+w,y+h,r);
+  ctx.arcTo(x+w,y+h,x,y+h,r); ctx.arcTo(x,y+h,x,y,r); ctx.arcTo(x,y,x+w,y,r); ctx.closePath(); }
+function circle(x,y,r){ ctx.beginPath(); ctx.arc(x,y,r,0,TAU); ctx.fill(); }
+function dist2(ax,ay,bx,by){ const dx=ax-bx, dy=ay-by; return dx*dx+dy*dy; }
+
+// ---------- state ----------
+let state = 'menu'; // menu | play | pause | over
+let t = 0, score = 0, scoreF = 0, hearts = 3, combo = 0, comboT = 0, bestCombo = 0;
+let fliesEaten = 0, maxHeight = 0;
+let camY = 0; // world y of screen top
+let grav = 1180, gravMode = 1; // 1 normal, 0.72 light, 1.32 heavy
+let wind = 0, windT = 0, windCycle = 0; // wind: -1..1 force factor
+let frog = null;
+let pads = [], flies = [], wasps = [], birds = [], bubbles = [], crownFlies = [];
+let parts = [], popupsTxt = [], clouds = [], leaves = [], ripples = [];
+let shake = 0, twistMsg = '', twistMsgT = 0, twistsDone = {};
+let waspT = 3, birdT = 8, bubbleT = 4, crownT = 24, nextPadY = 0;
+let high = +(localStorage.getItem('yeetfrog_high')||0);
+let unlock = localStorage.getItem('yeetfrog_unlock')||'';
+let copied = false, failLine = '', menuT = 0, holding = false;
+let keys = {};
+
+const FAILS = [
+  "The frog forgot jumping. And landing.",
+  "Gravity filed a complaint. It won.",
+  "One tongue. Zero brakes.",
+  "The pond says thanks for visiting.",
+  "Yeeted into the splash zone.",
+  "A wasp wrote this ending.",
+  "So close. The fly saw everything.",
+  "Frog: 0. Physics: 1.",
+];
+function rankFor(s){
+  if(s>=3000) return "FROG GOD";
+  if(s>=2000) return "YEET MASTER";
+  if(s>=1200) return "TONGUE SNIPER";
+  if(s>=500) return "POND HOPPER";
+  return "TADPOLE";
+}
+function popup(x,y,txt,col,size){ popupsTxt.push({x,y,txt,life:1.1,col:col||'#fff',size:size||24}); }
+function burst(x,y,col,n,spd){
+  for(let i=0;i<(n||12);i++){
+    const a = rand(0,TAU), s = rand(40,spd||170);
+    parts.push({x,y,vx:Math.cos(a)*s,vy:Math.sin(a)*s-70,life:rand(0.4,0.9),col,r:rand(2,5),grav:520});
+  }
+}
+function addScore(n, x, y, label, col){
+  scoreF += n; score = Math.floor(scoreF);
+  if(label) popup(x, y, label, col||'#ffd60a', n>=100 ? 28 : 22);
+}
+
+// ---------- world gen ----------
+function makePad(y, forceShy){
+  const shy = forceShy !== undefined ? forceShy : (t>=20 && Math.random()<0.42);
+  return { x: rand(60, W-60), y: y, shy: shy, bob: rand(0,TAU),
+    vx: shy ? rand(40,80)*(Math.random()<0.5?-1:1) : 0,
+    stretch: 0, homeX: 0 };
+}
+function ensurePads(){
+  while(nextPadY > camY - 260){
+    nextPadY -= rand(96, 132);
+    const p = makePad(nextPadY);
+    p.homeX = p.x;
+    pads.push(p);
+    // a fly near some pads (the ONLY glowing collectible family)
+    if(Math.random() < 0.62){
+      flies.push({ x: clamp(p.x + rand(-70,70), 24, W-24), y: nextPadY + rand(28, 64),
+        bob: rand(0,TAU), dead: false });
+    }
+    if(Math.random() < 0.30){
+      wasps.push({ x: clamp(p.x + rand(-90,90), 30, W-30), y: nextPadY - rand(6, 40),
+        ph: rand(0,TAU), baseX: 0, dead: false });
+      wasps[wasps.length-1].baseX = wasps[wasps.length-1].x;
+    }
+  }
+}
+function spawnBubble(){ bubbles.push({ x: rand(40, W-40), y: camY - 30, r: rand(17,26), vy: rand(24,44), wob: rand(0,TAU), dead:false }); }
+function spawnBird(){ const dir = Math.random()<0.5 ? 1 : -1;
+  birds.push({ x: dir>0 ? -40 : W+40, y: frog.y - rand(60, 300), vx: dir*rand(120,170), flap: rand(0,TAU), dead:false }); }
+function spawnWaspFree(){ const x = rand(40, W-40);
+  wasps.push({ x: x, y: camY - 30, ph: rand(0,TAU), baseX: x, dead:false }); }
+function spawnCrown(){ crownFlies.push({ x: rand(60, W-60), y: camY - 40, vx: rand(50,90)*(Math.random()<0.5?-1:1), bob: rand(0,TAU), dead:false });
+  popup(W/2, camY + 210, "CROWN FLY!", '#ffd60a', 30); }
+
+// ---------- frog / tongue ----------
+let homePad = null;
+function newFrog(){
+  return { x: W/2, y: START_Y - 20, vx: 0, vy: 0, pad: null, theta: 0, angVel: 0, rope: 0,
+    face: 'happy', invuln: 0, splat: 0, tongueT: 0, tonguePad: null, stretchA: 0, resting: true };
+}
+function findLatchPad(){
+  // Strongly prefer pads ABOVE the frog — latching downwards is a death
+  // sentence (the swing then hangs below the lower pad, over the pond).
+  let bestP = null, bestCost = Infinity;
+  const slack = frog.vy > 480 ? 60 : 30;
+  for(const p of pads){
+    if(frog.resting && p === homePad) continue;
+    const dy = p.y - frog.y;
+    if(dy > slack) continue;
+    const d = Math.sqrt(dist2(frog.x, frog.y, p.x, p.y));
+    if(d > 340) continue;
+    const cost = d + (dy > 0 ? dy*4 : -dy*0.15);
+    if(cost < bestCost){ bestCost = cost; bestP = p; }
+  }
+  return bestP;
+}
+function tryLatch(){
+  if(!frog || frog.pad || frog.tongueT > 0) return;
+  const bestP = findLatchPad();
+  if(bestP){
+    frog.tonguePad = bestP; frog.tongueT = 0.11;
+    latchSnd();
+  } else {
+    // tongue whiffs into the air — the joke is the miss
+    frog.tonguePad = null; frog.tongueT = 0.16;
+    popup(frog.x, frog.y - 56, "MISS!", '#7dd3fc', 20);
+    beep(240, 0.09, 'square', 0.06);
+  }
+}
+function attachTo(p){
+  frog.resting = false;
+  const dx = frog.x - p.x, dy = frog.y - p.y;
+  frog.rope = clamp(Math.sqrt(dx*dx+dy*dy), 38, 250);
+  frog.theta = Math.atan2(dx, dy); // angle from straight-down
+  // tangential velocity -> angular velocity
+  const tx = Math.cos(frog.theta), ty = -Math.sin(frog.theta);
+  frog.angVel = (frog.vx*tx + frog.vy*ty) / frog.rope;
+  frog.pad = p; p.stretch = 1;
+}
+function releaseFling(){
+  if(!frog || !frog.pad) return;
+  const p = frog.pad; p.stretch = 0;
+  frog.vx = frog.rope * frog.angVel * Math.cos(frog.theta) * 1.55;
+  frog.vy = -frog.rope * frog.angVel * Math.sin(frog.theta) * 1.55 - 90;
+  if(frog.vy > 0) frog.vy = frog.vy * 0.3 - 60; // whip assist: a bad release still cracks upward a little
+  frog.pad = null; frog.face = 'panic';
+  yeetSnd();
+  burst(frog.x, frog.y, '#a3e635', 7, 110);
+}
+function hurt(srcX){
+  if(!frog || frog.invuln > 0 || state !== 'play') return;
+  hearts--;
+  frog.invuln = 1.3; frog.splat = 0.35; frog.face = 'dizzy';
+  if(frog.pad){ frog.pad.stretch = 0; frog.pad = null; }
+  frog.vx = (frog.x < srcX ? -1 : 1) * 190; frog.vy = -260;
+  combo = 0; comboT = 0;
+  shake = 11;
+  burst(frog.x, frog.y, '#ff2d55', 16, 200);
+  popup(frog.x, frog.y - 60, hearts>0 ? "OUCH!" : "STUNG OUT!", '#ff2d55', 26);
+  hurtSnd();
+  if(hearts <= 0) endGame('sting');
+}
+
+// ---------- twists ----------
+function fireTwist(name, msg){
+  if(twistsDone[name]) return; twistsDone[name] = true;
+  twistMsg = msg; twistMsgT = 2.2;
+  popup(W/2, camY + 250, msg, '#ff9f1c', 32);
+  beep(660, 0.1, 'square', 0.09); setTimeout(()=>beep(440, 0.12, 'square', 0.09), 90);
+}
+
+// ---------- update ----------
+function update(dt){
+  menuT += dt;
+  if(state==='menu'){
+    for(const c of clouds){ c.x -= 12*dt; if(c.x < -80){ c.x = W+80; c.y = rand(30,130); } }
+    if(!clouds.length) for(let i=0;i<4;i++) clouds.push({x:rand(0,460), y:rand(30,130), s:rand(0.7,1.3)});
+    return;
+  }
+  if(state==='pause') return;
+  if(state==='over'){
+    parts.forEach(p=>{ p.vy += (p.grav||0)*dt; p.x += p.vx*dt; p.y += p.vy*dt; p.life -= dt; });
+    parts = parts.filter(p=>p.life>0);
+    popupsTxt.forEach(p=>{ p.y -= 30*dt; p.life -= dt; });
+    popupsTxt = popupsTxt.filter(p=>p.life>0);
+    ripples.forEach(r=>{ r.r += 60*dt; r.life -= dt; });
+    ripples = ripples.filter(r=>r.life>0);
+    return;
+  }
+  // play
+  t += dt;
+  if(t>=10) fireTwist('wind', "WIND!");
+  if(t>=20) fireTwist('shy', "SHY PADS!");
+  if(t>=32) fireTwist('grav', "GRAVITY SNACKS!");
+  if(t>=44) fireTwist('storm', "WASP STORM!");
+
+  // wind cycles after 10s: 2.6s gust every ~6.5s
+  if(t>=10){
+    windCycle += dt;
+    const ph = windCycle % 6.5;
+    wind = ph < 2.6 ? (Math.floor(windCycle/6.5)%2===0 ? 1 : -1) : 0;
+    if(wind !== 0 && Math.random() < dt*22){
+      leaves.push({ x: wind>0 ? -12 : W+12, y: camY + rand(0, H), vx: wind*rand(180,300), vy: rand(-16,30), rot: rand(0,TAU), life: 2.4 });
+    }
+  } else wind = 0;
+  // gravity pulses after 32s
+  if(t>=32){
+    const cyc = Math.floor((t-32)/5) % 2;
+    const nm = cyc===0 ? 0.72 : 1.32;
+    if(nm !== gravMode){
+      gravMode = nm;
+      popup(W/2, camY + 300, nm<1 ? "LIGHT!" : "HEAVY!", nm<1 ? '#7dd3fc' : '#f472b6', 28);
+    }
+  } else gravMode = 1;
+  grav = 1180 * gravMode;
+
+  if(comboT>0){ comboT -= dt; if(comboT<=0) combo = 0; }
+  if(frog.invuln>0) frog.invuln -= dt;
+  if(frog.splat>0) frog.splat -= dt; else if(frog.face==='dizzy') frog.face = 'happy';
+  if(frog.face==='panic' && frog.vy > -60) frog.face = 'happy';
+
+  // tongue travel
+  if(frog.tongueT > 0){
+    frog.tongueT -= dt;
+    if(frog.tongueT <= 0 && frog.tonguePad){
+      attachTo(frog.tonguePad); frog.tonguePad = null;
+    }
+  }
+
+  // frog physics
+  if(frog.resting && !frog.pad){
+    // sitting on the home lily until the first latch — no gravity yet
+    if(homePad){ frog.x = homePad.x; frog.y = homePad.y - 20; }
+    frog.vx = 0; frog.vy = 0;
+  } else if(frog.pad){
+    const p = frog.pad;
+    const px0 = p.x, py0 = p.y;
+    // pad may move (shy pads slide); frog anchor follows
+    // pendulum: theta'' = -(g/L) sin(theta)
+    const acc = -(grav / frog.rope) * Math.sin(frog.theta);
+    frog.angVel += acc * dt;
+    frog.angVel *= Math.pow(0.45, dt); // light damping
+    // holding WINCHES the tongue in (you reel up toward the pad) and pumps
+    // the swing (energy grows); arrows steer the pump
+    if(holding){
+      // winch only when hanging slow — a hard swing keeps its energy
+      if(Math.abs(frog.angVel) < 1.3) frog.rope = Math.max(46, frog.rope - 115 * dt);
+      frog.angVel += frog.angVel * 0.8 * dt + (frog.angVel >= 0 ? 0.5 : -0.5) * dt;
+    }
+    let pump = 0;
+    if(keys['arrowleft'] || keys['a']) pump = -1;
+    if(keys['arrowright'] || keys['d']) pump = 1;
+    frog.angVel += pump * 2.4 * dt;
+    frog.angVel = clamp(frog.angVel, -4.6, 4.6);
+    frog.theta += frog.angVel * dt;
+    frog.theta = clamp(frog.theta, -2.6, 2.6);
+    frog.x = p.x + frog.rope * Math.sin(frog.theta);
+    frog.y = p.y + frog.rope * Math.cos(frog.theta);
+    frog.vx = frog.rope * frog.angVel * Math.cos(frog.theta) + (p.x - px0)/Math.max(dt,0.001)*0;
+    frog.vy = -frog.rope * frog.angVel * Math.sin(frog.theta);
+    frog.stretchA = clamp(Math.abs(frog.angVel)*0.16, 0, 0.35);
+  } else {
+    frog.vy += grav * dt;
+    frog.vx += wind * 300 * dt;
+    let air = 0;
+    if(keys['arrowleft'] || keys['a']) air = -1;
+    if(keys['arrowright'] || keys['d']) air = 1;
+    frog.vx += air * 320 * dt;
+    frog.vx *= Math.pow(0.55, dt);
+    frog.x += frog.vx * dt;
+    frog.y += frog.vy * dt;
+    frog.stretchA = clamp(Math.abs(frog.vy)*0.00012, 0, 0.22);
+    if(frog.x < 22){ frog.x = 22; frog.vx = Math.abs(frog.vx)*0.6; }
+    if(frog.x > W-22){ frog.x = W-22; frog.vx = -Math.abs(frog.vx)*0.6; }
+  }
+
+  // height + score from altitude
+  const hNow = Math.max(0, (START_Y - frog.y) / 50);
+  if(hNow > maxHeight){
+    scoreF += (hNow - maxHeight) * 10;
+    maxHeight = hNow; score = Math.floor(scoreF);
+  }
+
+  // camera only rises
+  const targetCam = frog.y - H*0.46;
+  if(targetCam < camY) camY = targetCam;
+  ensurePads();
+
+  // pads
+  for(const p of pads){
+    p.bob += dt*2.2;
+    if(p.stretch>0) p.stretch = Math.max(0, p.stretch - dt*3);
+    if(p.shy){
+      // shy pads slide, and flee the frog's tongue range sideways
+      let flee = 0;
+      if(frog && !frog.pad && Math.abs(p.y - frog.y) < 190 && Math.abs(p.x - frog.x) < 130){
+        flee = p.x < frog.x ? -1 : 1;
+      }
+      p.x += (p.vx*0.4 + flee*95) * dt;
+      if(p.x < 52){ p.x = 52; p.vx = Math.abs(p.vx); }
+      if(p.x > W-52){ p.x = W-52; p.vx = -Math.abs(p.vx); }
+    }
+  }
+  pads = pads.filter(p=>p.y < camY + H + 140);
+
+  // flies (glowing collectible)
+  for(const f of flies){
+    f.bob += dt*7;
+    if(!f.dead && dist2(frog.x, frog.y, f.x, f.y) < 36*36){
+      f.dead = true; fliesEaten++;
+      combo++; comboT = 4; if(combo>bestCombo) bestCombo = combo;
+      const pts = 50 + (combo>=3 ? 25 : 0);
+      addScore(pts, f.x, f.y - 26, "+" + pts, '#ffd60a');
+      popSnd(); burst(f.x, f.y, '#ffd60a', 10, 140);
+    }
+  }
+  flies = flies.filter(f=>!f.dead && f.y < camY + H + 120);
+
+  // crown fly (rare, flees)
+  crownT -= dt;
+  if(crownT<=0){ spawnCrown(); crownT = rand(24, 34); }
+  for(const c of crownFlies){
+    c.bob += dt*9; c.x += c.vx*dt;
+    if(frog && Math.abs(c.y - frog.y) < 150) c.x += (c.x < frog.x ? -70 : 70)*dt;
+    if(c.x < 26){ c.x = 26; c.vx = Math.abs(c.vx); }
+    if(c.x > W-26){ c.x = W-26; c.vx = -Math.abs(c.vx); }
+    if(!c.dead && dist2(frog.x, frog.y, c.x, c.y) < 40*40){
+      c.dead = true;
+      addScore(300, c.x, c.y - 30, "CROWN! +300", '#ffd60a');
+      winSnd(); burst(c.x, c.y, '#ffd60a', 22, 240);
+    }
+  }
+  crownFlies = crownFlies.filter(c=>!c.dead && c.y < camY + H + 120 && c.y > camY - 220);
+
+  // wasps (angry hazard)
+  waspT -= dt;
+  if(waspT<=0){ spawnWaspFree(); waspT = t>=44 ? rand(1.6, 2.6) : rand(3.2, 5); }
+  for(const wsp of wasps){
+    wsp.ph += dt*5;
+    wsp.x = wsp.baseX + Math.sin(wsp.ph*0.7)*26;
+    wsp.y += Math.sin(wsp.ph)*14*dt + 6*dt;
+    if(!wsp.dead && frog.invuln<=0 && dist2(frog.x, frog.y, wsp.x, wsp.y) < 31*31){
+      wsp.dead = true; hurt(wsp.x);
+    }
+  }
+  wasps = wasps.filter(wsp=>!wsp.dead && wsp.y < camY + H + 120 && wsp.y > camY - 200);
+
+  // birds (angry hazard, from 18s)
+  if(t>=18){ birdT -= dt; if(birdT<=0){ spawnBird(); birdT = rand(5.5, 8.5); } }
+  for(const b of birds){
+    b.x += b.vx*dt; b.flap += dt*12;
+    if(!b.dead && frog.invuln<=0 && dist2(frog.x, frog.y, b.x, b.y) < 33*33){
+      b.dead = true; hurt(b.x);
+    }
+  }
+  birds = birds.filter(b=>!b.dead && b.x > -60 && b.x < W+60);
+
+  // bubbles (boost)
+  bubbleT -= dt;
+  if(bubbleT<=0){ spawnBubble(); bubbleT = rand(3.5, 6); }
+  for(const b of bubbles){
+    b.wob += dt*3; b.y += b.vy*dt;
+    if(!b.dead && dist2(frog.x, frog.y, b.x, b.y) < (b.r+24)*(b.r+24)){
+      b.dead = true;
+      if(!frog.pad){ frog.vy = Math.min(frog.vy, -640); }
+      addScore(20, b.x, b.y - 24, "POP! +20", '#7dd3fc');
+      bubSnd(); burst(b.x, b.y, '#bae6fd', 12, 160);
+    }
+  }
+  bubbles = bubbles.filter(b=>!b.dead && b.y < camY + H + 80);
+
+  // leaves / particles / popups
+  for(const l of leaves){ l.x += l.vx*dt; l.y += l.vy*dt; l.rot += dt*6; l.life -= dt; }
+  leaves = leaves.filter(l=>l.life>0 && l.x > -30 && l.x < W+30);
+  parts.forEach(p=>{ p.vy += (p.grav||0)*dt; p.x += p.vx*dt; p.y += p.vy*dt; p.life -= dt; });
+  parts = parts.filter(p=>p.life>0);
+  popupsTxt.forEach(p=>{ p.y -= 30*dt; p.life -= dt; });
+  popupsTxt = popupsTxt.filter(p=>p.life>0);
+  ripples.forEach(r=>{ r.r += 60*dt; r.life -= dt; });
+  ripples = ripples.filter(r=>r.life>0);
+  if(twistMsgT>0) twistMsgT -= dt;
+  if(shake>0) shake = Math.max(0, shake - dt*30);
+
+  // fall into the pond = splash fail
+  if(frog.y - camY > H + 36) endGame('splash');
+}
+function endGame(why){
+  if(state !== 'play') return;
+  state = 'over';
+  failLine = why==='splash' ? "The pond says thanks for visiting." : FAILS[Math.floor(Math.random()*FAILS.length)];
+  if(why==='splash'){
+    splashSnd();
+    ripples.push({ x: frog.x, y: H - 56, r: 8, life: 0.9 });
+    burst(frog.x, camY + H - 70, '#7dd3fc', 22, 230);
+  } else { hurtSnd(); }
+  if(score > high){ high = score; localStorage.setItem('yeetfrog_high', String(high)); }
+  if(score >= 2000 && !unlock){ unlock = 'crown'; localStorage.setItem('yeetfrog_unlock', unlock); }
+  if(why==='splash') shake = 8;
+}
+function resetGame(){
+  t = 0; score = 0; scoreF = 0; hearts = 3; combo = 0; comboT = 0; bestCombo = 0;
+  fliesEaten = 0; maxHeight = 0;
+  camY = START_Y - 620;
+  gravMode = 1; grav = 1180; wind = 0; windCycle = 0;
+  frog = newFrog();
+  pads = []; flies = []; wasps = []; birds = []; bubbles = []; crownFlies = [];
+  parts = []; popupsTxt = []; leaves = []; ripples = [];
+  shake = 0; twistMsg = ''; twistMsgT = 0; twistsDone = {};
+  waspT = 4; birdT = 7; bubbleT = 3; crownT = 22; holding = false;
+  // home lily + a guaranteed first pad in tongue range + the rest
+  const home = { x: W/2, y: START_Y, shy: false, bob: 0, vx: 0, stretch: 0, homeX: W/2 };
+  pads.push(home); homePad = home;
+  const first = { x: W/2 + 70, y: START_Y - 118, shy: false, bob: 1, vx: 0, stretch: 0, homeX: W/2 + 70 };
+  pads.push(first);
+  nextPadY = START_Y - 118;
+  ensurePads();
+  if(!clouds.length) for(let i=0;i<4;i++) clouds.push({x:rand(0,460), y:rand(30,130), s:rand(0.7,1.3)});
+  // starter fly so the first latch pays off in <3s
+  flies.push({ x: W/2 + 60, y: START_Y - 120, bob: 1, dead: false });
+  copied = false; failLine = '';
+  state = 'play';
+}
+
+// ---------- drawing ----------
+function drawFace(x, y, kind, s){
+  ctx.fillStyle = '#10240a';
+  if(kind==='angry'){
+    circle(x-8*s, y-3*s, 2.6*s); circle(x+8*s, y-3*s, 2.6*s);
+    ctx.strokeStyle = '#10240a'; ctx.lineWidth = 2.4*s;
+    ctx.beginPath(); ctx.moveTo(x-12*s, y-10*s); ctx.lineTo(x-3*s, y-6*s); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(x+12*s, y-10*s); ctx.lineTo(x+3*s, y-6*s); ctx.stroke();
+    ctx.beginPath(); ctx.arc(x, y+11*s, 5*s, Math.PI*1.1, Math.PI*1.9); ctx.stroke();
+  } else if(kind==='dizzy'){
+    ctx.font = 'bold ' + Math.round(13*s) + 'px Trebuchet MS'; ctx.textAlign='center'; ctx.textBaseline='middle';
+    ctx.fillText('×', x-8*s, y-3*s); ctx.fillText('×', x+8*s, y-3*s);
+    ctx.beginPath(); ctx.ellipse(x, y+7*s, 4*s, 5*s, 0, 0, TAU); ctx.fill();
+  } else if(kind==='panic'){
+    circle(x-8*s, y-4*s, 3.4*s); circle(x+8*s, y-4*s, 3.4*s);
+    ctx.beginPath(); ctx.ellipse(x, y+7*s, 3.6*s, 5*s, 0, 0, TAU); ctx.fill();
+  } else {
+    circle(x-8*s, y-3*s, 2.4*s); circle(x+8*s, y-3*s, 2.4*s);
+    ctx.strokeStyle = '#10240a'; ctx.lineWidth = 2.2*s;
+    ctx.beginPath(); ctx.arc(x, y+2*s, 6*s, Math.PI*0.15, Math.PI*0.85); ctx.stroke();
+  }
+}
+function drawFrog(wx, wy){
+  const sx = wx, sy = wy - camY;
+  if(frog.invuln>0 && Math.floor(frog.invuln*12)%2===0 && frog.splat<=0) ctx.globalAlpha = 0.35;
+  const sq = frog.splat>0 ? 0.55 : 1 + (frog.stretchA||0);
+  ctx.save(); ctx.translate(sx, sy); ctx.scale(1/Math.sqrt(sq), sq);
+  // legs (kick when flying)
+  ctx.strokeStyle = '#4d7c0f'; ctx.lineWidth = 7; ctx.lineCap = 'round';
+  const kick = frog.pad ? 4 : Math.sin(menuT*14)*5;
+  ctx.beginPath(); ctx.moveTo(-8, 10); ctx.lineTo(-16, 22 + kick); ctx.stroke();
+  ctx.beginPath(); ctx.moveTo(8, 10); ctx.lineTo(16, 22 - kick); ctx.stroke();
+  // body
+  ctx.fillStyle = '#84cc16'; ctx.beginPath(); ctx.ellipse(0, 0, 22, 18, 0, 0, TAU); ctx.fill();
+  ctx.fillStyle = '#d9f99d'; ctx.beginPath(); ctx.ellipse(0, 6, 13, 9, 0, 0, TAU); ctx.fill();
+  // eyes on stalks
+  ctx.strokeStyle = '#4d7c0f'; ctx.lineWidth = 4;
+  ctx.beginPath(); ctx.moveTo(-9, -12); ctx.lineTo(-11, -21); ctx.stroke();
+  ctx.beginPath(); ctx.moveTo(9, -12); ctx.lineTo(11, -21); ctx.stroke();
+  ctx.fillStyle = '#fff'; circle(-11, -23, 7); circle(11, -23, 7);
+  drawFace(0, -16, frog.face, 0.78);
+  // crown if unlocked
+  if(unlock==='crown'){
+    ctx.fillStyle = '#ffd60a';
+    ctx.beginPath(); ctx.moveTo(-10, -30); ctx.lineTo(-10, -39); ctx.lineTo(-5, -34); ctx.lineTo(0, -40);
+    ctx.lineTo(5, -34); ctx.lineTo(10, -39); ctx.lineTo(10, -30); ctx.closePath(); ctx.fill();
+  }
+  ctx.restore();
+  ctx.globalAlpha = 1;
+  // tongue (to pad while swinging, or mid-latch / whiff)
+  let tx = null, ty = null;
+  if(frog.pad){ tx = frog.pad.x; ty = frog.pad.y - camY; }
+  else if(frog.tongueT > 0 && frog.tonguePad){ tx = frog.tonguePad.x; ty = frog.tonguePad.y - camY; }
+  else if(frog.tongueT > 0){ tx = sx + frog.vx*0.12; ty = sy - 90; }
+  if(tx !== null){
+    ctx.strokeStyle = '#f472b6'; ctx.lineWidth = 5; ctx.lineCap = 'round';
+    ctx.beginPath(); ctx.moveTo(sx, sy - 8);
+    ctx.quadraticCurveTo((sx+tx)/2, (sy+ty)/2 + 12, tx, ty); ctx.stroke();
+    ctx.fillStyle = '#ec4899'; circle(tx, ty, 5);
+  }
+}
+function drawPad(p){
+  const sy = p.y - camY + Math.sin(p.bob)*3;
+  ctx.save(); ctx.translate(p.x, sy); ctx.scale(1 + p.stretch*0.12, 1 - p.stretch*0.18);
+  ctx.fillStyle = p.shy ? '#c084fc' : '#22c55e';
+  ctx.beginPath(); ctx.ellipse(0, 0, 34, 12, 0, 0, TAU); ctx.fill();
+  ctx.fillStyle = p.shy ? '#a855f7' : '#16a34a';
+  ctx.beginPath(); ctx.ellipse(0, -3, 26, 8, 0, 0, TAU); ctx.fill();
+  // notch
+  ctx.fillStyle = '#082f3f';
+  ctx.beginPath(); ctx.moveTo(0, -10); ctx.lineTo(12, 2); ctx.lineTo(-4, 4); ctx.closePath(); ctx.fill();
+  if(p.shy) drawFace(0, -2, 'panic', 0.55);
+  ctx.restore();
+  // anchor dot (tongue target)
+  ctx.fillStyle = '#ecfeff'; circle(p.x, sy - 2, 3.5);
+}
+function drawFly(f){
+  const sy = f.y - camY + Math.sin(f.bob)*4;
+  ctx.save(); ctx.translate(f.x, sy);
+  ctx.shadowColor = '#ffd60a'; ctx.shadowBlur = 16;
+  ctx.fillStyle = '#ffd60a'; circle(0, 0, 9);
+  ctx.shadowBlur = 0;
+  ctx.fillStyle = '#fff7cc'; circle(-2.5, -2.5, 3);
+  // wings
+  ctx.fillStyle = '#ffffffbb';
+  const w = Math.sin(f.bob*3)*3;
+  ctx.beginPath(); ctx.ellipse(-10, -8 + w, 7, 3.4, -0.6, 0, TAU); ctx.fill();
+  ctx.beginPath(); ctx.ellipse(10, -8 - w, 7, 3.4, 0.6, 0, TAU); ctx.fill();
+  drawFace(0, 0, 'happy', 0.5);
+  ctx.restore();
+}
+function drawCrownFly(c){
+  const sy = c.y - camY + Math.sin(c.bob)*5;
+  ctx.save(); ctx.translate(c.x, sy);
+  ctx.shadowColor = '#ffd60a'; ctx.shadowBlur = 24;
+  ctx.fillStyle = '#ffd60a'; circle(0, 0, 13);
+  ctx.shadowBlur = 0;
+  ctx.fillStyle = '#fff7cc'; circle(-4, -4, 4);
+  ctx.fillStyle = '#ffffffcc';
+  const w = Math.sin(c.bob*3)*3;
+  ctx.beginPath(); ctx.ellipse(-14, -11 + w, 9, 4, -0.6, 0, TAU); ctx.fill();
+  ctx.beginPath(); ctx.ellipse(14, -11 - w, 9, 4, 0.6, 0, TAU); ctx.fill();
+  ctx.fillStyle = '#f59e0b';
+  ctx.beginPath(); ctx.moveTo(-8, -14); ctx.lineTo(-8, -22); ctx.lineTo(-3, -17); ctx.lineTo(0, -23);
+  ctx.lineTo(3, -17); ctx.lineTo(8, -22); ctx.lineTo(8, -14); ctx.closePath(); ctx.fill();
+  drawFace(0, 1, 'panic', 0.62);
+  ctx.restore();
+}
+function drawWasp(wsp){
+  const sy = wsp.y - camY;
+  ctx.save(); ctx.translate(wsp.x, sy);
+  ctx.fillStyle = '#ef4444'; ctx.beginPath(); ctx.ellipse(0, 0, 14, 11, 0, 0, TAU); ctx.fill();
+  ctx.fillStyle = '#1a1a1a'; ctx.fillRect(-5, -10, 4.5, 20); ctx.fillRect(3, -10, 4.5, 20);
+  // stinger
+  ctx.fillStyle = '#1a1a1a';
+  ctx.beginPath(); ctx.moveTo(13, 0); ctx.lineTo(22, 2.5); ctx.lineTo(13, 5); ctx.closePath(); ctx.fill();
+  // wings
+  ctx.fillStyle = '#ffffffaa';
+  const w = Math.sin(wsp.ph*4)*3;
+  ctx.beginPath(); ctx.ellipse(-2, -13 + w, 9, 3.6, -0.3, 0, TAU); ctx.fill();
+  drawFace(-3, 0, 'angry', 0.6);
+  ctx.restore();
+}
+function drawBird(b){
+  const sy = b.y - camY;
+  ctx.save(); ctx.translate(b.x, sy); ctx.scale(b.vx>0?1:-1, 1);
+  ctx.fillStyle = '#dc2626'; ctx.beginPath(); ctx.ellipse(0, 0, 17, 12, 0, 0, TAU); ctx.fill();
+  ctx.fillStyle = '#991b1b'; circle(13, -6, 9);
+  // beak
+  ctx.fillStyle = '#f59e0b';
+  ctx.beginPath(); ctx.moveTo(20, -6); ctx.lineTo(30, -3); ctx.lineTo(20, -1); ctx.closePath(); ctx.fill();
+  // wing
+  ctx.fillStyle = '#7f1d1d';
+  const f = Math.sin(b.flap)*7;
+  ctx.beginPath(); ctx.ellipse(-3, -8 + f*0.4, 12, 5, -0.5 + f*0.03, 0, TAU); ctx.fill();
+  drawFace(13, -6, 'angry', 0.5);
+  ctx.restore();
+}
+function drawBubble(b){
+  const sy = b.y - camY;
+  ctx.save(); ctx.translate(b.x + Math.sin(b.wob)*4, sy);
+  ctx.strokeStyle = '#bae6fd'; ctx.lineWidth = 2.4;
+  ctx.fillStyle = '#7dd3fc33';
+  ctx.beginPath(); ctx.arc(0, 0, b.r, 0, TAU); ctx.fill(); ctx.stroke();
+  ctx.fillStyle = '#ffffffcc'; circle(-b.r*0.35, -b.r*0.35, b.r*0.16);
+  ctx.restore();
+}
+function drawBG(){
+  const g = ctx.createLinearGradient(0, 0, 0, H);
+  const depth = clamp(-camY/6000, 0, 1);
+  g.addColorStop(0, depth > 0.5 ? '#0c4a6e' : '#155e75');
+  g.addColorStop(1, '#082f3f');
+  ctx.fillStyle = g; ctx.fillRect(0, 0, W, H);
+  // clouds (parallax, world-anchored bands)
+  ctx.fillStyle = '#ffffff2e';
+  for(const c of clouds){
+    const cy = ((c.y - camY*0.4) % (H+120) + H+120) % (H+120) - 60;
+    ctx.save(); ctx.translate(c.x, cy); ctx.scale(c.s, c.s);
+    circle(0, 0, 17); circle(18, 4, 13); circle(-18, 5, 12);
+    ctx.restore();
+  }
+  // vines on the sides
+  ctx.strokeStyle = '#16653488'; ctx.lineWidth = 6; ctx.lineCap = 'round';
+  for(let side=0; side<2; side++){
+    const bx = side===0 ? 12 : W-12;
+    ctx.beginPath();
+    for(let y=0; y<=H; y+=36){
+      const wx = bx + Math.sin((y + camY*0.8)*0.02 + side*2)*8;
+      if(y===0) ctx.moveTo(wx, y); else ctx.lineTo(wx, y);
+    }
+    ctx.stroke();
+  }
+  // pond at the bottom of the world (visible at start / on the way down)
+  const pondY = START_Y + 66 - camY;
+  if(pondY < H + 60){
+    ctx.fillStyle = '#0369a1'; ctx.fillRect(0, pondY, W, H - pondY + 60);
+    ctx.fillStyle = '#38bdf8'; ctx.fillRect(0, pondY, W, 6);
+    ctx.strokeStyle = '#7dd3fc99'; ctx.lineWidth = 2.4;
+    for(let i=0;i<4;i++){
+      const rx = ((i*137 + menuT*22) % (W+60)) - 30;
+      ctx.beginPath(); ctx.ellipse(rx, pondY + 22 + (i%2)*18, 16, 4.5, 0, 0, TAU); ctx.stroke();
+    }
+  }
+  for(const r of ripples){
+    ctx.strokeStyle = '#e0f2fe'; ctx.lineWidth = 3;
+    ctx.globalAlpha = clamp(r.life, 0, 1);
+    ctx.beginPath(); ctx.ellipse(r.x, r.y, r.r, r.r*0.32, 0, 0, TAU); ctx.stroke();
+    ctx.globalAlpha = 1;
+  }
+  // wind leaves
+  for(const l of leaves){
+    ctx.save(); ctx.translate(l.x, l.y - camY); ctx.rotate(l.rot);
+    ctx.fillStyle = '#a3e635'; ctx.beginPath(); ctx.ellipse(0, 0, 8, 4, 0, 0, TAU); ctx.fill();
+    ctx.restore();
+  }
+}
+function drawAimHint(){
+  // dotted line to nearest latchable pad — readability in the first 3s
+  if(!frog || frog.pad || state!=='play') return;
+  const bestP = findLatchPad();
+  if(!bestP) return;
+  ctx.save(); ctx.strokeStyle = '#f472b688'; ctx.lineWidth = 3; ctx.setLineDash([4, 9]);
+  ctx.beginPath(); ctx.moveTo(frog.x, frog.y - camY - 8); ctx.lineTo(bestP.x, bestP.y - camY); ctx.stroke();
+  ctx.restore();
+}
+function drawHUD(){
+  ctx.save(); ctx.textBaseline = 'middle';
+  for(let i=0;i<3;i++){
+    ctx.font = '24px Trebuchet MS'; ctx.textAlign = 'left';
+    ctx.globalAlpha = i < hearts ? 1 : 0.25;
+    ctx.fillText('❤️', 14 + i*30, 30);
+  }
+  ctx.globalAlpha = 1;
+  ctx.fillStyle = '#e0f2fe'; ctx.font = 'bold 15px Trebuchet MS'; ctx.textAlign = 'left';
+  ctx.fillText(Math.floor(maxHeight) + 'm', 16, 58);
+  ctx.textAlign = 'right'; ctx.fillStyle = '#fff';
+  ctx.font = 'bold 24px Trebuchet MS';
+  ctx.fillText(score, W-16, 30);
+  ctx.font = 'bold 12px Trebuchet MS'; ctx.fillStyle = '#a5f3fc';
+  ctx.fillText(rankFor(score), W-16, 54);
+  if(combo>=2){ ctx.fillStyle = '#ffd60a'; ctx.font = 'bold 17px Trebuchet MS'; ctx.fillText('COMBO x'+combo, W-16, 76); }
+  ctx.fillStyle = '#a5f3fc'; ctx.font = 'bold 12px Trebuchet MS'; ctx.textAlign='left';
+  ctx.fillText('BEST ' + high, 16, 82);
+  if(wind !== 0){ ctx.fillStyle = '#ff9f1c'; ctx.font = 'bold 16px Trebuchet MS'; ctx.fillText(wind>0 ? 'WIND →→' : '←← WIND', 16, 104); }
+  if(gravMode !== 1){ ctx.fillStyle = gravMode<1 ? '#7dd3fc' : '#f472b6'; ctx.font = 'bold 13px Trebuchet MS'; ctx.fillText(gravMode<1 ? 'LIGHT GRAVITY' : 'HEAVY GRAVITY', 16, 124); }
+  // pause hint
+  ctx.fillStyle = '#ffffff88'; ctx.font = 'bold 15px Trebuchet MS'; ctx.textAlign='right';
+  ctx.fillText('II', W-16, 100);
+  ctx.restore();
+}
+function drawPopupsTxt(){
+  ctx.save(); ctx.textAlign='center'; ctx.textBaseline='middle';
+  for(const p of popupsTxt){
+    ctx.globalAlpha = clamp(p.life, 0, 1);
+    ctx.font = 'bold ' + p.size + 'px Trebuchet MS';
+    ctx.strokeStyle = '#08202c'; ctx.lineWidth = 4;
+    const sy = p.y - camY;
+    ctx.strokeText(p.txt, p.x, sy);
+    ctx.fillStyle = p.col; ctx.fillText(p.txt, p.x, sy);
+  }
+  ctx.restore();
+}
+function drawParts(){
+  for(const p of parts){ ctx.globalAlpha = clamp(p.life, 0, 1); ctx.fillStyle = p.col; circle(p.x, p.y - camY, p.r); }
+  ctx.globalAlpha = 1;
+}
+function drawTwistBanner(){
+  if(twistMsgT<=0 || !twistMsg) return;
+  ctx.save(); ctx.globalAlpha = clamp(twistMsgT, 0, 1);
+  ctx.font = 'bold 32px Trebuchet MS'; ctx.textAlign='center'; ctx.textBaseline='middle';
+  ctx.strokeStyle = '#08202c'; ctx.lineWidth = 6;
+  ctx.strokeText(twistMsg, W/2, 300);
+  ctx.fillStyle = '#ff9f1c'; ctx.fillText(twistMsg, W/2, 300);
+  ctx.restore();
+}
+function draw(){
+  ctx.clearRect(0,0,W,H);
+  ctx.save();
+  if(shake>0) ctx.translate(rand(-shake,shake), rand(-shake,shake));
+  drawBG();
+
+  if(state==='menu'){
+    // preview scene: pad, frog swinging, fly, wasp
+    const demoPad = { x: W/2, y: 330, shy: false, bob: menuT*2, vx: 0, stretch: 0, homeX: W/2 };
+    const savedCam = camY; camY = 0;
+    drawPad(demoPad);
+    const ang = Math.sin(menuT*1.6)*0.7;
+    const fx = W/2 + 120*Math.sin(ang), fy = 330 + 120*Math.cos(ang);
+    ctx.strokeStyle = '#f472b6'; ctx.lineWidth = 5; ctx.lineCap='round';
+    ctx.beginPath(); ctx.moveTo(fx, fy-8); ctx.lineTo(W/2, 330); ctx.stroke();
+    const keepFrog = frog;
+    frog = { x: fx, y: fy, vx:0, vy:0, pad:null, face:'happy', invuln:0, splat:0, stretchA:0.1, tongueT:0, tonguePad:null };
+    camY = 0;
+    // draw frog at screen coords directly (camY=0, frog.y is screen y here)
+    (function(){
+      ctx.save(); ctx.translate(fx, fy);
+      ctx.fillStyle = '#84cc16'; ctx.beginPath(); ctx.ellipse(0, 0, 22, 18, 0, 0, TAU); ctx.fill();
+      ctx.fillStyle = '#d9f99d'; ctx.beginPath(); ctx.ellipse(0, 6, 13, 9, 0, 0, TAU); ctx.fill();
+      ctx.fillStyle = '#fff'; circle(-11, -23, 7); circle(11, -23, 7);
+      drawFace(0, -16, 'happy', 0.78);
+      ctx.restore();
+    })();
+    frog = keepFrog; camY = savedCam;
+    drawFly({ x: 120, y: 240, bob: menuT*7 });
+    drawWasp({ x: 368, y: 210, ph: menuT*5, baseX: 368 });
+    ctx.save(); ctx.textAlign='center'; ctx.textBaseline='middle';
+    ctx.font = 'bold 46px Trebuchet MS';
+    ctx.strokeStyle = '#08202c'; ctx.lineWidth = 8;
+    ctx.fillStyle = '#a3e635';
+    ctx.strokeText('YEET FROG!', W/2, 118); ctx.fillText('YEET FROG!', W/2, 118);
+    ctx.fillStyle = '#fff'; ctx.font = 'bold 20px Trebuchet MS';
+    ctx.strokeStyle = '#08202c'; ctx.lineWidth = 5;
+    ctx.strokeText('No jump. Only tongue.', W/2, 168);
+    ctx.fillText('No jump. Only tongue.', W/2, 168);
+    ctx.fillStyle = '#ffd60a'; ctx.font = 'bold 17px Trebuchet MS';
+    ctx.fillText('BEST ' + high + (unlock ? '  •  CROWN ✓' : ''), W/2, 500);
+    ctx.fillStyle = '#22c55e';
+    roundRect(W/2-115, 530, 230, 56, 14); ctx.fill();
+    ctx.fillStyle = '#fff'; ctx.font = 'bold 24px Trebuchet MS';
+    ctx.fillText('▶ TAP TO YEET', W/2, 559);
+    ctx.fillStyle = '#e0f2fe'; ctx.font = 'bold 14px Trebuchet MS';
+    ctx.fillText('HOLD = latch + swing • RELEASE = yeet!', W/2, 616);
+    ctx.fillText('◀ ▶ = pump / steer • glowing = good', W/2, 640);
+    ctx.fillText('angry + red = DODGE', W/2, 664);
+    ctx.restore();
+    ctx.restore();
+    return;
+  }
+
+  for(const b of bubbles) drawBubble(b);
+  for(const p of pads) drawPad(p);
+  for(const f of flies) drawFly(f);
+  for(const c of crownFlies) drawCrownFly(c);
+  for(const wsp of wasps) drawWasp(wsp);
+  for(const b of birds) drawBird(b);
+  drawAimHint();
+  if(frog) drawFrog(frog.x, frog.y);
+  drawHUD();
+  drawParts();
+  drawPopupsTxt();
+  drawTwistBanner();
+  ctx.restore();
+
+  if(state==='pause'){
+    ctx.save();
+    ctx.fillStyle = 'rgba(4,20,28,0.8)'; ctx.fillRect(0,0,W,H);
+    ctx.textAlign='center'; ctx.textBaseline='middle';
+    ctx.font = 'bold 40px Trebuchet MS'; ctx.fillStyle = '#fff';
+    ctx.fillText('PAUSED', W/2, 320);
+    ctx.font = 'bold 18px Trebuchet MS'; ctx.fillStyle = '#a5f3fc';
+    ctx.fillText('tap to keep yeeting', W/2, 366);
+    ctx.restore();
+  }
+
+  if(state==='over'){
+    ctx.save();
+    ctx.fillStyle = 'rgba(4,20,28,0.87)'; ctx.fillRect(0,0,W,H);
+    ctx.textAlign='center'; ctx.textBaseline='middle';
+    ctx.font = 'bold 40px Trebuchet MS'; ctx.fillStyle = '#ff2d55';
+    ctx.strokeStyle = '#08202c'; ctx.lineWidth = 8;
+    ctx.strokeText('SPLAT!', W/2, 190); ctx.fillText('SPLAT!', W/2, 190);
+    ctx.fillStyle = '#fff'; ctx.font = 'bold 19px Trebuchet MS';
+    ctx.fillText(failLine, W/2, 248);
+    ctx.fillStyle = '#ffd60a'; ctx.font = 'bold 30px Trebuchet MS';
+    ctx.fillText(score + '  •  ' + rankFor(score), W/2, 312);
+    ctx.fillStyle = '#fff'; ctx.font = 'bold 16px Trebuchet MS';
+    ctx.fillText(Math.floor(maxHeight) + 'm   •   FLIES ' + fliesEaten + '   •   BEST ' + high, W/2, 350);
+    if(unlock==='crown'){ ctx.fillStyle = '#ffd60a'; ctx.fillText('👑 CROWN UNLOCKED!', W/2, 382); }
+    ctx.fillStyle = copied ? '#7bff5e' : '#00d4ff';
+    roundRect(W/2-120, 420, 240, 48, 12); ctx.fill();
+    ctx.fillStyle = '#08202c'; ctx.font = 'bold 19px Trebuchet MS';
+    ctx.fillText(copied ? 'COPIED!' : '📋 COPY RESULT', W/2, 445);
+    ctx.fillStyle = '#7b2ff7';
+    roundRect(W/2-120, 484, 240, 52, 12); ctx.fill();
+    ctx.fillStyle = '#fff'; ctx.font = 'bold 22px Trebuchet MS';
+    ctx.fillText('↻ YEET AGAIN', W/2, 511);
+    ctx.fillStyle = '#ffffff88'; ctx.font = 'bold 13px Trebuchet MS';
+    ctx.fillText('tap R to restart', W/2, 560);
+    ctx.restore();
+  }
+}
+
+// ---------- input ----------
+function posFromEvent(e){
+  const r = cv.getBoundingClientRect();
+  const sx = W / r.width, sy = H / r.height;
+  const cx = (e.touches ? e.touches[0].clientX : e.clientX);
+  const cy = (e.touches ? e.touches[0].clientY : e.clientY);
+  return { x: (cx - r.left) * sx, y: (cy - r.top) * sy };
+}
+function shareText(){
+  return "I yeeted " + score + " (" + rankFor(score) + ", " + Math.floor(maxHeight) + "m) with NO jump button — only a tongue. YEET FROG! " + location.href;
+}
+cv.addEventListener('pointerdown', e=>{
+  e.preventDefault();
+  const p = posFromEvent(e);
+  if(state==='menu'){ resetGame(); return; }
+  if(state==='pause'){ state = 'play'; return; }
+  if(state==='over'){
+    if(p.y>=420 && p.y<=468 && Math.abs(p.x-W/2)<=120){
+      const txt = shareText();
+      if(navigator.clipboard && navigator.clipboard.writeText){
+        navigator.clipboard.writeText(txt).then(()=>{ copied = true; }).catch(()=>{ copied = true; });
+      } else { copied = true; }
+      return;
+    }
+    if(p.y>=484 && p.y<=536 && Math.abs(p.x-W/2)<=120){ resetGame(); return; }
+    return;
+  }
+  if(state==='play'){
+    if(p.x > W-60 && p.y < 120){ state = 'pause'; return; }
+    holding = true;
+    if(!frog.pad) tryLatch();
+  }
+});
+function doRelease(){
+  if(state==='play' && frog && frog.pad) releaseFling();
+  holding = false;
+}
+cv.addEventListener('pointerup', e=>{ doRelease(); });
+cv.addEventListener('pointercancel', ()=>{ holding = false; });
+window.addEventListener('keydown', e=>{
+  const k = e.key.toLowerCase();
+  if(k===' '){ e.preventDefault(); }
+  if(keys[k]) return;
+  keys[k] = true;
+  if(k===' '){
+    if(state==='menu'){ resetGame(); return; }
+    if(state==='pause'){ state = 'play'; return; }
+    if(state==='play'){ holding = true; if(frog && !frog.pad) tryLatch(); }
+  }
+  if(k==='p' && state==='play') state = 'pause';
+  else if(k==='p' && state==='pause') state = 'play';
+  if(k==='r' && state!=='menu') resetGame();
+});
+window.addEventListener('keyup', e=>{
+  const k = e.key.toLowerCase();
+  keys[k] = false;
+  if(k===' ' && state==='play') doRelease();
+});
+document.addEventListener('visibilitychange', ()=>{ if(document.hidden && state==='play') state = 'pause'; });
+
+// ---------- loop ----------
+let last = performance.now();
+function loop(now){
+  const dt = Math.min(0.033, (now-last)/1000); last = now;
+  update(dt);
+  draw();
+  requestAnimationFrame(loop);
+}
+requestAnimationFrame(loop);
+</script>
+</body>
+</html>

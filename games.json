@@ -429,5 +429,14 @@
   "mechanic": "Trap-first betrayal runner (innocent trees turn traitor, apple bombs, trip roots)",
   "tagline": "The trees look friendly. They are not. One just pulled a branch on you.",
   "title": "THE FOREST IS LYING!"
+ },
+ {
+  "date": "2026-11-18",
+  "day": 49,
+  "emoji": "🐸",
+  "file": "games/yeet-frog.html",
+  "mechanic": "Tongue-grapple swing climber (hold to latch, release to yeet; shy pads flee, wind + gravity pulses)",
+  "tagline": "The frog forgot how to jump. It only has a tongue. Hold, swing, YEET.",
+  "title": "YEET FROG!"
  }
 ]
