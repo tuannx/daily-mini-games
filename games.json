@@ -438,5 +438,14 @@
   "mechanic": "Tongue-grapple swing climber (hold to latch, release to yeet; shy pads flee, wind + gravity pulses)",
   "tagline": "The frog forgot how to jump. It only has a tongue. Hold, swing, YEET.",
   "title": "YEET FROG!"
+ },
+ {
+  "date": "2026-11-19",
+  "day": 50,
+  "emoji": "🔨",
+  "file": "games/rage-smash-room.html",
+  "mechanic": "Rage-meter timing smash (needle timing, bomb restraint, helmets, dodging objects, drunk needle, boss fridge)",
+  "tagline": "Tap in the red zone. Smash everything. Do NOT smash the bomb.",
+  "title": "RAGE SMASH ROOM!"
  }
 ]

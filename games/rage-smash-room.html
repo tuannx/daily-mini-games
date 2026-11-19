@@ -1,0 +1,905 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<title>RAGE SMASH ROOM! — Day 50</title>
+<style>
+  * { margin:0; padding:0; box-sizing:border-box; }
+  html,body { width:100%; height:100%; background:#170407; overflow:hidden; touch-action:none;
+    font-family:'Trebuchet MS','Comic Sans MS',sans-serif; }
+  #wrap { position:fixed; inset:0; display:flex; align-items:center; justify-content:center; }
+  canvas { display:block; background:#2a0a12; border-radius:12px;
+    box-shadow:0 0 40px #ef444488, 0 0 90px #f9731688; }
+</style>
+</head>
+<body>
+<div id="wrap"><canvas id="c" width="480" height="720"></canvas></div>
+<script>
+"use strict";
+// RAGE SMASH ROOM! — Day 50
+// A rage needle swings across the meter. TAP / SPACE when it hits the
+// red-hot zone to smash the object on the table with a giant hammer.
+// Perfect = shattering. Whiff = the object dodges and laughs at you.
+// TWIST LADDER: 8s BOMBS! (do NOT smash — let the fuse die)
+// -> 14s HELMETS! (armor eats a hit) -> 26s THEY DODGE! (objects hop
+// your swing) -> 38s DRUNK NEEDLE! (needle wobbles + fake-pauses)
+// -> 50s BOSS FRIDGE! (huge HP). Golden phone = rare glowing bonus.
+// Trend: "So Mad Smash" (realhelper.club, Nov 16-17 2026, "I got so
+// mad" meme, rage-needle timing) + rage-room wave: "Break It Down!"
+// rage room sim (Nov 8-10 2026), "Rage Pit" (Product Hunt, Nov 10).
+// Not a clone: new bomb-restraint + dodge + helmet twists, new cast.
+const cv = document.getElementById('c');
+const ctx = cv.getContext('2d');
+const W = 480, H = 720;
+const TABLE_Y = 452;         // top of the table the object sits on
+const OBJ_X = 240, OBJ_Y = 452; // object base point (feet on table)
+const METER_X = 56, METER_W = 368, METER_Y = 566, METER_H = 34;
+
+// ---------- audio (WebAudio, self-generated) ----------
+let AC = null;
+function audio(){ if(!AC){ try{ AC = new (window.AudioContext||window.webkitAudioContext)(); }catch(e){} } return AC; }
+function beep(f, d, type, v){
+  const ac = audio(); if(!ac) return;
+  const o = ac.createOscillator(), g = ac.createGain();
+  o.type = type||'sine'; o.frequency.value = f;
+  g.gain.setValueAtTime(v||0.12, ac.currentTime);
+  g.gain.exponentialRampToValueAtTime(0.001, ac.currentTime + d);
+  o.connect(g); g.connect(ac.destination); o.start(); o.stop(ac.currentTime + d);
+}
+function noiseBurst(dur, vol, freq){
+  const ac = audio(); if(!ac) return;
+  const len = Math.floor(ac.sampleRate * dur), buf = ac.createBuffer(1, len, ac.sampleRate), d = buf.getChannelData(0);
+  for(let i=0;i<len;i++) d[i] = (Math.random()*2-1) * Math.pow(1-i/len, 1.6);
+  const s = ac.createBufferSource(); s.buffer = buf;
+  const f = ac.createBiquadFilter(); f.type = 'lowpass'; f.frequency.value = freq||900;
+  const g = ac.createGain(); g.gain.value = vol||0.2;
+  s.connect(f); f.connect(g); g.connect(ac.destination); s.start();
+}
+function swingSnd(){ noiseBurst(0.12, 0.10, 2400); }
+function thudSnd(){ noiseBurst(0.16, 0.22, 500); beep(90, 0.16, 'sine', 0.16); }
+function crackSnd(){ noiseBurst(0.10, 0.18, 1600); beep(320, 0.07, 'square', 0.07); }
+function perfectSnd(){ [660,880,1320].forEach((f,i)=>setTimeout(()=>beep(f,0.10,'triangle',0.11), i*55)); noiseBurst(0.2, 0.2, 700); }
+function boomSnd(){ noiseBurst(0.55, 0.34, 320); beep(55, 0.5, 'sine', 0.22); setTimeout(()=>beep(40, 0.4, 'sine', 0.16), 90); }
+function laughSnd(){ [700,560,700,470].forEach((f,i)=>setTimeout(()=>beep(f,0.09,'square',0.07), i*85)); }
+function defuseSnd(){ beep(520, 0.08, 'sine', 0.09); setTimeout(()=>beep(780, 0.1, 'sine', 0.09), 70); }
+function goldSnd(){ [880,1175,1568,2093].forEach((f,i)=>setTimeout(()=>beep(f,0.12,'triangle',0.11), i*70)); }
+
+// ---------- helpers ----------
+const rand = (a,b)=>a+Math.random()*(b-a);
+const clamp = (v,a,b)=>Math.max(a,Math.min(b,v));
+const TAU = Math.PI*2;
+function roundRect(x,y,w,h,r){ ctx.beginPath(); ctx.moveTo(x+r,y); ctx.arcTo(x+w,y,x+w,y+h,r);
+  ctx.arcTo(x+w,y+h,x,y+h,r); ctx.arcTo(x,y+h,x,y,r); ctx.arcTo(x,y,x+w,y,r); ctx.closePath(); }
+function circle(x,y,r){ ctx.beginPath(); ctx.arc(x,y,r,0,TAU); ctx.fill(); }
+
+// ---------- state ----------
+let state = 'menu'; // menu | play | pause | over
+let t = 0, score = 0, hearts = 3, combo = 0, bestCombo = 0, smashed = 0, escaped = 0;
+let needlePhase = 0, needleD = 1, needleFrozen = 0, freezeT = 0;
+let obj = null, spawnT = 0, objCount = 0, lastWasBomb = false, goldIn = 5, bossQueued = false;
+let hammer = { anim: -1, dAtTap: 1 }; // anim: -1 idle, else 0..1 swing progress
+let parts = [], popupsTxt = [], shake = 0;
+let twistMsg = '', twistMsgT = 0, twistsDone = {};
+let wallCracks = 0, plantLeaves = 3;
+let high = +(localStorage.getItem('ragesmash_high')||0);
+let unlock = localStorage.getItem('ragesmash_unlock')||'';
+let copied = false, failLine = '', menuT = 0;
+let keys = {};
+
+const FAILS = [
+  "You calmed down. Tragic.",
+  "HR would like a word.",
+  "The objects unionized. You lost.",
+  "The bomb sends its regards.",
+  "Objects: 1. You: 0.",
+  "Anger management: failed successfully.",
+  "The fridge saw everything.",
+];
+function rankFor(s){
+  if(s>=3000) return "RAGE GOD";
+  if(s>=2000) return "OFFICE MENACE";
+  if(s>=1200) return "TABLE FLIPPER";
+  if(s>=500) return "KEYBOARD WARRIOR";
+  return "CALM INTERN";
+}
+function popup(x,y,txt,col,size){ popupsTxt.push({x,y,txt,life:1.05,col:col||'#fff',size:size||24}); }
+function burst(x,y,col,n,spd){
+  for(let i=0;i<(n||12);i++){
+    const a = rand(0,TAU), s = rand(40,spd||180);
+    parts.push({x,y,vx:Math.cos(a)*s,vy:Math.sin(a)*s-90,life:rand(0.4,0.95),col,r:rand(2,5.5),grav:560,rot:rand(0,TAU),vr:rand(-9,9),sq:Math.random()<0.5});
+  }
+}
+function addScore(base, x, y, label, col){
+  const mult = 1 + Math.min(combo, 20) * 0.2;
+  const pts = Math.round(base * mult);
+  score += pts;
+  if(label) popup(x, y, label.replace('{P}', pts), col||'#ffd60a', pts>=200 ? 28 : 22);
+  return pts;
+}
+
+// ---------- objects ----------
+// kind: clock melon phone toaster keyboard tv chair fridge gold bomb
+const KINDS = {
+  clock:    { hp:1, col:'#fbbf24', col2:'#b45309', label:'CLOCK' },
+  melon:    { hp:1, col:'#22c55e', col2:'#14532d', label:'MELON' },
+  phone:    { hp:2, col:'#38bdf8', col2:'#0c4a6e', label:'PHONE' },
+  toaster:  { hp:2, col:'#e2e8f0', col2:'#64748b', label:'TOASTER' },
+  keyboard: { hp:2, col:'#a78bfa', col2:'#4c1d95', label:'KEYBOARD' },
+  tv:       { hp:3, col:'#94a3b8', col2:'#1e293b', label:'TV' },
+  chair:    { hp:3, col:'#f97316', col2:'#7c2d12', label:'CHAIR' },
+  fridge:   { hp:5, col:'#e7e5e4', col2:'#78716c', label:'FRIDGE' },
+  gold:     { hp:1, col:'#ffd60a', col2:'#b45309', label:'GOLD!' },
+  bomb:     { hp:99, col:'#26262e', col2:'#000000', label:'BOMB' },
+};
+const CYCLE = ['clock','melon','phone','toaster','keyboard','tv','chair','phone','melon','toaster'];
+function needleSpeed(){
+  let s = 2.1 + smashed * 0.14;
+  if(twistsDone.drunk) s *= 1 + Math.sin(t*2.3) * 0.35; // drunk wobble
+  return s;
+}
+function zoneHalf(){
+  // perfect half-width in d units (d = 0 center .. 1 edge), shrinks slowly
+  return { perfect: Math.max(0.085, 0.16 - smashed*0.006),
+           good:    Math.max(0.24, 0.36 - smashed*0.008),
+           ok:      0.62 };
+}
+function spawnObject(forceKind){
+  objCount++;
+  let kind = forceKind;
+  if(!kind){
+    if(objCount === goldIn){ kind = 'gold'; goldIn = objCount + Math.floor(rand(6,9)); }
+    else if(t >= 8 && !lastWasBomb && Math.random() < 0.17){ kind = 'bomb'; }
+    else kind = CYCLE[(objCount-1) % CYCLE.length];
+  }
+  lastWasBomb = (kind === 'bomb');
+  const def = KINDS[kind];
+  const hpBonus = (kind==='fridge') ? 0 : Math.floor(smashed/7);
+  const isBoss = !!forceKind && kind==='fridge';
+  obj = {
+    kind, hp: def.hp + hpBonus, maxHp: def.hp + hpBonus,
+    armor: (twistsDone.helmet && kind!=='bomb' && kind!=='gold' && Math.random()<0.75) ? 1 : 0,
+    x: W + 90, tx: OBJ_X, baseY: OBJ_Y, hopX: 0, hopY: 0,
+    mode: 'enter', // enter | idle | telegraph | hop | dying | leaving
+    modeT: 0, dodgeT: rand(1.6, 3.2), face: 'smug', faceT: 0,
+    squash: 0, shakeT: 0, flash: 0,
+    patience: kind==='bomb' ? 2.6 : (kind==='gold' ? 3.4 : clamp(7.5 - smashed*0.16, 4.2, 7.5)),
+    maxPatience: 0, scale: isBoss ? 1.35 : (kind==='fridge' ? 1.18 : 1),
+    fuseSparks: 0,
+  };
+  obj.maxPatience = obj.patience;
+  if(kind==='bomb') popup(OBJ_X, 210, "DON'T SMASH!", '#ff2d55', 30);
+}
+function objectGone(){
+  obj = null; spawnT = 0.55;
+}
+function smashObject(dmg, perfect){
+  const def = KINDS[obj.kind];
+  obj.hp -= dmg;
+  obj.squash = 1; obj.shakeT = 0.3; obj.flash = 0.12; obj.face = 'dizzy'; obj.faceT = 0.5;
+  burst(obj.x, obj.baseY - 70*obj.scale, def.col, perfect ? 22 : 13, perfect ? 280 : 200);
+  burst(obj.x, obj.baseY - 70*obj.scale, def.col2, 8, 160);
+  if(obj.hp <= 0){
+    smashed++;
+    wallCracks = Math.min(9, wallCracks + 1);
+    if(plantLeaves > 0 && Math.random() < 0.5) plantLeaves--;
+    const base = obj.kind==='gold' ? (perfect ? 500 : 150) : (perfect ? 100 : 60);
+    addScore(base, obj.x, obj.baseY - 150*obj.scale, perfect ? "PERFECT! +{P}" : "SMASHED! +{P}", perfect ? '#ffd60a' : '#7bff5e');
+    if(obj.kind==='gold') goldSnd(); else if(perfect) perfectSnd(); else thudSnd();
+    burst(obj.x, obj.baseY - 60*obj.scale, '#ffffff', 10, 220);
+    shake = perfect ? 10 : 6;
+    objectGone();
+  } else {
+    popup(obj.x, obj.baseY - 150*obj.scale, perfect ? "CRACKED!" : "DENTED!", '#fff', 22);
+    crackSnd();
+  }
+}
+function loseHeart(why){
+  hearts--;
+  shake = 13;
+  popup(OBJ_X, 190, why, '#ff2d55', 28);
+  if(hearts <= 0) endGame();
+}
+function swing(){
+  if(state!=='play' || hammer.anim >= 0) return;
+  hammer.anim = 0;
+  hammer.dAtTap = needleD;
+  swingSnd();
+}
+function resolveSwing(){
+  const d = hammer.dAtTap;
+  const z = zoneHalf();
+  if(!obj || obj.mode==='dying' || obj.mode==='leaving'){ return; }
+  // bomb: ANY swing that lands while a bomb is on the table = boom
+  if(obj.kind === 'bomb'){
+    boomSnd();
+    burst(obj.x, obj.baseY - 60, '#f97316', 30, 340);
+    burst(obj.x, obj.baseY - 60, '#26262e', 16, 260);
+    combo = 0;
+    objectGone();
+    loseHeart("BOOM!");
+    return;
+  }
+  // dodged: object is mid-hop -> hammer hits the table, automatic whiff
+  if(obj.mode === 'hop'){
+    thudSnd();
+    burst(OBJ_X, TABLE_Y - 4, '#d6a05a', 8, 130);
+    combo = 0;
+    obj.face = 'laugh'; obj.faceT = 0.9;
+    popup(obj.x + obj.hopX, obj.baseY - 150*obj.scale, "DODGED!", '#ff9f1c', 26);
+    laughSnd();
+    loseHeart("TOO SLOW!");
+    return;
+  }
+  if(d <= z.perfect){
+    // PERFECT
+    combo++; if(combo>bestCombo) bestCombo = combo;
+    if(obj.armor > 0 && obj.maxHp > 1){
+      // perfect blows the helmet off AND deals damage
+      obj.armor = 0;
+      burst(obj.x, obj.baseY - 128*obj.scale, '#facc15', 10, 200);
+      popup(obj.x, obj.baseY - 168*obj.scale, "HELMET OFF!", '#facc15', 22);
+      smashObject(1, true);
+    } else if(obj.armor > 0){
+      obj.armor = 0;
+      burst(obj.x, obj.baseY - 128*obj.scale, '#facc15', 12, 220);
+      popup(obj.x, obj.baseY - 168*obj.scale, "HELMET OFF!", '#facc15', 22);
+      crackSnd();
+      obj.squash = 1; obj.shakeT = 0.3;
+    } else {
+      smashObject(2, true);
+    }
+    // near-miss is impossible on perfect; check SO CLOSE on good below
+  } else if(d <= z.good){
+    combo++; if(combo>bestCombo) bestCombo = combo;
+    if(z.good - d < 0.055) popup(obj.x, obj.baseY - 185*obj.scale, "SO CLOSE!", '#7dd3fc', 20);
+    if(obj.armor > 0){
+      obj.armor = 0;
+      burst(obj.x, obj.baseY - 128*obj.scale, '#facc15', 10, 200);
+      popup(obj.x, obj.baseY - 168*obj.scale, "HELMET OFF!", '#facc15', 22);
+      crackSnd();
+      obj.squash = 0.8; obj.shakeT = 0.25;
+    } else {
+      smashObject(1, false);
+    }
+  } else if(d <= z.ok){
+    // DENT — glancing blow, tiny points, combo survives, no damage
+    addScore(10, obj.x, obj.baseY - 150*obj.scale, "DENT +{P}", '#e2e8f0');
+    obj.squash = 0.55; obj.shakeT = 0.18; obj.face = 'panic'; obj.faceT = 0.4;
+    crackSnd();
+  } else {
+    // WHIFF — hammer misses entirely, object laughs
+    combo = 0;
+    obj.face = 'laugh'; obj.faceT = 0.9;
+    popup(obj.x, obj.baseY - 150*obj.scale, "WHIFF!", '#ff9f1c', 26);
+    laughSnd();
+    thudSnd();
+    loseHeart("IT LAUGHED!");
+  }
+}
+
+// ---------- twists ----------
+function fireTwist(name, msg){
+  if(twistsDone[name]) return; twistsDone[name] = true;
+  twistMsg = msg; twistMsgT = 2.1;
+  popup(W/2, 268, msg, '#ff9f1c', 32);
+  beep(660, 0.1, 'square', 0.09); setTimeout(()=>beep(440, 0.12, 'square', 0.09), 90);
+}
+
+// ---------- update ----------
+function update(dt){
+  menuT += dt;
+  if(state==='menu' || state==='pause') return;
+  if(state==='over'){
+    parts.forEach(p=>{ p.vy += (p.grav||0)*dt; p.x += p.vx*dt; p.y += p.vy*dt; p.rot += p.vr*dt; p.life -= dt; });
+    parts = parts.filter(p=>p.life>0);
+    popupsTxt.forEach(p=>{ p.y -= 30*dt; p.life -= dt; });
+    popupsTxt = popupsTxt.filter(p=>p.life>0);
+    return;
+  }
+  t += dt;
+  if(t>=8)  fireTwist('bombs', "BOMBS! DON'T!");
+  if(t>=14) fireTwist('helmet', "HELMETS!");
+  if(t>=26) fireTwist('dodge', "THEY DODGE!");
+  if(t>=38) fireTwist('drunk', "DRUNK NEEDLE!");
+  if(t>=50 && !twistsDone.boss){ fireTwist('boss', "BOSS FRIDGE!"); bossQueued = true; }
+
+  // needle (drunk fake-pauses after 38s)
+  if(twistsDone.drunk){
+    freezeT -= dt;
+    if(freezeT <= 0){ needleFrozen = Math.random() < 0.30 ? rand(0.16, 0.3) : 0; freezeT = rand(0.7, 1.6); }
+  }
+  if(needleFrozen > 0){ needleFrozen -= dt; }
+  else { needlePhase += dt * needleSpeed(); }
+  needleD = Math.abs(Math.sin(needlePhase)); // 0 = dead center, 1 = edge... remap below
+  // sin gives 0..1..0; we want d=0 at center of swing: use cos so phase 0 = center
+  needleD = Math.abs(Math.sin(needlePhase)); // distance from nearest center crossing
+  // (needle x is drawn from sin(phase): center when sin=0)
+
+  // hammer swing animation; resolve at impact (progress crosses 0.45)
+  if(hammer.anim >= 0){
+    const prev = hammer.anim;
+    hammer.anim += dt / 0.26;
+    if(prev < 0.45 && hammer.anim >= 0.45) resolveSwing();
+    if(hammer.anim >= 1) hammer.anim = -1;
+  }
+
+  // spawning
+  if(!obj){
+    spawnT -= dt;
+    if(spawnT <= 0){
+      if(bossQueued){ bossQueued = false; spawnObject('fridge'); }
+      else spawnObject();
+    }
+  }
+
+  // object behaviour
+  if(obj){
+    const o = obj;
+    o.modeT += dt;
+    if(o.flash > 0) o.flash -= dt;
+    if(o.squash > 0) o.squash = Math.max(0, o.squash - dt*4.5);
+    if(o.shakeT > 0) o.shakeT -= dt;
+    if(o.faceT > 0){ o.faceT -= dt; if(o.faceT <= 0) o.face = 'smug'; }
+    if(o.mode === 'enter'){
+      o.x += (o.tx - o.x) * Math.min(1, dt*7);
+      if(Math.abs(o.tx - o.x) < 4){ o.x = o.tx; o.mode = 'idle'; o.modeT = 0; }
+    } else if(o.mode === 'idle' || o.mode === 'telegraph' || o.mode === 'hop'){
+      o.patience -= dt;
+      // face: panic when the needle nears the red zone or patience is low
+      if(o.faceT <= 0) o.face = (needleD < 0.30 || o.patience < 1.4) ? 'panic' : 'smug';
+      // dodge behaviour (from 26s): telegraph crouch, then hop sideways
+      if(twistsDone.dodge && o.kind !== 'bomb' && o.kind !== 'gold'){
+        if(o.mode === 'idle'){
+          o.dodgeT -= dt;
+          if(o.dodgeT <= 0){ o.mode = 'telegraph'; o.modeT = 0; popup(o.x, o.baseY - 150*o.scale, "!", '#ff9f1c', 30); }
+        } else if(o.mode === 'telegraph'){
+          if(o.modeT >= 0.45){
+            o.mode = 'hop'; o.modeT = 0;
+            o.hopDir = (o.x + (Math.random()<0.5?-1:1) * 95 < 70 || o.x + 95 > W-70) ? (o.x > W/2 ? -1 : 1) : (Math.random()<0.5?-1:1);
+          }
+        } else if(o.mode === 'hop'){
+          const hp = o.modeT / 0.38;
+          o.hopX = Math.sin(Math.min(hp,1) * Math.PI) * 95 * o.hopDir;
+          o.hopY = -Math.sin(Math.min(hp,1) * Math.PI) * 46;
+          if(o.modeT >= 0.38){ o.mode = 'idle'; o.modeT = 0; o.x = clamp(o.x + 95*o.hopDir, 70, W-70); o.tx = o.x; o.hopX = 0; o.hopY = 0; o.dodgeT = rand(1.8, 3.4); }
+        }
+      }
+      if(o.patience <= 0){
+        if(o.kind === 'bomb'){
+          // fuse died on its own — patience pays
+          addScore(50, o.x, o.baseY - 150, "PATIENCE +{P}", '#7bff5e');
+          defuseSnd();
+          burst(o.x, o.baseY - 60, '#94a3b8', 8, 110);
+          objectGone();
+        } else {
+          // it escapes, laughing
+          escaped++;
+          combo = 0;
+          o.face = 'laugh';
+          popup(o.x, o.baseY - 150*o.scale, "IT ESCAPED!", '#ff9f1c', 24);
+          laughSnd();
+          objectGone();
+        }
+      }
+    }
+    if(o && o.kind === 'bomb') o.fuseSparks += dt;
+  }
+
+  // particles / popups / shake
+  parts.forEach(p=>{ p.vy += (p.grav||0)*dt; p.x += p.vx*dt; p.y += p.vy*dt; p.rot += p.vr*dt; p.life -= dt; });
+  parts = parts.filter(p=>p.life>0 && p.y < H+30);
+  popupsTxt.forEach(p=>{ p.y -= 30*dt; p.life -= dt; });
+  popupsTxt = popupsTxt.filter(p=>p.life>0);
+  if(twistMsgT>0) twistMsgT -= dt;
+  if(shake>0) shake = Math.max(0, shake - dt*30);
+}
+function endGame(){
+  if(state !== 'play') return;
+  state = 'over';
+  failLine = FAILS[Math.floor(Math.random()*FAILS.length)];
+  boomSnd();
+  if(score > high){ high = score; localStorage.setItem('ragesmash_high', String(high)); }
+  if(score >= 2000 && !unlock){ unlock = 'goldhammer'; localStorage.setItem('ragesmash_unlock', unlock); }
+}
+function resetGame(){
+  t = 0; score = 0; hearts = 3; combo = 0; bestCombo = 0; smashed = 0; escaped = 0;
+  needlePhase = 2.2; needleD = 1; needleFrozen = 0; freezeT = 1;
+  obj = null; spawnT = 0.25; objCount = 0; lastWasBomb = false; goldIn = 6; bossQueued = false;
+  hammer = { anim: -1, dAtTap: 1 };
+  parts = []; popupsTxt = []; shake = 0;
+  twistMsg = ''; twistMsgT = 0; twistsDone = {};
+  wallCracks = 0; plantLeaves = 3;
+  copied = false; failLine = '';
+  state = 'play';
+}
+
+// ---------- drawing ----------
+function drawFace(x, y, kind, s){
+  ctx.fillStyle = '#1c0a0a';
+  if(kind==='angry'){
+    circle(x-8*s, y-3*s, 2.6*s); circle(x+8*s, y-3*s, 2.6*s);
+    ctx.strokeStyle = '#1c0a0a'; ctx.lineWidth = 2.4*s;
+    ctx.beginPath(); ctx.moveTo(x-12*s, y-10*s); ctx.lineTo(x-3*s, y-6*s); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(x+12*s, y-10*s); ctx.lineTo(x+3*s, y-6*s); ctx.stroke();
+    ctx.beginPath(); ctx.arc(x, y+11*s, 5*s, Math.PI*1.1, Math.PI*1.9); ctx.stroke();
+  } else if(kind==='dizzy'){
+    ctx.font = 'bold ' + Math.round(14*s) + 'px Trebuchet MS'; ctx.textAlign='center'; ctx.textBaseline='middle';
+    ctx.fillText('×', x-8*s, y-3*s); ctx.fillText('×', x+8*s, y-3*s);
+    ctx.beginPath(); ctx.ellipse(x, y+7*s, 4*s, 5*s, 0, 0, TAU); ctx.fill();
+  } else if(kind==='panic'){
+    circle(x-8*s, y-4*s, 3.6*s); circle(x+8*s, y-4*s, 3.6*s);
+    ctx.beginPath(); ctx.ellipse(x, y+7*s, 3.8*s, 5.2*s, 0, 0, TAU); ctx.fill();
+    // sweat drops
+    ctx.fillStyle = '#7dd3fc';
+    circle(x-16*s, y-8*s, 2.6*s); circle(x+16*s, y-10*s, 2.2*s);
+  } else if(kind==='laugh'){
+    ctx.strokeStyle = '#1c0a0a'; ctx.lineWidth = 2.4*s;
+    ctx.beginPath(); ctx.arc(x-8*s, y-3*s, 3.4*s, Math.PI, TAU); ctx.stroke();
+    ctx.beginPath(); ctx.arc(x+8*s, y-3*s, 3.4*s, Math.PI, TAU); ctx.stroke();
+    ctx.beginPath(); ctx.arc(x, y+3*s, 7*s, 0.1, Math.PI-0.1); ctx.stroke();
+    ctx.fillStyle = '#fff';
+    ctx.beginPath(); ctx.arc(x, y+3.4*s, 6.2*s, 0.15, Math.PI-0.15); ctx.fill();
+  } else { // smug
+    circle(x-8*s, y-3*s, 2.4*s); circle(x+8*s, y-3*s, 2.4*s);
+    ctx.strokeStyle = '#1c0a0a'; ctx.lineWidth = 2.2*s;
+    ctx.beginPath(); ctx.moveTo(x-11*s, y-8*s); ctx.lineTo(x-4*s, y-8*s); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(x+4*s, y-8*s); ctx.lineTo(x+11*s, y-8*s); ctx.stroke();
+    ctx.beginPath(); ctx.arc(x, y+4*s, 5.5*s, Math.PI*1.15, Math.PI*1.85); ctx.stroke();
+  }
+}
+function drawCracks(cx, cy, w, h, frac, seed){
+  if(frac <= 0.02) return;
+  ctx.save(); ctx.strokeStyle = 'rgba(20,10,10,0.55)'; ctx.lineWidth = 2;
+  const n = Math.floor(frac * 5);
+  for(let i=0;i<n;i++){
+    const a = (seed * (i+3) * 1.7) % TAU;
+    const len = (0.25 + frac*0.55) * w * (0.5 + ((seed*(i+1)*7)%10)/14);
+    ctx.beginPath(); ctx.moveTo(cx, cy);
+    ctx.lineTo(cx + Math.cos(a)*len, cy + Math.sin(a)*len*0.7);
+    ctx.lineTo(cx + Math.cos(a)*len*1.5, cy + Math.sin(a+0.5)*len);
+    ctx.stroke();
+  }
+  ctx.restore();
+}
+function drawObjectBody(o){
+  const def = KINDS[o.kind];
+  const cx = o.x + (o.hopX||0), topY = o.baseY + (o.hopY||0);
+  const sc = o.scale * (o.mode==='telegraph' ? 0.86 : 1);
+  const sq = 1 - o.squash*0.22;
+  ctx.save();
+  ctx.translate(cx, topY);
+  ctx.scale(sc * (1/Math.sqrt(sq)), sc * sq);
+  if(o.shakeT > 0) ctx.translate(rand(-3,3), rand(-2,2));
+  const flash = o.flash > 0;
+  const main = flash ? '#ffffff' : def.col, dark = def.col2;
+  const dmgFrac = o.kind==='bomb' ? 0 : 1 - o.hp / o.maxHp;
+  if(o.kind === 'gold'){
+    ctx.shadowColor = '#ffd60a'; ctx.shadowBlur = 26 + Math.sin(menuT*6)*8;
+  }
+  switch(o.kind){
+    case 'melon': {
+      ctx.fillStyle = main; ctx.beginPath(); ctx.ellipse(0, -42, 52, 42, 0, 0, TAU); ctx.fill();
+      ctx.strokeStyle = dark; ctx.lineWidth = 5;
+      for(let i=-1;i<=1;i++){ ctx.beginPath(); ctx.ellipse(i*24, -42, 10, 40, 0, 0, TAU); ctx.stroke(); }
+      ctx.fillStyle = '#78350f'; ctx.fillRect(-3, -92, 6, 10);
+      drawCracks(0, -42, 90, 70, dmgFrac, 3);
+      drawFace(0, -42, o.face, 1);
+      break; }
+    case 'clock': {
+      ctx.fillStyle = main; circle(0, -46, 44);
+      ctx.fillStyle = flash ? '#fff' : '#fff7ed'; circle(0, -46, 35);
+      ctx.fillStyle = main; circle(-26, -88, 11); circle(26, -88, 11);
+      ctx.strokeStyle = '#1c0a0a'; ctx.lineWidth = 3.4;
+      const ca = menuT * (2 + smashed*0.4);
+      ctx.beginPath(); ctx.moveTo(0,-46); ctx.lineTo(Math.cos(ca)*22, -46 + Math.sin(ca)*22); ctx.stroke();
+      ctx.beginPath(); ctx.moveTo(0,-46); ctx.lineTo(Math.cos(-ca*0.6)*15, -46 + Math.sin(-ca*0.6)*15); ctx.stroke();
+      drawCracks(0, -46, 70, 70, dmgFrac, 5);
+      drawFace(0, -30, o.face, 0.8);
+      break; }
+    case 'phone': case 'gold': {
+      ctx.fillStyle = main; roundRect(-30, -104, 60, 104, 10); ctx.fill();
+      ctx.fillStyle = flash ? '#fff' : (o.kind==='gold' ? '#fff7cc' : '#0e7490');
+      roundRect(-23, -92, 46, 72, 5); ctx.fill();
+      ctx.fillStyle = dark; circle(0, -11, 5);
+      drawCracks(0, -56, 52, 80, o.kind==='gold' ? 0 : dmgFrac, 7);
+      drawFace(0, -56, o.face, 0.9);
+      break; }
+    case 'toaster': {
+      ctx.fillStyle = main; roundRect(-48, -62, 96, 62, 12); ctx.fill();
+      ctx.fillStyle = dark; roundRect(-36, -66, 30, 8, 4); ctx.fill(); roundRect(6, -66, 30, 8, 4); ctx.fill();
+      // toast pops higher the more damaged it is
+      const tp = -66 - dmgFrac*22 - (o.squash>0.5 ? 8 : 0);
+      ctx.fillStyle = '#fbbf24'; roundRect(-33, tp-16, 24, 20, 6); ctx.fill(); roundRect(9, tp-16, 24, 20, 6); ctx.fill();
+      ctx.fillStyle = '#ef4444'; circle(40, -34, 5);
+      drawCracks(-8, -32, 80, 50, dmgFrac, 11);
+      drawFace(-8, -32, o.face, 0.9);
+      break; }
+    case 'keyboard': {
+      ctx.fillStyle = main; roundRect(-62, -40, 124, 40, 8); ctx.fill();
+      ctx.fillStyle = flash ? '#fff' : '#ede9fe';
+      const missing = Math.floor(dmgFrac * 6);
+      for(let r=0;r<2;r++) for(let i=0;i<6;i++){
+        if(((r*6+i) * 37 + 11) % 9 < missing) continue;
+        roundRect(-54 + i*19, -34 + r*15, 14, 11, 2); ctx.fill();
+      }
+      drawFace(0, -12, o.face, 0.75);
+      break; }
+    case 'tv': {
+      ctx.fillStyle = dark; roundRect(-56, -96, 112, 78, 8); ctx.fill();
+      ctx.fillStyle = flash ? '#fff' : '#164e63'; roundRect(-48, -88, 96, 62, 5); ctx.fill();
+      ctx.strokeStyle = '#67e8f955'; ctx.lineWidth = 2;
+      for(let i=0;i<3;i++){ ctx.beginPath(); ctx.moveTo(-48, -76+i*18); ctx.lineTo(48, -80+i*15); ctx.stroke(); }
+      ctx.fillStyle = dark; ctx.fillRect(-4, -18, 8, 10); ctx.fillRect(-24, -8, 48, 5);
+      drawCracks(0, -57, 90, 60, dmgFrac, 13);
+      drawFace(0, -57, o.face, 1);
+      break; }
+    case 'chair': {
+      ctx.fillStyle = main;
+      ctx.fillRect(-40, -104, 10, 62); ctx.fillRect(30, -104, 10, 62);
+      roundRect(-46, -48, 92, 12, 5); ctx.fill();
+      ctx.fillRect(-40, -36, 9, 36); ctx.fillRect(31, -36, 9, 36);
+      ctx.fillStyle = dark; roundRect(-46, -86, 92, 8, 4); ctx.fill();
+      drawFace(0, -66, o.face, 0.85);
+      break; }
+    case 'fridge': {
+      ctx.fillStyle = main; roundRect(-46, -128, 92, 128, 8); ctx.fill();
+      ctx.fillStyle = dark; ctx.fillRect(-46, -84, 92, 4);
+      roundRect(30, -112, 6, 26, 3); ctx.fill(); roundRect(30, -72, 6, 20, 3); ctx.fill();
+      ctx.fillStyle = '#facc15'; roundRect(-34, -118, 16, 12, 2); ctx.fill();
+      ctx.fillStyle = '#38bdf8'; roundRect(-14, -112, 12, 16, 2); ctx.fill();
+      drawCracks(0, -60, 80, 110, dmgFrac, 17);
+      drawFace(0, -52, o.face, 1.05);
+      break; }
+    case 'bomb': {
+      ctx.fillStyle = main; circle(0, -40, 42);
+      ctx.fillStyle = '#ffffff33'; circle(-14, -54, 10);
+      ctx.fillStyle = '#78716c'; roundRect(-8, -92, 16, 12, 3); ctx.fill();
+      // sparking fuse
+      ctx.strokeStyle = '#a8a29e'; ctx.lineWidth = 3;
+      ctx.beginPath(); ctx.moveTo(0, -92); ctx.quadraticCurveTo(10, -104, 20, -100); ctx.stroke();
+      const sp = 3 + Math.sin(o.fuseSparks*30)*2;
+      ctx.fillStyle = '#fbbf24'; circle(20, -100, sp); circle(24, -106, sp*0.6);
+      ctx.fillStyle = '#f97316'; circle(18, -96, sp*0.7);
+      drawFace(0, -38, 'angry', 1.05);
+      break; }
+  }
+  ctx.shadowBlur = 0;
+  // helmet (armor) — drawn over the top of every armored object
+  if(o.armor > 0){
+    ctx.fillStyle = '#facc15';
+    ctx.beginPath(); ctx.arc(0, o.kind==='fridge' ? -104 : (o.kind==='phone'||o.kind==='gold') ? -88 : -64, 30, Math.PI, TAU); ctx.fill();
+    ctx.fillRect(-34, (o.kind==='fridge' ? -104 : (o.kind==='phone'||o.kind==='gold') ? -88 : -64) - 2, 68, 7);
+    ctx.fillStyle = '#eab308'; circle(0, (o.kind==='fridge' ? -104 : (o.kind==='phone'||o.kind==='gold') ? -88 : -64) - 26, 5);
+  }
+  ctx.restore();
+  // patience ring / fuse bar above the object
+  const frac = clamp(o.patience / o.maxPatience, 0, 1);
+  const bx = o.x + (o.hopX||0), by = o.baseY - 168*o.scale + (o.hopY||0);
+  ctx.fillStyle = '#00000066'; roundRect(bx-34, by, 68, 8, 4); ctx.fill();
+  ctx.fillStyle = o.kind==='bomb' ? '#ff2d55' : (frac < 0.3 ? '#ff2d55' : '#7bff5e');
+  if(frac > 0.02){ roundRect(bx-34, by, 68*frac, 8, 4); ctx.fill(); }
+  // HP pips for tough objects
+  if(o.maxHp > 1 && o.kind !== 'bomb'){
+    for(let i=0;i<o.maxHp;i++){
+      ctx.fillStyle = i < o.hp ? '#ff2d55' : '#ffffff2e';
+      circle(bx - (o.maxHp-1)*8 + i*16, by - 12, 4.5);
+    }
+  }
+}
+function drawHammer(){
+  // hammer floats top-right, swings down onto the object
+  let hx = 356, hy = 196, rot = -0.5 + Math.sin(menuT*2.2)*0.06;
+  if(hammer.anim >= 0){
+    const p = hammer.anim;
+    const k = p < 0.45 ? (p/0.45)*(p/0.45) : 1 - (p-0.45)/0.55;
+    hx = 356 + (268 - 356) * k;
+    hy = 196 + (292 - 196) * k;
+    rot = -0.5 + 1.15 * k;
+  }
+  ctx.save(); ctx.translate(hx, hy); ctx.rotate(rot);
+  // handle
+  ctx.fillStyle = unlock==='goldhammer' ? '#b45309' : '#92400e';
+  roundRect(-7, -6, 108, 13, 6); ctx.fill();
+  // head
+  ctx.fillStyle = unlock==='goldhammer' ? '#ffd60a' : '#cbd5e1';
+  if(unlock==='goldhammer'){ ctx.shadowColor = '#ffd60a'; ctx.shadowBlur = 16; }
+  roundRect(78, -26, 44, 52, 8); ctx.fill();
+  ctx.shadowBlur = 0;
+  ctx.fillStyle = unlock==='goldhammer' ? '#f59e0b' : '#64748b';
+  roundRect(112, -20, 12, 40, 5); ctx.fill();
+  // determined face on the hammer head
+  drawFace(100, 0, 'angry', 0.62);
+  ctx.restore();
+}
+function drawBG(){
+  // wall
+  const g = ctx.createLinearGradient(0, 0, 0, H);
+  g.addColorStop(0, '#3b0a18'); g.addColorStop(0.62, '#2a0a12'); g.addColorStop(0.63, '#4a2410'); g.addColorStop(1, '#2a1608');
+  ctx.fillStyle = g; ctx.fillRect(0, 0, W, H);
+  // wall cracks grow with your rampage
+  ctx.strokeStyle = '#00000055'; ctx.lineWidth = 2;
+  for(let i=0;i<wallCracks;i++){
+    const sx = 40 + (i*53)%400, sy = 60 + (i*97)%260;
+    ctx.beginPath(); ctx.moveTo(sx, sy);
+    ctx.lineTo(sx+16, sy+22); ctx.lineTo(sx+6, sy+44); ctx.lineTo(sx+20, sy+62); ctx.stroke();
+  }
+  // boss portrait — eyes follow the needle, mouth angers with combo
+  ctx.save(); ctx.translate(76, 118);
+  ctx.fillStyle = '#78350f'; roundRect(-40, -50, 80, 100, 6); ctx.fill();
+  ctx.fillStyle = '#fde68a'; roundRect(-33, -43, 66, 86, 4); ctx.fill();
+  ctx.fillStyle = '#fca5a5'; circle(0, -12, 17);
+  ctx.fillStyle = '#1e3a8a'; ctx.fillRect(-17, 4, 34, 24);
+  const look = Math.sin(needlePhase) * 5;
+  ctx.fillStyle = '#1c0a0a'; circle(-7 + look, -14, 2.6); circle(7 + look, -14, 2.6);
+  ctx.strokeStyle = '#1c0a0a'; ctx.lineWidth = 2.2;
+  ctx.beginPath(); ctx.moveTo(-12, -22); ctx.lineTo(-3, -19); ctx.stroke();
+  ctx.beginPath(); ctx.moveTo(12, -22); ctx.lineTo(3, -19); ctx.stroke();
+  if(combo >= 5){ ctx.beginPath(); ctx.arc(0, 2, 6, Math.PI*1.1, Math.PI*1.9); ctx.stroke(); }
+  else { ctx.beginPath(); ctx.arc(0, -2, 6, Math.PI*0.15, Math.PI*0.85); ctx.stroke(); }
+  ctx.restore();
+  // wall clock — hands spin with needle speed
+  ctx.save(); ctx.translate(404, 112);
+  ctx.fillStyle = '#e7e5e4'; circle(0, 0, 27);
+  ctx.strokeStyle = '#1c0a0a'; ctx.lineWidth = 3;
+  const ca = menuT * (1.5 + smashed*0.25);
+  ctx.beginPath(); ctx.moveTo(0,0); ctx.lineTo(Math.cos(ca)*17, Math.sin(ca)*17); ctx.stroke();
+  ctx.beginPath(); ctx.moveTo(0,0); ctx.lineTo(Math.cos(-ca*1.7)*12, Math.sin(-ca*1.7)*12); ctx.stroke();
+  ctx.restore();
+  // trembling plant (loses leaves when you smash well)
+  ctx.save(); ctx.translate(428, TABLE_Y);
+  const tr = Math.sin(menuT*26) * (state==='play' ? 1.6 : 0.6);
+  ctx.translate(tr, 0);
+  ctx.fillStyle = '#b45309'; ctx.beginPath(); ctx.moveTo(-16, 0); ctx.lineTo(16, 0); ctx.lineTo(11, -22); ctx.lineTo(-11, -22); ctx.closePath(); ctx.fill();
+  ctx.strokeStyle = '#16a34a'; ctx.lineWidth = 3.4;
+  ctx.beginPath(); ctx.moveTo(0, -20); ctx.quadraticCurveTo(2, -38, -6, -48); ctx.stroke();
+  ctx.fillStyle = '#22c55e';
+  for(let i=0;i<plantLeaves;i++){
+    const a = -0.9 + i*0.55;
+    ctx.save(); ctx.translate(Math.cos(a)*13, -44 + Math.sin(a)*7); ctx.rotate(a);
+    ctx.beginPath(); ctx.ellipse(0, 0, 11, 4.6, 0, 0, TAU); ctx.fill(); ctx.restore();
+  }
+  ctx.restore();
+  // table
+  ctx.fillStyle = '#8a5426'; ctx.fillRect(0, TABLE_Y, W, 16);
+  ctx.fillStyle = '#6d3f1a'; ctx.fillRect(0, TABLE_Y+16, W, 10);
+  ctx.fillStyle = '#5b3413'; ctx.fillRect(26, TABLE_Y+26, 18, 60); ctx.fillRect(W-44, TABLE_Y+26, 18, 60);
+  // floor boards
+  ctx.strokeStyle = '#00000030'; ctx.lineWidth = 2;
+  for(let i=0;i<4;i++){ ctx.beginPath(); ctx.moveTo(0, 560+i*44 - 26); ctx.lineTo(W, 560+i*44 - 26); ctx.stroke(); }
+}
+function drawMeter(){
+  const z = zoneHalf();
+  const cx = METER_X + METER_W/2;
+  const px = d => (d/1) * (METER_W/2);
+  ctx.save();
+  ctx.fillStyle = '#111118'; roundRect(METER_X-6, METER_Y-6, METER_W+12, METER_H+12, 10); ctx.fill();
+  // zones from outside in: gray | yellow(ok) | green(good) | red(perfect)
+  const seg = (d0, d1, col)=>{ ctx.fillStyle = col;
+    ctx.fillRect(cx - px(d1), METER_Y, px(d1)-px(d0), METER_H);
+    ctx.fillRect(cx + px(d0), METER_Y, px(d1)-px(d0), METER_H); };
+  seg(z.ok, 1, '#3f3f46');
+  seg(z.good, z.ok, '#eab308');
+  seg(z.perfect, z.good, '#22c55e');
+  ctx.fillStyle = '#ef4444'; ctx.fillRect(cx - px(z.perfect), METER_Y, px(z.perfect)*2, METER_H);
+  ctx.fillStyle = '#fff'; ctx.fillRect(cx-1.5, METER_Y-3, 3, METER_H+6);
+  // needle
+  const nx = cx + Math.sin(needlePhase) * (METER_W/2);
+  ctx.strokeStyle = needleFrozen > 0 ? '#f472b6' : '#ffffff'; ctx.lineWidth = 4;
+  ctx.beginPath(); ctx.moveTo(nx, METER_Y - 12); ctx.lineTo(nx, METER_Y + METER_H + 8); ctx.stroke();
+  ctx.fillStyle = needleFrozen > 0 ? '#f472b6' : '#fff'; circle(nx, METER_Y - 16, 6);
+  if(needleFrozen > 0){ ctx.font = 'bold 13px Trebuchet MS'; ctx.textAlign='center'; ctx.fillStyle = '#f472b6'; ctx.fillText('?!', nx, METER_Y - 30); }
+  ctx.restore();
+}
+function drawHUD(){
+  ctx.save(); ctx.textBaseline = 'middle';
+  for(let i=0;i<3;i++){
+    ctx.font = '23px Trebuchet MS'; ctx.textAlign = 'left';
+    ctx.globalAlpha = i < hearts ? 1 : 0.22;
+    ctx.fillText('❤️', 14 + i*29, 28);
+  }
+  ctx.globalAlpha = 1;
+  ctx.fillStyle = '#fff'; ctx.font = 'bold 24px Trebuchet MS'; ctx.textAlign = 'right';
+  ctx.fillText(score, W-16, 28);
+  ctx.font = 'bold 12px Trebuchet MS'; ctx.fillStyle = '#fda4af';
+  ctx.fillText(rankFor(score), W-16, 52);
+  ctx.fillStyle = '#fda4af'; ctx.font = 'bold 12px Trebuchet MS'; ctx.textAlign = 'left';
+  ctx.fillText('BEST ' + high, 16, 54);
+  if(combo>=2){
+    ctx.fillStyle = '#ff9f1c'; ctx.font = 'bold 17px Trebuchet MS'; ctx.textAlign = 'right';
+    ctx.fillText('🔥 COMBO x' + combo, W-16, 76);
+  }
+  ctx.fillStyle = '#ffffff88'; ctx.font = 'bold 15px Trebuchet MS'; ctx.textAlign = 'right';
+  ctx.fillText('II', W-16, 102);
+  ctx.restore();
+}
+function drawParts(){
+  for(const p of parts){
+    ctx.save(); ctx.globalAlpha = clamp(p.life, 0, 1); ctx.translate(p.x, p.y); ctx.rotate(p.rot||0);
+    ctx.fillStyle = p.col;
+    if(p.sq) ctx.fillRect(-p.r, -p.r*0.7, p.r*2, p.r*1.4); else circle(0, 0, p.r);
+    ctx.restore();
+  }
+  ctx.globalAlpha = 1;
+}
+function drawPopupsTxt(){
+  ctx.save(); ctx.textAlign='center'; ctx.textBaseline='middle';
+  for(const p of popupsTxt){
+    ctx.globalAlpha = clamp(p.life, 0, 1);
+    ctx.font = 'bold ' + p.size + 'px Trebuchet MS';
+    ctx.strokeStyle = '#1c0505'; ctx.lineWidth = 4;
+    ctx.strokeText(p.txt, p.x, p.y);
+    ctx.fillStyle = p.col; ctx.fillText(p.txt, p.x, p.y);
+  }
+  ctx.restore();
+}
+function drawTwistBanner(){
+  if(twistMsgT<=0 || !twistMsg) return;
+  ctx.save(); ctx.globalAlpha = clamp(twistMsgT, 0, 1);
+  ctx.font = 'bold 31px Trebuchet MS'; ctx.textAlign='center'; ctx.textBaseline='middle';
+  ctx.strokeStyle = '#1c0505'; ctx.lineWidth = 6;
+  ctx.strokeText(twistMsg, W/2, 262);
+  ctx.fillStyle = '#ff9f1c'; ctx.fillText(twistMsg, W/2, 262);
+  ctx.restore();
+}
+function drawSmashButton(){
+  const pulse = 1 + Math.sin(menuT*5)*0.03;
+  ctx.save(); ctx.translate(W/2, 662); ctx.scale(pulse, pulse);
+  ctx.fillStyle = '#ef4444'; roundRect(-120, -26, 240, 52, 14); ctx.fill();
+  ctx.fillStyle = '#fff'; ctx.font = 'bold 23px Trebuchet MS'; ctx.textAlign='center'; ctx.textBaseline='middle';
+  ctx.fillText('🔨 SMASH!', 0, 1);
+  ctx.restore();
+}
+function draw(){
+  ctx.clearRect(0,0,W,H);
+  ctx.save();
+  if(shake>0) ctx.translate(rand(-shake,shake), rand(-shake,shake));
+  drawBG();
+
+  if(state==='menu'){
+    ctx.restore();
+    ctx.save();
+    // preview: melon on the table + hammer raised
+    const demo = { kind:'melon', hp:1, maxHp:1, armor:0, x:OBJ_X, baseY:OBJ_Y, hopX:0, hopY:0,
+      mode:'idle', face: Math.sin(menuT*1.4)>0 ? 'panic' : 'smug', scale:1, squash:0, shakeT:0, flash:0,
+      patience: 5, maxPatience: 5 };
+    drawObjectBody(demo);
+    drawHammer();
+    ctx.textAlign='center'; ctx.textBaseline='middle';
+    ctx.font = 'bold 43px Trebuchet MS';
+    ctx.strokeStyle = '#1c0505'; ctx.lineWidth = 8;
+    ctx.fillStyle = '#f87171';
+    ctx.strokeText('RAGE SMASH ROOM!', W/2, 66); ctx.fillText('RAGE SMASH ROOM!', W/2, 66);
+    ctx.fillStyle = '#fff'; ctx.font = 'bold 20px Trebuchet MS';
+    ctx.strokeStyle = '#1c0505'; ctx.lineWidth = 5;
+    ctx.strokeText('Tap the red. Smash everything.', W/2, 168);
+    ctx.fillText('Tap the red. Smash everything.', W/2, 168);
+    // frozen demo meter
+    needlePhase = menuT * 1.7;
+    drawMeter();
+    ctx.fillStyle = '#ffd60a'; ctx.font = 'bold 16px Trebuchet MS';
+    ctx.fillText('BEST ' + high + (unlock ? '  •  GOLD HAMMER ✓' : ''), W/2, 512);
+    ctx.fillStyle = '#22c55e'; roundRect(W/2-118, 528, 236, 54, 14); ctx.fill();
+    ctx.fillStyle = '#fff'; ctx.font = 'bold 23px Trebuchet MS';
+    ctx.fillText('▶ TAP TO RAGE', W/2, 556);
+    drawSmashButton();
+    ctx.fillStyle = '#fecdd3'; ctx.font = 'bold 13px Trebuchet MS';
+    ctx.fillText('red = PERFECT • bomb = DO NOT TAP', W/2, 606);
+    ctx.restore();
+    return;
+  }
+
+  if(obj) drawObjectBody(obj);
+  drawHammer();
+  drawHUD();
+  drawMeter();
+  drawSmashButton();
+  drawParts();
+  drawPopupsTxt();
+  drawTwistBanner();
+  ctx.restore();
+
+  if(state==='pause'){
+    ctx.save();
+    ctx.fillStyle = 'rgba(23,4,7,0.82)'; ctx.fillRect(0,0,W,H);
+    ctx.textAlign='center'; ctx.textBaseline='middle';
+    ctx.font = 'bold 40px Trebuchet MS'; ctx.fillStyle = '#fff';
+    ctx.fillText('PAUSED', W/2, 320);
+    ctx.font = 'bold 18px Trebuchet MS'; ctx.fillStyle = '#fda4af';
+    ctx.fillText('deep breath. tap to keep smashing', W/2, 366);
+    ctx.restore();
+  }
+
+  if(state==='over'){
+    ctx.save();
+    ctx.fillStyle = 'rgba(23,4,7,0.88)'; ctx.fillRect(0,0,W,H);
+    ctx.textAlign='center'; ctx.textBaseline='middle';
+    ctx.font = 'bold 38px Trebuchet MS'; ctx.fillStyle = '#ff2d55';
+    ctx.strokeStyle = '#1c0505'; ctx.lineWidth = 8;
+    ctx.strokeText('CALMED DOWN!', W/2, 178); ctx.fillText('CALMED DOWN!', W/2, 178);
+    ctx.fillStyle = '#fff'; ctx.font = 'bold 19px Trebuchet MS';
+    ctx.fillText(failLine, W/2, 234);
+    ctx.fillStyle = '#ffd60a'; ctx.font = 'bold 30px Trebuchet MS';
+    ctx.fillText(score + '  •  ' + rankFor(score), W/2, 296);
+    ctx.fillStyle = '#fff'; ctx.font = 'bold 16px Trebuchet MS';
+    ctx.fillText('SMASHED ' + smashed + '   •   BEST COMBO x' + bestCombo + '   •   BEST ' + high, W/2, 334);
+    if(unlock==='goldhammer'){ ctx.fillStyle = '#ffd60a'; ctx.fillText('🔨 GOLD HAMMER UNLOCKED!', W/2, 366); }
+    ctx.fillStyle = copied ? '#7bff5e' : '#00d4ff';
+    roundRect(W/2-120, 404, 240, 48, 12); ctx.fill();
+    ctx.fillStyle = '#170407'; ctx.font = 'bold 19px Trebuchet MS';
+    ctx.fillText(copied ? 'COPIED!' : '📋 COPY RESULT', W/2, 429);
+    ctx.fillStyle = '#7b2ff7';
+    roundRect(W/2-120, 468, 240, 52, 12); ctx.fill();
+    ctx.fillStyle = '#fff'; ctx.font = 'bold 22px Trebuchet MS';
+    ctx.fillText('↻ RAGE AGAIN', W/2, 495);
+    ctx.fillStyle = '#ffffff88'; ctx.font = 'bold 13px Trebuchet MS';
+    ctx.fillText('tap R to restart', W/2, 544);
+    ctx.restore();
+  }
+}
+
+// ---------- input ----------
+function posFromEvent(e){
+  const r = cv.getBoundingClientRect();
+  const sx = W / r.width, sy = H / r.height;
+  const cx = (e.touches ? e.touches[0].clientX : e.clientX);
+  const cy = (e.touches ? e.touches[0].clientY : e.clientY);
+  return { x: (cx - r.left) * sx, y: (cy - r.top) * sy };
+}
+function shareText(){
+  return "I smashed " + smashed + " things for " + score + " (" + rankFor(score) + ") in the RAGE SMASH ROOM before calming down. The bomb sends its regards. " + location.href;
+}
+cv.addEventListener('pointerdown', e=>{
+  e.preventDefault();
+  const p = posFromEvent(e);
+  if(state==='menu'){ resetGame(); return; }
+  if(state==='pause'){ state = 'play'; return; }
+  if(state==='over'){
+    if(p.y>=404 && p.y<=452 && Math.abs(p.x-W/2)<=120){
+      const txt = shareText();
+      if(navigator.clipboard && navigator.clipboard.writeText){
+        navigator.clipboard.writeText(txt).then(()=>{ copied = true; }).catch(()=>{ copied = true; });
+      } else { copied = true; }
+      return;
+    }
+    if(p.y>=468 && p.y<=520 && Math.abs(p.x-W/2)<=120){ resetGame(); return; }
+    return;
+  }
+  if(state==='play'){
+    if(p.x > W-60 && p.y < 120 && p.y > 60){ state = 'pause'; return; }
+    swing();
+  }
+});
+window.addEventListener('keydown', e=>{
+  const k = e.key.toLowerCase();
+  if(k===' '){ e.preventDefault(); if(keys[k]) return; keys[k] = true;
+    if(state==='menu'){ resetGame(); return; }
+    if(state==='pause'){ state = 'play'; return; }
+    if(state==='play') swing();
+    return;
+  }
+  keys[k] = true;
+  if(k==='p' && state==='play') state = 'pause';
+  else if(k==='p' && state==='pause') state = 'play';
+  if(k==='r' && state!=='menu') resetGame();
+});
+window.addEventListener('keyup', e=>{ keys[e.key.toLowerCase()] = false; });
+document.addEventListener('visibilitychange', ()=>{ if(document.hidden && state==='play') state = 'pause'; });
+
+// debug/testing handle (harmless in production)
+window.__RSR = { get state(){ return state; }, get score(){ return score; },
+  get smashed(){ return smashed; }, get hearts(){ return hearts; }, get t(){ return t; },
+  needle: ()=>needleD, objKind: ()=> obj ? obj.kind : null, start: ()=>resetGame(), swing: ()=>swing() };
+
+// ---------- loop ----------
+let last = performance.now();
+function loop(now){
+  const dt = Math.min(0.033, (now-last)/1000); last = now;
+  update(dt);
+  draw();
+  requestAnimationFrame(loop);
+}
+requestAnimationFrame(loop);
+</script>
+</body>
+</html>
