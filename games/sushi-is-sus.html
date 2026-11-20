@@ -1,0 +1,667 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<title>SUSHI IS SUS! — Day 51</title>
+<style>
+  * { margin:0; padding:0; box-sizing:border-box; }
+  html,body { width:100%; height:100%; background:#0b0618; overflow:hidden; touch-action:none;
+    font-family:'Trebuchet MS','Comic Sans MS',sans-serif; }
+  #wrap { position:fixed; inset:0; display:flex; align-items:center; justify-content:center; }
+  canvas { display:block; background:#17102e; border-radius:12px;
+    box-shadow:0 0 40px #f472b688, 0 0 90px #22d3ee55; }
+</style>
+</head>
+<body>
+<div id="wrap"><canvas id="c" width="480" height="720"></canvas></div>
+<script>
+"use strict";
+// SUSHI IS SUS! — Day 51
+// You are a hungry panda under a sushi conveyor belt. Slide along the
+// belt and TAP / SPACE to snap your chopsticks: grab the GLOWING sushi,
+// never the angry stuff.
+// TWIST LADDER: 12s THE BELT REVERSES (and keeps flipping, sometimes
+// fake-flipping) -> 22s THE SUSHI GROWS LEGS and hops/dodges your
+// chopsticks -> 35s RUSH HOUR (belt + spawns speed up) -> 48s DOUBLE
+// RUSH. Golden sushi = rare +5. Soy bottle = a shield for one mistake.
+// Trend: conveyor-belt / kaiten-sushi chaos clips + "food that fights
+// back" rage-bait wave (social + web search, 2026-11-20). Not a clone:
+// new belt-reversal + legged-sushi dodge twists, new cast.
+const cv = document.getElementById('c');
+const ctx = cv.getContext('2d');
+const W = 480, H = 720;
+const BELT_Y = 300;            // center of the conveyor belt
+const PANDA_Y = 560;           // panda head center
+const GRAB_RANGE = 54;
+
+// ---------- audio (WebAudio, self-generated) ----------
+let AC = null;
+function audio(){ if(!AC){ try{ AC = new (window.AudioContext||window.webkitAudioContext)(); }catch(e){} } return AC; }
+function beep(f, d, type, v){
+  const ac = audio(); if(!ac) return;
+  const o = ac.createOscillator(), g = ac.createGain();
+  o.type = type||'sine'; o.frequency.value = f;
+  g.gain.setValueAtTime(v||0.12, ac.currentTime);
+  g.gain.exponentialRampToValueAtTime(0.001, ac.currentTime + d);
+  o.connect(g); g.connect(ac.destination); o.start(); o.stop(ac.currentTime + d);
+}
+function popSnd(){ beep(660,0.08,'triangle',0.14); setTimeout(()=>beep(990,0.1,'triangle',0.12),40); }
+function goldSnd(){ [880,1174,1568].forEach((f,i)=>setTimeout(()=>beep(f,0.12,'sine',0.12),i*60)); }
+function badSnd(){ beep(160,0.25,'sawtooth',0.16); setTimeout(()=>beep(110,0.3,'sawtooth',0.14),60); }
+function flipSnd(){ beep(300,0.15,'square',0.08); setTimeout(()=>beep(520,0.15,'square',0.08),90); }
+
+// ---------- storage ----------
+let high = 0, goldSticks = false;
+try{
+  high = parseInt(localStorage.getItem('sushiIsSusHigh')||'0',10)||0;
+  goldSticks = localStorage.getItem('sushiIsSusGold')==='1';
+}catch(e){}
+
+// ---------- state ----------
+let state = 'menu'; // menu | play | over | pause
+let score, combo, bestCombo, hearts, missPips, shield, elapsed;
+let plates, popups, parts, steam;
+let pandaX, pandaTX, grabT, sickT, shakeT;
+let beltDir, beltSpeed, spawnT, flipT, rushAnnounced, legsAnnounced;
+let overLine, finalRank, keys = {};
+
+const OVER_LINES = [
+  "The wasabi won. It always wins.",
+  "Face-planted straight into the belt.",
+  "The sushi has filed a restraining order.",
+  "Eaten by the menu. Tragic.",
+  "The belt shows no mercy. Or sushi."
+];
+const RANKS = [
+  [0,"Snack Intern"],[10,"Sushi Snacker"],[20,"Belt Bandit"],
+  [35,"Sushi Sensei"],[50,"TUNA LEGEND"]
+];
+function rankFor(s){ let r = RANKS[0][1]; for(const [n,t] of RANKS){ if(s>=n) r=t; } return r; }
+
+function reset(){
+  score = 0; combo = 0; bestCombo = 0; hearts = 3; missPips = 0;
+  shield = false; elapsed = 0;
+  plates = []; popups = []; parts = []; steam = [];
+  pandaX = W/2; pandaTX = W/2; grabT = 0; sickT = 0; shakeT = 0;
+  beltDir = 1; beltSpeed = 125; spawnT = 0.4; flipT = 12;
+  rushAnnounced = false; legsAnnounced = false;
+  for(let i=0;i<10;i++) steam.push({x:Math.random()*W, y:Math.random()*H, s:14+Math.random()*22, v:12+Math.random()*18, a:0.05+Math.random()*0.06});
+}
+reset();
+
+// ---------- popups & particles ----------
+function popup(x, y, text, color){
+  popups.push({x, y, text, color: color||'#fff', t:0, life:0.9});
+  if(popups.length > 6) popups.shift();
+}
+function burst(x, y, color, n){
+  for(let i=0;i<(n||10);i++){
+    const a = Math.random()*Math.PI*2, sp = 40+Math.random()*130;
+    parts.push({x, y, vx:Math.cos(a)*sp, vy:Math.sin(a)*sp-40, t:0, life:0.45+Math.random()*0.3, color, r:2+Math.random()*3});
+  }
+}
+
+// ---------- plates ----------
+function spawnPlate(){
+  const r = Math.random();
+  let type = 'sushi';
+  if(r < 0.06) type = 'golden';
+  else if(r < 0.14) type = 'soy';
+  else if(r < 0.25) type = 'wasabi';
+  else if(r < 0.31) type = 'puffer';
+  const fromLeft = beltDir > 0;
+  plates.push({
+    type, x: fromLeft ? -56 : W+56, yOff: 0, yT: 0,
+    wob: Math.random()*Math.PI*2,
+    legs: elapsed >= 22 && (type==='sushi'||type==='golden'),
+    dodgeCd: 0, puff: Math.random()*Math.PI*2, dead:false
+  });
+}
+
+function hurt(x, y){
+  if(shield){
+    shield = false; popup(x, y-56, "SAVED!", '#22d3ee'); beep(740,0.12,'sine',0.12);
+    burst(x, y, '#22d3ee', 12); return;
+  }
+  hearts--; combo = 0; sickT = 1.1; shakeT = 0.35; badSnd();
+  burst(x, y, '#ef4444', 16);
+  if(hearts <= 0) gameOver();
+}
+
+function grab(){
+  if(state !== 'play' || grabT > 0.05) return;
+  grabT = 0.22; audio();
+  let best = null, bestD = 1e9, nearD = 1e9;
+  for(const p of plates){
+    if(p.dead) continue;
+    const d = Math.abs(p.x - pandaX);
+    if(d < bestD){ bestD = d; best = p; }
+    if(d < nearD) nearD = d;
+  }
+  if(best && bestD <= GRAB_RANGE){
+    best.dead = true;
+    const px = best.x, py = BELT_Y + best.yOff;
+    if(best.type === 'sushi' || best.type === 'golden'){
+      const mult = 1 + Math.floor(combo/8);
+      const pts = (best.type==='golden' ? 5 : 1) * mult;
+      score += pts; combo++; bestCombo = Math.max(bestCombo, combo);
+      if(best.type==='golden'){ popup(px, py-52, "GOLDEN +"+pts, '#facc15'); goldSnd(); burst(px, py, '#facc15', 18); }
+      else { popup(px, py-52, combo>=5 ? "COMBO x"+combo : "GOTCHA!", '#4ade80'); popSnd(); burst(px, py, '#fb923c', 10); }
+    } else if(best.type === 'soy'){
+      shield = true; popup(px, py-52, "SHIELD UP!", '#22d3ee'); popSnd(); burst(px, py, '#22d3ee', 12);
+    } else { // wasabi / puffer
+      popup(px, py-52, best.type==='wasabi' ? "SPICY!!" : "PUFFED!", '#ef4444');
+      hurt(px, py);
+    }
+  } else {
+    // whiff
+    if(nearD <= 100){ popup(pandaX, PANDA_Y-110, "SO CLOSE!", '#facc15'); beep(420,0.07,'triangle',0.08); }
+    else { combo = 0; beep(220,0.07,'triangle',0.06); }
+  }
+}
+
+function gameOver(){
+  state = 'over';
+  overLine = OVER_LINES[Math.floor(Math.random()*OVER_LINES.length)];
+  finalRank = rankFor(score);
+  if(score > high){
+    high = score;
+    try{ localStorage.setItem('sushiIsSusHigh', String(high)); }catch(e){}
+  }
+  if(high >= 25 && !goldSticks){
+    goldSticks = true;
+    try{ localStorage.setItem('sushiIsSusGold','1'); }catch(e){}
+  }
+}
+
+// ---------- update ----------
+function update(dt){
+  // ambient steam always drifts
+  for(const s of steam){ s.y -= s.v*dt; if(s.y < -30){ s.y = H+30; s.x = Math.random()*W; } }
+  for(let i=popups.length-1;i>=0;i--){ const p = popups[i]; p.t += dt; p.y -= 34*dt; if(p.t > p.life) popups.splice(i,1); }
+  for(let i=parts.length-1;i>=0;i--){ const p = parts[i]; p.t += dt; p.x += p.vx*dt; p.y += p.vy*dt; p.vy += 300*dt; if(p.t > p.life) parts.splice(i,1); }
+  if(state !== 'play') return;
+
+  elapsed += dt;
+  if(grabT > 0) grabT -= dt;
+  if(sickT > 0) sickT -= dt;
+  if(shakeT > 0) shakeT -= dt;
+
+  // keyboard steering
+  if(keys['ArrowLeft'] || keys['a']) pandaTX -= 340*dt;
+  if(keys['ArrowRight'] || keys['d']) pandaTX += 340*dt;
+  pandaTX = Math.max(36, Math.min(W-36, pandaTX));
+  pandaX += (pandaTX - pandaX) * Math.min(1, dt*18);
+
+  // escalation
+  const speedBase = 125 + Math.min(120, elapsed*1.6) + (elapsed>=35 ? 45 : 0) + (elapsed>=48 ? 35 : 0);
+  beltSpeed = speedBase;
+  if(elapsed >= 35 && !rushAnnounced){ rushAnnounced = true; popup(W/2, 190, "RUSH HOUR!", '#f472b6'); }
+  if(elapsed >= 22 && !legsAnnounced){ legsAnnounced = true; popup(W/2, 190, "IT RUNS!", '#f472b6'); }
+
+  // belt flips
+  flipT -= dt;
+  if(flipT <= 0){
+    flipT = 11 + Math.random()*6;
+    if(Math.random() < 0.28){ popup(W/2, 190, "PSYCH!", '#facc15'); flipSnd(); }
+    else {
+      beltDir *= -1; popup(W/2, 190, "BELT FLIP!", '#f472b6'); flipSnd();
+      for(const p of plates) p.x = W - p.x; // keep plates on screen, now heading the other way
+    }
+  }
+
+  // spawning
+  spawnT -= dt;
+  const interval = Math.max(0.55, 1.12 - elapsed*0.008 - (elapsed>=48 ? 0.18 : 0));
+  if(spawnT <= 0){ spawnT = interval * (0.75 + Math.random()*0.5); spawnPlate(); }
+
+  // plates
+  for(let i=plates.length-1;i>=0;i--){
+    const p = plates[i];
+    p.wob += dt*6; p.puff += dt*3;
+    if(p.dodgeCd > 0) p.dodgeCd -= dt;
+    p.x += beltDir * beltSpeed * dt * (p.type==='golden' ? 1.12 : 1);
+    // legged sushi hops and dodges the panda
+    if(p.legs){
+      p.yT = Math.abs(Math.sin(p.wob*1.4)) * -14;
+      if(Math.abs(p.x - pandaX) < 74 && p.dodgeCd <= 0 && grabT <= 0){
+        p.dodgeCd = 0.9;
+        p.yOff += (Math.random() < 0.5 ? -40 : 40);
+        p.yOff = Math.max(-46, Math.min(46, p.yOff));
+      }
+    }
+    if(!p.legs) p.yOff *= Math.pow(0.001, dt); // drift back to belt line
+    // exit = missed
+    if((beltDir > 0 && p.x > W+64) || (beltDir < 0 && p.x < -64)){
+      if(p.type === 'sushi' || p.type === 'golden'){
+        missPips++; combo = 0;
+        popup(W/2, BELT_Y+86, "MISSED!", '#fca5a5');
+        if(missPips >= 3){
+          missPips = 0; hearts--; sickT = Math.max(sickT, 0.6); shakeT = 0.3; badSnd();
+          if(hearts <= 0){ gameOver(); }
+        }
+      }
+      plates.splice(i,1); continue;
+    }
+    if(p.dead) plates.splice(i,1);
+  }
+}
+
+// ---------- drawing ----------
+function rr(x, y, w, h, r){
+  ctx.beginPath();
+  ctx.moveTo(x+r, y);
+  ctx.arcTo(x+w, y, x+w, y+h, r); ctx.arcTo(x+w, y+h, x, y+h, r);
+  ctx.arcTo(x, y+h, x, y, r); ctx.arcTo(x, y, x+w, y, r);
+  ctx.closePath();
+}
+function face(x, y, mood, s){
+  ctx.fillStyle = '#1f2937';
+  if(mood === 'angry'){
+    ctx.beginPath(); ctx.arc(x-7*s, y-2*s, 2.6*s, 0, 7); ctx.arc(x+7*s, y-2*s, 2.6*s, 0, 7); ctx.fill();
+    ctx.strokeStyle = '#1f2937'; ctx.lineWidth = 2*s;
+    ctx.beginPath();
+    ctx.moveTo(x-11*s, y-9*s); ctx.lineTo(x-3*s, y-5*s);
+    ctx.moveTo(x+11*s, y-9*s); ctx.lineTo(x+3*s, y-5*s);
+    ctx.moveTo(x-5*s, y+8*s); ctx.quadraticCurveTo(x, y+3*s, x+5*s, y+8*s);
+    ctx.stroke();
+  } else if(mood === 'happy'){
+    ctx.strokeStyle = '#1f2937'; ctx.lineWidth = 2*s;
+    ctx.beginPath();
+    ctx.arc(x-7*s, y-3*s, 3.4*s, Math.PI, 0);
+    ctx.arc(x+7*s, y-3*s, 3.4*s, Math.PI, 0);
+    ctx.stroke();
+    ctx.beginPath(); ctx.arc(x, y+3*s, 5*s, 0, Math.PI); ctx.fill();
+  } else {
+    ctx.beginPath(); ctx.arc(x-7*s, y-2*s, 2.6*s, 0, 7); ctx.arc(x+7*s, y-2*s, 2.6*s, 0, 7); ctx.fill();
+    ctx.beginPath(); ctx.arc(x, y+6*s, 3.4*s, 0, 7); ctx.fill();
+  }
+}
+
+function drawPlate(p){
+  const hop = p.legs ? (p.yT || 0) : Math.sin(p.wob)*2;
+  const y = BELT_Y + p.yOff + hop;
+  const x = p.x;
+  ctx.save(); ctx.translate(x, y);
+  if(p.type === 'sushi' || p.type === 'golden'){
+    // glow — collectibles are the ONLY glowing things on the belt
+    const pulse = 0.55 + Math.sin(p.wob*1.6)*0.2;
+    ctx.save();
+    ctx.globalAlpha = pulse;
+    ctx.fillStyle = p.type==='golden' ? '#facc15' : '#fb923c';
+    ctx.beginPath(); ctx.ellipse(0, 2, 46, 20, 0, 0, 7); ctx.fill();
+    ctx.restore();
+    // legs
+    if(p.legs){
+      ctx.strokeStyle = '#fda4af'; ctx.lineWidth = 4; ctx.lineCap = 'round';
+      const lp = Math.sin(p.wob*2.2)*7;
+      ctx.beginPath();
+      ctx.moveTo(-12, 12); ctx.lineTo(-12+lp, 24);
+      ctx.moveTo(12, 12); ctx.lineTo(12-lp, 24);
+      ctx.stroke();
+    }
+    // plate
+    ctx.fillStyle = p.type==='golden' ? '#fde68a' : '#e0f2fe';
+    ctx.beginPath(); ctx.ellipse(0, 4, 36, 12, 0, 0, 7); ctx.fill();
+    ctx.fillStyle = p.type==='golden' ? '#f59e0b' : '#bae6fd';
+    ctx.beginPath(); ctx.ellipse(0, 2, 36, 12, 0, 0, 7); ctx.fill();
+    // rice
+    ctx.fillStyle = '#ffffff'; rr(-19, -14, 38, 17, 7); ctx.fill();
+    // topping
+    ctx.fillStyle = p.type==='golden' ? '#facc15' : '#fb7185';
+    rr(-19, -19, 38, 11, 5); ctx.fill();
+    ctx.strokeStyle = p.type==='golden' ? '#a16207' : '#e11d48'; ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.moveTo(-10, -19); ctx.lineTo(-6, -8);
+    ctx.moveTo(2, -19); ctx.lineTo(6, -8);
+    ctx.moveTo(13, -19); ctx.lineTo(16, -9);
+    ctx.stroke();
+    face(0, -13, p.legs ? 'plain' : 'happy', 0.8);
+    if(p.type === 'golden'){
+      ctx.fillStyle = '#facc15';
+      ctx.beginPath();
+      ctx.moveTo(-9, -30); ctx.lineTo(-4, -21); ctx.lineTo(0, -29); ctx.lineTo(4, -21); ctx.lineTo(9, -30); ctx.lineTo(9, -19); ctx.lineTo(-9, -19);
+      ctx.closePath(); ctx.fill();
+      if(Math.random() < 0.3) burst(x + (Math.random()*40-20), y - 24, '#fde68a', 1);
+    }
+  } else if(p.type === 'soy'){
+    ctx.save();
+    ctx.globalAlpha = 0.55 + Math.sin(p.wob*1.6)*0.2;
+    ctx.fillStyle = '#22d3ee';
+    ctx.beginPath(); ctx.ellipse(0, 2, 34, 18, 0, 0, 7); ctx.fill();
+    ctx.restore();
+    ctx.fillStyle = '#e0f2fe';
+    ctx.beginPath(); ctx.ellipse(0, 6, 26, 9, 0, 0, 7); ctx.fill();
+    ctx.fillStyle = '#164e63';
+    rr(-9, -22, 18, 28, 6); ctx.fill();
+    ctx.fillStyle = '#ef4444'; rr(-9, -22, 18, 8, 4); ctx.fill();
+    ctx.fillStyle = '#164e63'; rr(-3, -29, 6, 8, 2); ctx.fill();
+    face(0, -6, 'happy', 0.7);
+  } else if(p.type === 'wasabi'){
+    // spiky red bomb with a wasabi dollop — angry family
+    ctx.fillStyle = '#dc2626';
+    ctx.beginPath();
+    for(let i=0;i<10;i++){
+      const a = (i/10)*Math.PI*2 + p.wob*0.15;
+      const rad = i%2 ? 17 : 24;
+      const px = Math.cos(a)*rad, py = Math.sin(a)*rad*0.85;
+      if(i===0) ctx.moveTo(px, py); else ctx.lineTo(px, py);
+    }
+    ctx.closePath(); ctx.fill();
+    ctx.fillStyle = '#991b1b';
+    ctx.beginPath(); ctx.arc(0, 0, 15, 0, 7); ctx.fill();
+    ctx.fillStyle = '#4ade80';
+    ctx.beginPath(); ctx.arc(0, -19, 7, 0, 7); ctx.fill();
+    ctx.strokeStyle = '#fbbf24'; ctx.lineWidth = 2;
+    ctx.beginPath(); ctx.moveTo(0, -26); ctx.quadraticCurveTo(6, -32, 10 + Math.sin(p.wob*3)*2, -30); ctx.stroke();
+    face(0, 0, 'angry', 0.85);
+  } else if(p.type === 'puffer'){
+    const sc = 1 + Math.sin(p.puff)*0.22;
+    ctx.save(); ctx.scale(sc, sc);
+    ctx.fillStyle = '#a855f7';
+    ctx.beginPath();
+    for(let i=0;i<12;i++){
+      const a = (i/12)*Math.PI*2;
+      const rad = i%2 ? 16 : 22;
+      const px = Math.cos(a)*rad, py = Math.sin(a)*rad;
+      if(i===0) ctx.moveTo(px, py); else ctx.lineTo(px, py);
+    }
+    ctx.closePath(); ctx.fill();
+    ctx.fillStyle = '#c084fc';
+    ctx.beginPath(); ctx.arc(0, 0, 15, 0, 7); ctx.fill();
+    face(0, -1, 'angry', 0.85);
+    ctx.restore();
+  }
+  ctx.restore();
+}
+
+function drawPanda(){
+  const x = pandaX, y = PANDA_Y;
+  ctx.save(); ctx.translate(x, y);
+  if(sickT > 0) ctx.rotate(Math.sin(sickT*20)*0.05);
+  // ears
+  ctx.fillStyle = '#1f2937';
+  ctx.beginPath(); ctx.arc(-27, -26, 13, 0, 7); ctx.arc(27, -26, 13, 0, 7); ctx.fill();
+  // head
+  ctx.fillStyle = sickT > 0 ? '#bbf7d0' : '#ffffff';
+  ctx.beginPath(); ctx.arc(0, 0, 36, 0, 7); ctx.fill();
+  ctx.strokeStyle = '#1f2937'; ctx.lineWidth = 2; ctx.stroke();
+  // eye patches
+  ctx.fillStyle = '#1f2937';
+  ctx.save(); ctx.translate(-14, -6); ctx.rotate(0.5); ctx.beginPath(); ctx.ellipse(0, 0, 8, 11, 0, 0, 7); ctx.fill(); ctx.restore();
+  ctx.save(); ctx.translate(14, -6); ctx.rotate(-0.5); ctx.beginPath(); ctx.ellipse(0, 0, 8, 11, 0, 0, 7); ctx.fill(); ctx.restore();
+  ctx.fillStyle = '#fff';
+  ctx.beginPath(); ctx.arc(-14, -8, 3, 0, 7); ctx.arc(14, -8, 3, 0, 7); ctx.fill();
+  // nose + mouth (mouth gapes while grabbing)
+  ctx.fillStyle = '#1f2937';
+  ctx.beginPath(); ctx.ellipse(0, 4, 4.5, 3, 0, 0, 7); ctx.fill();
+  ctx.beginPath();
+  if(grabT > 0) ctx.arc(0, 12, 10, 0, Math.PI);
+  else if(sickT > 0) ctx.arc(0, 20, 6, Math.PI, 0);
+  else ctx.arc(0, 9, 6, 0, Math.PI);
+  ctx.fill();
+  // crown at high combo
+  if(combo >= 10){
+    ctx.fillStyle = '#facc15';
+    ctx.beginPath();
+    ctx.moveTo(-13, -38); ctx.lineTo(-7, -48); ctx.lineTo(0, -39); ctx.lineTo(7, -48); ctx.lineTo(13, -38); ctx.lineTo(13, -31); ctx.lineTo(-13, -31);
+    ctx.closePath(); ctx.fill();
+  }
+  ctx.restore();
+  // shield bubble
+  if(shield){
+    ctx.save();
+    ctx.strokeStyle = '#22d3ee'; ctx.globalAlpha = 0.75; ctx.lineWidth = 3;
+    ctx.beginPath(); ctx.arc(x, y, 48 + Math.sin(performance.now()/280)*2, 0, 7); ctx.stroke();
+    ctx.restore();
+  }
+  // chopsticks (snap up to the belt while grabbing)
+  const reach = grabT > 0 ? 1 : 0.25;
+  const tipY = y - 44 - (BELT_Y + 26 - (y - 44)) * reach * 0.92;
+  ctx.strokeStyle = goldSticks ? '#facc15' : '#d6a35c';
+  ctx.lineWidth = 5; ctx.lineCap = 'round';
+  const spread = grabT > 0 ? 4 : 13;
+  ctx.beginPath();
+  ctx.moveTo(x - 20, y + 26); ctx.lineTo(x - spread, tipY);
+  ctx.moveTo(x + 20, y + 26); ctx.lineTo(x + spread, tipY);
+  ctx.stroke();
+}
+
+function draw(){
+  ctx.save();
+  if(shakeT > 0) ctx.translate((Math.random()-0.5)*10, (Math.random()-0.5)*8);
+  // bg
+  const g = ctx.createLinearGradient(0, 0, 0, H);
+  g.addColorStop(0, '#241543'); g.addColorStop(1, '#120a26');
+  ctx.fillStyle = g; ctx.fillRect(-12, -12, W+24, H+24);
+  // lanterns (swaying background objects)
+  for(let i=0;i<4;i++){
+    const lx = 60 + i*120, sway = Math.sin(performance.now()/900 + i*1.7)*5;
+    ctx.strokeStyle = '#4c1d95'; ctx.lineWidth = 2;
+    ctx.beginPath(); ctx.moveTo(lx, 0); ctx.lineTo(lx+sway, 34); ctx.stroke();
+    ctx.fillStyle = i%2 ? '#f472b6' : '#fb923c';
+    ctx.beginPath(); ctx.ellipse(lx+sway, 48, 17, 13, 0, 0, 7); ctx.fill();
+    ctx.fillStyle = 'rgba(255,255,255,0.35)';
+    ctx.beginPath(); ctx.ellipse(lx+sway, 44, 10, 5, 0, 0, 7); ctx.fill();
+  }
+  // steam
+  for(const s of steam){
+    ctx.fillStyle = 'rgba(255,255,255,' + s.a + ')';
+    ctx.beginPath(); ctx.arc(s.x, s.y, s.s, 0, 7); ctx.fill();
+  }
+  // belt
+  ctx.fillStyle = '#111827'; rr(0, BELT_Y-30, W, 60, 10); ctx.fill();
+  ctx.fillStyle = '#1f2937'; rr(0, BELT_Y-30, W, 10, 5); ctx.fill();
+  // direction chevrons
+  ctx.fillStyle = '#f472b6';
+  const off = (performance.now()/6 * beltDir) % 48;
+  for(let x = -48; x < W+48; x += 48){
+    const cx = beltDir > 0 ? x + off : x + off;
+    ctx.beginPath();
+    if(beltDir > 0){ ctx.moveTo(cx, BELT_Y+12); ctx.lineTo(cx+14, BELT_Y+21); ctx.lineTo(cx, BELT_Y+30); }
+    else { ctx.moveTo(cx+14, BELT_Y+12); ctx.lineTo(cx, BELT_Y+21); ctx.lineTo(cx+14, BELT_Y+30); }
+    ctx.closePath(); ctx.fill();
+  }
+  // rollers
+  for(const rx of [18, W-18]){
+    ctx.save(); ctx.translate(rx, BELT_Y);
+    ctx.rotate(performance.now()/300 * beltDir);
+    ctx.fillStyle = '#374151'; ctx.beginPath(); ctx.arc(0, 0, 15, 0, 7); ctx.fill();
+    ctx.fillStyle = '#9ca3af'; ctx.fillRect(-13, -3, 26, 6); ctx.fillRect(-3, -13, 6, 26);
+    ctx.restore();
+  }
+  // floor line under panda
+  ctx.fillStyle = '#2e1065'; rr(20, PANDA_Y+52, W-40, 14, 7); ctx.fill();
+
+  for(const p of plates) drawPlate(p);
+  drawPanda();
+
+  // particles + popups
+  for(const p of parts){
+    ctx.globalAlpha = 1 - p.t/p.life;
+    ctx.fillStyle = p.color;
+    ctx.beginPath(); ctx.arc(p.x, p.y, p.r, 0, 7); ctx.fill();
+  }
+  ctx.globalAlpha = 1;
+  ctx.textAlign = 'center';
+  for(const p of popups){
+    ctx.globalAlpha = 1 - p.t/p.life;
+    ctx.font = '900 24px Trebuchet MS, sans-serif';
+    ctx.lineWidth = 5; ctx.strokeStyle = 'rgba(0,0,0,0.55)';
+    ctx.strokeText(p.text, p.x, p.y);
+    ctx.fillStyle = p.color; ctx.fillText(p.text, p.x, p.y);
+  }
+  ctx.globalAlpha = 1;
+
+  // HUD
+  ctx.textAlign = 'left';
+  ctx.font = '900 26px Trebuchet MS, sans-serif';
+  ctx.fillStyle = '#fff';
+  ctx.fillText(score + '', 18, 96);
+  ctx.font = '700 13px Trebuchet MS, sans-serif';
+  ctx.fillStyle = '#c4b5fd';
+  ctx.fillText(rankFor(score).toUpperCase(), 18, 114);
+  if(combo >= 3){
+    ctx.fillStyle = '#4ade80'; ctx.font = '900 18px Trebuchet MS, sans-serif';
+    ctx.fillText('COMBO x' + combo, 18, 140);
+  }
+  // hearts
+  for(let i=0;i<3;i++){
+    ctx.font = '24px sans-serif';
+    ctx.globalAlpha = i < hearts ? 1 : 0.22;
+    ctx.fillText('❤️', W-118 + i*36, 98);
+  }
+  ctx.globalAlpha = 1;
+  // miss pips
+  for(let i=0;i<3;i++){
+    ctx.beginPath();
+    ctx.fillStyle = i < missPips ? '#ef4444' : 'rgba(255,255,255,0.18)';
+    ctx.arc(W-104 + i*36, 122, 6, 0, 7); ctx.fill();
+  }
+  if(high > 0){
+    ctx.textAlign = 'right';
+    ctx.font = '700 13px Trebuchet MS, sans-serif';
+    ctx.fillStyle = '#94a3b8';
+    ctx.fillText('BEST ' + high, W-16, 148);
+  }
+  ctx.restore();
+
+  if(state === 'menu'){
+    ctx.fillStyle = 'rgba(8,4,20,0.72)'; ctx.fillRect(0, 0, W, H);
+    ctx.textAlign = 'center';
+    ctx.font = '900 52px Trebuchet MS, sans-serif';
+    ctx.lineWidth = 9; ctx.strokeStyle = '#7c3aed';
+    ctx.strokeText('SUSHI IS SUS!', W/2, 220);
+    ctx.fillStyle = '#f472b6'; ctx.fillText('SUSHI IS SUS!', W/2, 220);
+    ctx.font = '900 22px Trebuchet MS, sans-serif';
+    ctx.fillStyle = '#fff';
+    ctx.fillText('Grab the glow. Dodge the anger.', W/2, 268);
+    ctx.font = '700 17px Trebuchet MS, sans-serif';
+    ctx.fillStyle = '#c4b5fd';
+    ctx.fillText('Move: mouse / finger / arrows', W/2, 420);
+    ctx.fillText('Grab: tap / click / SPACE', W/2, 448);
+    ctx.fillText('The belt WILL betray you.', W/2, 476);
+    ctx.font = '900 26px Trebuchet MS, sans-serif';
+    ctx.fillStyle = '#4ade80';
+    ctx.fillText('▶ TAP TO PLAY', W/2, 540);
+    if(high > 0){ ctx.font = '700 15px Trebuchet MS, sans-serif'; ctx.fillStyle = '#94a3b8'; ctx.fillText('Best: ' + high + (goldSticks ? '  •  golden chopsticks unlocked!' : ''), W/2, 576); }
+  }
+  if(state === 'pause'){
+    ctx.fillStyle = 'rgba(8,4,20,0.7)'; ctx.fillRect(0, 0, W, H);
+    ctx.textAlign = 'center';
+    ctx.font = '900 44px Trebuchet MS, sans-serif';
+    ctx.fillStyle = '#fff'; ctx.fillText('PAUSED', W/2, 340);
+    ctx.font = '700 17px Trebuchet MS, sans-serif'; ctx.fillStyle = '#c4b5fd';
+    ctx.fillText('Tap or press P to resume', W/2, 380);
+  }
+  if(state === 'over'){
+    ctx.fillStyle = 'rgba(8,4,20,0.78)'; ctx.fillRect(0, 0, W, H);
+    ctx.textAlign = 'center';
+    ctx.font = '900 46px Trebuchet MS, sans-serif';
+    ctx.lineWidth = 8; ctx.strokeStyle = '#7c3aed';
+    ctx.strokeText('BELT DOWN!', W/2, 216);
+    ctx.fillStyle = '#f472b6'; ctx.fillText('BELT DOWN!', W/2, 216);
+    ctx.font = '700 19px Trebuchet MS, sans-serif';
+    ctx.fillStyle = '#fff';
+    ctx.fillText(overLine, W/2, 262);
+    ctx.font = '900 40px Trebuchet MS, sans-serif';
+    ctx.fillStyle = '#facc15';
+    ctx.fillText(score + ' pts', W/2, 322);
+    ctx.font = '900 21px Trebuchet MS, sans-serif';
+    ctx.fillStyle = '#4ade80';
+    ctx.fillText(finalRank, W/2, 356);
+    ctx.font = '700 15px Trebuchet MS, sans-serif';
+    ctx.fillStyle = '#94a3b8';
+    ctx.fillText('Best combo x' + bestCombo + '  •  Best score ' + high, W/2, 388);
+    // restart button
+    ctx.fillStyle = '#22c55e'; rr(W/2-110, 424, 220, 56, 14); ctx.fill();
+    ctx.fillStyle = '#052e16'; ctx.font = '900 24px Trebuchet MS, sans-serif';
+    ctx.fillText('↻ ONE MORE TRY', W/2, 460);
+    // copy button
+    ctx.fillStyle = '#334155'; rr(W/2-110, 496, 220, 48, 14); ctx.fill();
+    ctx.fillStyle = '#e2e8f0'; ctx.font = '900 19px Trebuchet MS, sans-serif';
+    ctx.fillText('📋 COPY RESULT', W/2, 527);
+  }
+}
+
+// ---------- input ----------
+function toGame(e){
+  const r = cv.getBoundingClientRect();
+  const cx = (e.touches ? e.touches[0].clientX : e.clientX);
+  return { x: (cx - r.left) * (W / r.width) };
+}
+let lastCopyTap = 0;
+function press(x, isTap){
+  if(state === 'menu'){ reset(); state = 'play'; return; }
+  if(state === 'pause'){ state = 'play'; return; }
+  if(state === 'over'){
+    // buttons: restart 424-480, copy 496-544 (y in game coords need full mapping)
+    return;
+  }
+  if(isTap) grab();
+}
+function pressAt(clientX, clientY){
+  const r = cv.getBoundingClientRect();
+  const gx = (clientX - r.left) * (W / r.width);
+  const gy = (clientY - r.top) * (H / r.height);
+  if(state === 'over'){
+    if(gy >= 424 && gy <= 480 && gx >= W/2-110 && gx <= W/2+110){ reset(); state = 'play'; return; }
+    if(gy >= 496 && gy <= 544 && gx >= W/2-110 && gx <= W/2+110){
+      const txt = 'I scored ' + score + ' in SUSHI IS SUS! (' + finalRank + ') — the belt reversed, the sushi grew legs. 🍣 https://tuannx.github.io/daily-mini-games/games/sushi-is-sus.html';
+      if(navigator.clipboard) navigator.clipboard.writeText(txt).catch(()=>{});
+      lastCopyTap = performance.now();
+      popup(W/2, 580, "COPIED!", '#22d3ee');
+      return;
+    }
+    return;
+  }
+  press(gx, true);
+}
+cv.addEventListener('pointerdown', e => { e.preventDefault(); audio(); pressAt(e.clientX, e.clientY); });
+cv.addEventListener('pointermove', e => {
+  if(state !== 'play') return;
+  const g = toGame(e); pandaTX = Math.max(36, Math.min(W-36, g.x));
+});
+cv.addEventListener('touchstart', e => e.preventDefault(), {passive:false});
+cv.addEventListener('touchmove', e => {
+  e.preventDefault();
+  if(state !== 'play' || !e.touches[0]) return;
+  const g = toGame(e); pandaTX = Math.max(36, Math.min(W-36, g.x));
+}, {passive:false});
+window.addEventListener('keydown', e => {
+  keys[e.key] = true;
+  if(e.key === ' '){ e.preventDefault(); audio();
+    if(state === 'menu'){ reset(); state = 'play'; }
+    else if(state === 'over'){ reset(); state = 'play'; }
+    else if(state === 'pause'){ state = 'play'; }
+    else grab();
+  }
+  if((e.key === 'p' || e.key === 'P' || e.key === 'Escape')){
+    if(state === 'play') state = 'pause';
+    else if(state === 'pause') state = 'play';
+  }
+  if(e.key === 'Enter' && state !== 'play'){ reset(); state = 'play'; }
+});
+window.addEventListener('keyup', e => { keys[e.key] = false; });
+
+// ---------- fit + loop ----------
+function fit(){
+  const s = Math.min(window.innerWidth / W, window.innerHeight / H);
+  cv.style.width = (W * s) + 'px';
+  cv.style.height = (H * s) + 'px';
+}
+window.addEventListener('resize', fit);
+fit();
+let last = performance.now();
+function loop(now){
+  let dt = (now - last) / 1000; last = now;
+  if(dt > 0.05) dt = 0.05;
+  if(state !== 'pause') update(dt);
+  draw();
+  requestAnimationFrame(loop);
+}
+requestAnimationFrame(loop);
+</script>
+</body>
+</html>

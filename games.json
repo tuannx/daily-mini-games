@@ -447,5 +447,14 @@
   "mechanic": "Rage-meter timing smash (needle timing, bomb restraint, helmets, dodging objects, drunk needle, boss fridge)",
   "tagline": "Tap in the red zone. Smash everything. Do NOT smash the bomb.",
   "title": "RAGE SMASH ROOM!"
+ },
+ {
+  "date": "2026-11-20",
+  "day": 51,
+  "emoji": "🍣",
+  "file": "games/sushi-is-sus.html",
+  "mechanic": "Conveyor-belt sushi grabber (belt reverses, sushi grows legs and dodges, wasabi bombs, soy shield)",
+  "tagline": "Grab the glow. Dodge the anger. The belt WILL betray you — and the sushi grows legs.",
+  "title": "SUSHI IS SUS!"
  }
 ]
