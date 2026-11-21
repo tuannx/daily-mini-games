@@ -456,5 +456,14 @@
   "mechanic": "Conveyor-belt sushi grabber (belt reverses, sushi grows legs and dodges, wasabi bombs, soy shield)",
   "tagline": "Grab the glow. Dodge the anger. The belt WILL betray you — and the sushi grows legs.",
   "title": "SUSHI IS SUS!"
+ },
+ {
+  "date": "2026-11-21",
+  "day": 52,
+  "emoji": "🍔",
+  "file": "games/burger-betrayal.html",
+  "mechanic": "Dodging-ingredient burger stacker (tomato dodges, ketchup flips controls, angry fish hazard)",
+  "tagline": "Stack the burger. The tomato dodges. The ketchup flips you.",
+  "title": "BURGER BETRAYAL!"
  }
 ]
