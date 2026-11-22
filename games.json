@@ -465,5 +465,14 @@
   "mechanic": "Dodging-ingredient burger stacker (tomato dodges, ketchup flips controls, angry fish hazard)",
   "tagline": "Stack the burger. The tomato dodges. The ketchup flips you.",
   "title": "BURGER BETRAYAL!"
+ },
+ {
+  "date": "2026-11-22",
+  "day": 53,
+  "emoji": "☂️",
+  "file": "games/my-umbrella-hates-me.html",
+  "mechanic": "Umbrella rain catcher (umbrella flips & reverses controls, wind gusts, golden drop)",
+  "tagline": "Catch rain. Dodge hate. At 12s your umbrella flips — and reverses YOU.",
+  "title": "MY UMBRELLA HATES ME!"
  }
 ]

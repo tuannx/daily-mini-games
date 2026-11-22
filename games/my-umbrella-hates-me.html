@@ -1,0 +1,70 @@
+<!DOCTYPE html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
+<title>MY UMBRELLA HATES ME! — Day 53</title>
+<style>
+*{box-sizing:border-box}body{margin:0;background:#070b1e;color:#fff;font-family:system-ui,Arial;text-align:center;overflow:hidden}
+#wrap{max-width:480px;margin:0 auto;padding:8px}h1{font-size:22px;margin:6px;color:#6ee7ff;text-shadow:0 0 12px #0ea5e9}
+#hook{color:#fde047;font-weight:700}canvas{background:linear-gradient(#0f1b3d,#132a52);border:2px solid #22d3ee;border-radius:12px;width:100%;touch-action:none}
+button{background:#e11d48;color:#fff;border:0;padding:12px 22px;border-radius:999px;font-size:18px;font-weight:800;margin:6px}
+.small{font-size:13px;color:#cbd5e1}
+</style></head><body><div id="wrap">
+<h1>☂️ MY UMBRELLA HATES ME!</h1><div id="hook">Catch rain. Dodge hate.</div>
+<canvas id="c" width="420" height="560"></canvas><br>
+<button id="btn">▶ PLAY</button><button id="share">📋 COPY RESULT</button>
+<div class="small">← → / drag • Best: <span id="best">0</span></div></div>
+<script>
+const c=document.getElementById('c'),x=c.getContext('2d');let W=420,H=560;
+let playing=false,over=false,score=0,combo=0,lives=3,t=0,last=0,px=210,keys={},drops=[],parts=[],popup='',popT=0,flipped=false,flipT=0,wind=0,shake=0,goldAt=false;
+let best=+localStorage.getItem('umbrella_best')||0;document.getElementById('best').textContent=best;
+let clouds=[...Array(5)].map((_,i)=>({x:i*90+20,y:28+Math.random()*40,s:.3+Math.random()*.5,f:Math.random()<.5}));
+let puddles=[...Array(6)].map((_,i)=>({x:30+i*65,y:532,w:18+Math.random()*20}));
+function beep(f,d=.07,type='sine',v=.08){try{let a=new(window.AudioContext||window.webkitAudioContext)(),o=a.createOscillator(),g=a.createGain();o.type=type;o.frequency.value=f;g.gain.value=v;o.connect(g);g.connect(a.destination);o.start();g.gain.exponentialRampToValueAtTime(.001,a.currentTime+d);o.stop(a.currentTime+d)}catch(e){}}
+function spawn(){let r=Math.random(),type='drop';if(r<.22)type='hail';else if(r<.27&&t>38)type='gold';drops.push({x:20+Math.random()*380,y:-20,vy:150+Math.random()*90+t*2,type,r:type=='gold'?14:type=='hail'?13:10,ph:Math.random()*6})}
+function start(){playing=true;over=false;score=0;combo=0;lives=3;t=0;drops=[];flipped=false;flipT=0;document.getElementById('btn').textContent='↻ RESTART';beep(660)}
+document.getElementById('btn').onclick=start;
+document.getElementById('share').onclick=()=>{let s=`I scored ${score} in MY UMBRELLA HATES ME! My umbrella flipped on me. ☂️ https://tuannx.github.io/daily-mini-games/games/my-umbrella-hates-me.html`;navigator.clipboard&&navigator.clipboard.writeText(s);alert('Copied!')};
+addEventListener('keydown',e=>keys[e.key]=true);addEventListener('keyup',e=>keys[e.key]=false);
+let drag=false;c.addEventListener('pointerdown',e=>{drag=true;move(e)});c.addEventListener('pointermove',e=>drag&&move(e));addEventListener('pointerup',()=>drag=false);
+function move(e){let r=c.getBoundingClientRect();px=(e.clientX-r.left)*W/r.width}
+function face(cx,cy,mood,s=1){x.fillStyle='#fff';x.beginPath();x.arc(cx-6*s,cy,3*s,0,7);x.arc(cx+6*s,cy,3*s,0,7);x.fill();x.fillStyle='#111';x.beginPath();x.arc(cx-6*s,cy,2*s,0,7);x.arc(cx+6*s,cy,2*s,0,7);x.fill();x.strokeStyle='#111';x.lineWidth=2;x.beginPath();if(mood=='happy')x.arc(cx,cy+2,6*s,.2,Math.PI-.2);else if(mood=='angry'){x.moveTo(cx-6,cy+8);x.lineTo(cx+6,cy+8)}else x.arc(cx,cy+9,5*s,Math.PI,0);x.stroke()}
+function draw(){x.clearRect(0,0,W,H);if(shake){x.save();x.translate((Math.random()-.5)*shake,(Math.random()-.5)*shake)}
+// clouds bg objects
+clouds.forEach(cl=>{cl.x+=cl.s*(wind?0.6:0.2);if(cl.x>460)cl.x=-40;x.fillStyle='#334155';x.beginPath();x.ellipse(cl.x,cl.y,34,16,0,0,7);x.ellipse(cl.x+18,cl.y-6,24,14,0,0,7);x.fill();x.font='14px serif';x.fillText(cl.f?'😴':'😐',cl.x-7,cl.y+5)});
+// puddles
+puddles.forEach(p=>{x.fillStyle='rgba(56,189,248,.5)';x.beginPath();x.ellipse(p.x,p.y,p.w+score*.02,6,0,0,7);x.fill()});
+// drops
+drops.forEach(d=>{x.save();x.translate(d.x,d.y);let sq=1+Math.sin(t*8+d.ph)*.08;x.scale(sq,1/sq);
+if(d.type=='drop'){x.shadowColor='#38bdf8';x.shadowBlur=16;x.fillStyle='#38bdf8';x.beginPath();x.moveTo(0,-14);x.quadraticCurveTo(11,4,8,10);x.arc(0,10,8,0,Math.PI);x.quadraticCurveTo(-11,4,0,-14);x.fill();x.shadowBlur=0;face(0,6,'happy',.7)}
+else if(d.type=='gold'){x.shadowColor='#facc15';x.shadowBlur=20;x.fillStyle='#facc15';x.beginPath();x.arc(0,0,14,0,7);x.fill();x.shadowBlur=0;x.fillText('👑',-8,-10);face(0,2,'happy',.8)}
+else{x.shadowColor='';x.fillStyle='#ef4444';x.beginPath();for(let i=0;i<8;i++){let a=i/8*6.28;x.lineTo(Math.cos(a)*14,Math.sin(a)*14)}x.fill();face(0,0,'angry',.9)}x.restore()});
+// player + umbrella
+let uw=flipped?86:110, uh=flipped?-26:26;
+x.fillStyle= flipped?'#f97316':'#a855f7';x.strokeStyle='#fff';x.lineWidth=2;
+x.beginPath();if(!flipped){x.arc(px,430,uw/2,Math.PI,0);x.lineTo(px,430)}else{x.arc(px,452,uw/2,0,Math.PI);x.lineTo(px,452)}x.fill();x.stroke();
+x.strokeStyle='#e2e8f0';x.beginPath();x.moveTo(px,430);x.lineTo(px,470);x.stroke();
+// kid
+x.fillStyle='#fbbf24';x.beginPath();x.arc(px,478,16,0,7);x.fill();face(px,476, lives<2?'sad':(flipped?'sad':'happy'),1);
+x.fillStyle='#22c55e';x.fillRect(px-14,494,28,30);
+// particles
+parts.forEach(p=>{x.fillStyle=p.col;x.globalAlpha=p.life;x.fillRect(p.x,p.y,4,4)});x.globalAlpha=1;
+if(shake)x.restore();
+// HUD
+x.fillStyle='#fff';x.font='bold 18px Arial';x.textAlign='left';x.fillText('⭐ '+score,10,24);x.fillText('❤️'.repeat(lives),300,24);x.fillText('🔥x'+combo,10,48);
+if(flipped){x.fillStyle='#fde047';x.font='bold 16px Arial';x.fillText('FLIPPED! REVERSED!',130,24)}
+if(popup&&popT>0){x.fillStyle='#fde047';x.font='bold 24px Arial';x.textAlign='center';x.fillText(popup,W/2,180)}
+if(!playing&&!over){x.fillStyle='#fff';x.font='bold 26px Arial';x.textAlign='center';x.fillText('TAP PLAY!',W/2,280)}
+if(over){x.fillStyle='rgba(0,0,0,.7)';x.fillRect(0,200,W,170);x.fillStyle='#fff';x.font='bold 28px Arial';x.textAlign='center';x.fillText('SOAKED! 💦',W/2,260);x.font='18px Arial';let rank=score>120?'STORM LEGEND':score>70?'RAIN PRO':score>35?'PUDDLE PAL':'WET SOCK';x.fillText(rank+' • '+score+' pts',W/2,295);x.fillText('Tap RESTART',W/2,330)}
+}
+function loop(ts){let dt=Math.min(.033,(ts-last)/1000||0);last=ts;if(playing&&!over){t+=dt;
+let dir=(keys['ArrowRight']?1:0)-(keys['ArrowLeft']?1:0);if(flipped)dir*=-1;px+=dir*320*dt;if(t>24)wind=Math.sin(t*.7)*60;px+=wind*dt*.4;px=Math.max(40,Math.min(380,px));
+if(t>11&&t<12&&!flipped){popup='IT FLIPS!';popT=1}
+if(t>=12&&!flipped){flipped=true;beep(180,.2,'sawtooth')}
+if(t>50&&Math.random()<.01){popup='TINY UMBRELLA!';popT=1}
+if(Math.random()<dt*2.2)spawn();
+drops.forEach(d=>d.y+=d.vy*dt);drops=drops.filter(d=>{let caughtY=flipped?452:430;
+if(d.y>caughtY-12&&d.y<caughtY+18&&Math.abs(d.x-px)<(flipped?43:55)){if(d.type=='drop'){score+=5+combo;combo++;popup=combo>4?'COMBO!':'';popT=.6;beep(880)}else if(d.type=='gold'){score+=30;popup='GOLDEN!';popT=1;beep(1200)}else{lives--;combo=0;shake=8;popup='OUCH!';popT=.8;beep(120,.2,'square');if(lives<=0){over=true;playing=false;if(score>best){best=score;localStorage.setItem('umbrella_best',best);document.getElementById('best').textContent=best}}}return false}
+if(d.y>caughtY&&d.type!='hail'&&Math.abs(d.x-px)<70){popup='SO CLOSE!';popT=.5}
+if(d.y>H+20){if(d.type=='drop')combo=0;return false}return true});
+parts=parts.filter(p=>(p.life-=.02)>0);if(popT>0)popT-=dt;if(shake>0)shake-=.5}
+draw();requestAnimationFrame(loop)}requestAnimationFrame(loop);
+</script></body></html>
