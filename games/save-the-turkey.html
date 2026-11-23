@@ -1,0 +1,86 @@
+<!DOCTYPE html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
+<title>SAVE THE TURKEY!</title>
+<style>
+*{margin:0;padding:0;box-sizing:border-box}body{background:#0b0618;color:#fff;font-family:system-ui,sans-serif;display:flex;flex-direction:column;align-items:center;min-height:100vh;padding:10px}
+h1{font-size:22px;color:#ffb347;text-shadow:0 0 12px #ff7b00} .hook{color:#ffe9a8;font-weight:700;margin:4px}
+canvas{background:linear-gradient(#241040,#120826);border:2px solid #ff9f2e;border-radius:12px;touch-action:none;max-width:96vw}
+button{background:#ff9f2e;border:0;padding:10px 18px;border-radius:999px;font-weight:800;cursor:pointer;margin:6px}
+#hud{font-weight:700}.small{opacity:.8;font-size:13px}
+</style></head><body>
+<h1>🦃 SAVE THE TURKEY!</h1><div class="hook">Dodge forks. Eat corn. Don't get served.</div>
+<div id="hud">Score 0 · Best 0</div>
+<canvas id="c" width="420" height="560"></canvas>
+<div><button id="start">▶ PLAY</button><button id="share">📋 COPY RESULT</button></div>
+<div class="small">Drag / ← → to move · Golden corn = rare</div>
+<script>
+const cv=document.getElementById('c'),x=cv.getContext('2d');let W=420,H=560;
+let run=false,over=false,t=0,score=0,combo=0,best=+localStorage.getItem('stt_best')||0,shake=0,msg='',msgT=0,shield=0,invertUntil=0;
+let px=210,tx=210;const keys={};
+let items=[],parts=[],leaves=[];for(let i=0;i<14;i++)leaves.push({x:Math.random()*W,y:Math.random()*H,s:1+Math.random()*2,r:Math.random()*7});
+const ranks=[[0,'RAW BIRD'],[150,'WARM BIRD'],[350,'CRISPY ESCAPEE'],[600,'PARDONED LEGEND'],[900,'UNTOUCHABLE TURKEY']];
+function rank(){let r=ranks[0][1];for(const[a,b]of ranks)if(score>=a)r=b;return r}
+function beep(f=440,d=.07,type='square',v=.05){try{const a=beep.a||(beep.a=new(window.AudioContext||window.webkitAudioContext)());const o=a.createOscillator(),g=a.createGain();o.type=type;o.frequency.value=f;g.gain.value=v;o.connect(g);g.connect(a.destination);o.start();g.gain.exponentialRampToValueAtTime(.001,a.currentTime+d);o.stop(a.currentTime+d)}catch(e){}}
+function spawn(){const r=Math.random();const y=-30;
+ if(r<.42)items.push({k:'corn',x:30+Math.random()*360,y,vy:2+Math.random()*1.5+ t/900,ph:Math.random()*7});
+ else if(r<.78)items.push({k:'fork',x:30+Math.random()*360,y,vy:2.4+Math.random()*1.8+t/800,ph:Math.random()*7});
+ else if(r<.88)items.push({k:'gravy',x:30+Math.random()*360,y,vy:2+Math.random(),ph:0});
+ else if(r<.95)items.push({k:'pie',x:30+Math.random()*360,y,vy:2.2,ph:0});
+ else items.push({k:'gold',x:30+Math.random()*360,y,vy:3,ph:0});}
+let hand=null,handT=0;
+function reset(){run=true;over=false;t=0;score=0;combo=0;items=[];parts=[];px=tx=210;shield=0;hand=null;invertUntil=0;msg='RUN, BIRD!';msgT=90;beep(523,.08)}
+function burst(pxx,pyy,col,n=10){for(let i=0;i<n;i++)parts.push({x:pxx,y:pyy,vx:(Math.random()-.5)*6,vy:(Math.random()-.5)*6,l:22,col})}
+function drawTurkey(){const inv=t<invertUntil;const sq=1+Math.sin(t*.2)*.04;x.save();x.translate(px,500);x.scale(inv?-sq:sq,1/Math.max(.7,sq)); // body
+ x.fillStyle='#b5651d';x.beginPath();x.ellipse(0,0,34,26,0,0,7);x.fill();
+ x.fillStyle='#8b4513';x.beginPath();x.ellipse(-30,-14,16,10,-.7,0,7);x.fill();x.beginPath();x.ellipse(30,-14,16,10,.7,0,7);x.fill();x.beginPath();x.ellipse(0,-24,18,12,0,0,7);x.fill();
+ x.fillStyle='#d2691e';x.beginPath();x.arc(18,-6,15,0,7);x.fill();
+ x.fillStyle='#fff';x.beginPath();x.arc(22,-10,6,0,7);x.fill();x.fillStyle='#111';x.beginPath();x.arc(23,-10,3,0,7);x.fill();
+ x.fillStyle='#ffb300';x.beginPath();x.moveTo(32,-6);x.lineTo(44,-2);x.lineTo(32,2);x.fill();
+ x.fillStyle='#e53935';x.beginPath();x.ellipse(34,4,4,7,.3,0,7);x.fill();
+ if(shield>0){x.strokeStyle='#ffd54f';x.lineWidth=3;x.beginPath();x.arc(0,-4,48,0,7);x.stroke()}
+ x.restore();if(inv){x.fillStyle='#ff5252';x.font='bold 13px system-ui';x.textAlign='center';x.fillText('CONTROLS FLIPPED!',px,440)}}
+function loop(){requestAnimationFrame(loop);x.clearRect(0,0,W,H);
+ // leaves bg
+ x.fillStyle='#ffcc80';for(const l of leaves){l.y+=l.s;l.x+=Math.sin(l.y*.02+l.r)*.6;if(l.y>H)l.y=-10;x.save();x.translate(l.x,l.y);x.rotate(l.r+ l.y*.01);x.fillRect(-5,-2,10,4);x.restore()}
+ x.fillStyle='#3e2723';x.fillRect(0,532,W,28);x.fillStyle='#5d4037';x.fillRect(0,532,W,4);
+ if(run&&!over){t++;const inv=t<invertUntil;let mv=0;if(keys.ArrowLeft)mv-=5;if(keys.ArrowRight)mv+=5;if(inv)mv=-mv;tx+=mv;tx=Math.max(36,Math.min(384,tx));px+=(tx-px)*.35;
+  if(t%26===0)spawn(); if(t===720){invertUntil=t+300;msg='IT WOKE UP!';msgT=90;burst(px,470,'#ffd54f',16);beep(180,.2,'sawtooth')}
+  if(t===1500&&!hand){hand={x:-80,dir:1};msg='CHEF HAND!';msgT=80}
+  if(t===2400){msg='DINNER RUSH!';msgT=80}
+  if(hand){hand.x+=hand.dir*4.2;if(hand.x>W+80)hand=null;if(Math.abs(hand.x-px)<52&&Math.abs(470-500)<60){hit()}}
+  for(const it of items){it.y+=it.vy*(t>2400?1.3:1);it.x+=Math.sin(it.ph+t*.05)*.7;
+   if(Math.abs(it.x-px)<42&&Math.abs(it.y-500)<40){collect(it);it.y=9999}
+   if(it.k==='fork'&&Math.abs(it.x-px)<58&&Math.abs(it.y-500)>40&&Math.abs(it.y-500)<62&&!it.nm){it.nm=1;score+=5;msg='SO CLOSE!';msgT=40;beep(880,.05)}}
+  items=items.filter(i=>i.y<H+40);
+  for(const p of parts){p.x+=p.vx;p.y+=p.vy;p.l--} parts=parts.filter(p=>p.l>0);
+  if(msgT>0)msgT--;
+ }
+ // items
+ for(const it of items){x.save();x.translate(it.x,it.y);const pu=1+Math.sin(t*.15+it.ph)*.12;x.scale(pu,pu);
+  if(it.k==='corn'){x.shadowColor='#ffee58';x.shadowBlur=16;x.fillStyle='#ffee58';x.beginPath();x.ellipse(0,0,10,16,0,0,7);x.fill();x.shadowBlur=0;x.fillStyle='#43a047';x.fillRect(-8,12,16,7)}
+  else if(it.k==='gold'){x.shadowColor='#ffd700';x.shadowBlur=22;x.fillStyle='#ffd700';x.beginPath();x.ellipse(0,0,12,18,0,0,7);x.fill();x.shadowBlur=0;x.fillStyle='#fff';x.font='12px serif';x.textAlign='center';x.fillText('★',0,4)}
+  else if(it.k==='fork'){x.rotate(Math.PI);x.fillStyle='#e53935';x.fillRect(-3,-16,6,26);for(let i=-1;i<2;i++)x.fillRect(i*6-2,8,4,12);x.fillStyle='#fff';x.font='13px serif';x.textAlign='center';x.fillText('😠',0,-20)}
+  else if(it.k==='gravy'){x.fillStyle='#6d4c41';x.beginPath();x.ellipse(0,0,18,10,0,0,7);x.fill();x.fillStyle='#a1887f';x.beginPath();x.ellipse(-4,-3,8,4,0,0,7);x.fill()}
+  else{x.fillStyle='#ffcc80';x.beginPath();x.arc(0,0,16,0,7);x.fill();x.fillStyle='#ef6c00';x.beginPath();x.arc(0,0,10,0,7);x.fill();x.fillStyle='#fff';x.font='10px serif';x.textAlign='center';x.fillText('🛡',0,4)}
+  x.restore()}
+ if(hand){x.save();x.translate(hand.x,470);x.fillStyle='#ffccbc';x.beginPath();x.ellipse(0,0,52,20,0,0,7);x.fill();for(let i=0;i<4;i++)x.fillRect(-36+i*20,12,12,26);x.fillStyle='#111';x.font='16px serif';x.fillText('😤',-8,4);x.restore()}
+ for(const p of parts){x.globalAlpha=p.l/22;x.fillStyle=p.col;x.fillRect(p.x,p.y,5,5);x.globalAlpha=1}
+ if(run||over)drawTurkey();
+ if(msgT>0&&msg){x.fillStyle='#fff';x.font='bold 20px system-ui';x.textAlign='center';x.strokeStyle='#000';x.strokeText(msg,W/2,70);x.fillText(msg,W/2,70)}
+ if(!run&&!over){x.fillStyle='#fff';x.font='bold 24px system-ui';x.textAlign='center';x.fillText('TAP PLAY 🦃',W/2,280)}
+ if(over){x.fillStyle='rgba(0,0,0,.65)';x.fillRect(0,180,W,170);x.fillStyle='#ffb347';x.font='bold 26px system-ui';x.textAlign='center';x.fillText('SERVED! 🍽️',W/2,225);x.fillStyle='#fff';x.font='16px system-ui';x.fillText('Score '+score+' · '+rank(),W/2,258);x.fillText('The gravy hat was not a choice.',W/2,286);x.font='bold 15px system-ui';x.fillText('Tap PLAY to run again',W/2,320)}
+ document.getElementById('hud').textContent=`Score ${score} · Combo x${combo} · Best ${best} · ${rank()}${shield>0?' · 🛡':''}`;
+ if(shake>0)shake--;}
+function collect(it){if(it.k==='corn'){combo++;score+=10+combo*2;burst(it.x,it.y,'#ffee58',8);beep(660+combo*20,.06)}
+ else if(it.k==='gold'){score+=75;combo+=3;msg='GOLDEN CORN!';msgT=60;burst(it.x,it.y,'#ffd700',20);beep(1200,.15)}
+ else if(it.k==='pie'){shield=1;msg='PIE SHIELD!';msgT=60;beep(520,.1,'triangle')}
+ else if(it.k==='gravy'){score=Math.max(0,score-15);combo=0;msg='GRAVY SLOW!';msgT=50;tx=px;beep(160,.15,'sawtooth')}
+ else if(it.k==='fork'){hit()}}
+function hit(){if(shield>0){shield=0;msg='PIE SAVED YOU!';msgT=70;burst(px,480,'#ffcc80',16);beep(700,.12);return}
+ over=true;run=false;best=Math.max(best,score);localStorage.setItem('stt_best',best);burst(px,480,'#e53935',26);beep(110,.35,'sawtooth',.08)}
+cv.addEventListener('pointermove',e=>{const r=cv.getBoundingClientRect();tx=(e.clientX-r.left)*(W/r.width)});cv.addEventListener('pointerdown',e=>{const r=cv.getBoundingClientRect();tx=(e.clientX-r.left)*(W/r.width)});
+addEventListener('keydown',e=>keys[e.key]=1);addEventListener('keyup',e=>keys[e.key]=0);
+document.getElementById('start').onclick=reset;
+document.getElementById('share').onclick=async()=>{const s=`I scored ${score} in SAVE THE TURKEY! 🦃 Rank: ${rank()} — https://tuannx.github.io/daily-mini-games/games/save-the-turkey.html`;try{await navigator.clipboard.writeText(s)}catch(e){}document.getElementById('share').textContent='✅ COPIED!'};
+loop();
+</script></body></html>

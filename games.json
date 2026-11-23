@@ -474,5 +474,14 @@
   "mechanic": "Umbrella rain catcher (umbrella flips & reverses controls, wind gusts, golden drop)",
   "tagline": "Catch rain. Dodge hate. At 12s your umbrella flips — and reverses YOU.",
   "title": "MY UMBRELLA HATES ME!"
+ },
+ {
+  "date": "2026-11-23",
+  "day": 54,
+  "emoji": "🦃",
+  "file": "games/save-the-turkey.html",
+  "mechanic": "Runaway-turkey dodge & collect (wakes up & flips controls, chef-hand sweep)",
+  "tagline": "Dodge forks. Eat corn. At 12s the roast wakes up — and flips YOU.",
+  "title": "SAVE THE TURKEY!"
  }
 ]
