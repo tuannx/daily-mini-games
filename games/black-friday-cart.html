@@ -1,0 +1,88 @@
+<!DOCTYPE html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
+<title>BLACK FRIDAY CART!</title>
+<style>
+*{margin:0;padding:0;box-sizing:border-box}body{background:#0b0618;color:#fff;font-family:system-ui,sans-serif;display:flex;flex-direction:column;align-items:center;min-height:100vh;padding:10px}
+h1{font-size:22px;color:#4dff88;text-shadow:0 0 12px #00c853} .hook{color:#ffe9a8;font-weight:700;margin:4px}
+canvas{background:linear-gradient(#1a1033,#0d0620);border:2px solid #4dff88;border-radius:12px;touch-action:none;max-width:96vw}
+button{background:#4dff88;border:0;padding:10px 18px;border-radius:999px;font-weight:800;cursor:pointer;margin:6px}
+#hud{font-weight:700}.small{opacity:.8;font-size:13px}
+</style></head><body>
+<h1>🛒 BLACK FRIDAY CART!</h1><div class="hook">Grab deals. Dodge shoppers. Fake deals bite.</div>
+<div id="hud">Score 0 · Best 0</div>
+<canvas id="c" width="420" height="560"></canvas>
+<div><button id="start">▶ PLAY</button><button id="share">📋 COPY RESULT</button></div>
+<div class="small">Drag / ← → to switch lanes · Glowing TV = deal</div>
+<script>
+const cv=document.getElementById('c'),x=cv.getContext('2d');let W=420,H=560;
+const LANES=[70,210,350];
+let run=false,over=false,t=0,score=0,combo=0,best=+localStorage.getItem('bfc_best')||0,msg='',msgT=0,shield=0,spinUntil=0,wobble=false;
+let lane=1,px=210;const keys={};
+let items=[],parts=[],tags=[];for(let i=0;i<16;i++)tags.push({x:Math.random()*W,y:Math.random()*H,s:1+Math.random()*2,r:Math.random()*7});
+const ranks=[[0,'WINDOW SHOPPER'],[150,'CART ROOKIE'],[350,'DEAL HUNTER'],[600,'DOORBUSTER'],[900,'BLACK FRIDAY LEGEND']];
+function rank(){let r=ranks[0][1];for(const[a,b]of ranks)if(score>=a)r=b;return r}
+function beep(f=440,d=.07,type='square',v=.05){try{const a=beep.a||(beep.a=new(window.AudioContext||window.webkitAudioContext)());const o=a.createOscillator(),g=a.createGain();o.type=type;o.frequency.value=f;g.gain.value=v;o.connect(g);g.connect(a.destination);o.start();g.gain.exponentialRampToValueAtTime(.001,a.currentTime+d);o.stop(a.currentTime+d)}catch(e){}}
+function spawn(){const r=Math.random();const ln=Math.floor(Math.random()*3);const y=-30;
+ if(r<.40)items.push({k:'deal',lane:ln,x:LANES[ln],y,vy:2.4+Math.random()*1.4+t/900,ph:Math.random()*7});
+ else if(r<.70)items.push({k:'shopper',lane:ln,x:LANES[ln],y,vy:2.6+Math.random()*1.6+t/800,ph:Math.random()*7});
+ else if(r<.80)items.push({k:'fake',lane:ln,x:LANES[ln],y,vy:2.4,ph:0,morph:0});
+ else if(r<.88)items.push({k:'banana',lane:ln,x:LANES[ln],y,vy:2.4,ph:0});
+ else if(r<.95)items.push({k:'coupon',lane:ln,x:LANES[ln],y,vy:2.2,ph:0});
+ else items.push({k:'gold',lane:ln,x:LANES[ln],y,vy:3,ph:0});}
+function reset(){run=true;over=false;t=0;score=0;combo=0;items=[];parts=[];lane=1;px=210;shield=0;spinUntil=0;wobble=false;msg='GRAB THE TV!';msgT=90;beep(523,.08)}
+function burst(bx,by,col,n=10){for(let i=0;i<n;i++)parts.push({x:bx,y:by,vx:(Math.random()-.5)*6,vy:(Math.random()-.5)*6,l:22,col})}
+function drawCart(){const spin=t<spinUntil;const sq=1+Math.sin(t*.25)*.05;x.save();x.translate(px,480);if(spin)x.rotate(Math.sin(t*.6)*.5);else if(wobble)x.rotate(Math.sin(t*.3)*.12);x.scale(sq,1/Math.max(.7,sq));
+ x.strokeStyle='#cfd8dc';x.lineWidth=4;x.strokeRect(-30,-22,60,30);x.beginPath();x.moveTo(-30,-8);x.lineTo(30,-8);x.moveTo(-30,4);x.lineTo(30,4);x.stroke();
+ x.fillStyle='#4dff88';x.beginPath();x.arc(-18,16,7,0,7);x.fill();if(!wobble){x.fillStyle='#4dff88';x.beginPath();x.arc(18,16,7,0,7);x.fill()}else{x.fillStyle='#ff5252';x.font='11px serif';x.textAlign='center';x.fillText('✖',18,20)}
+ x.fillStyle='#fff';x.beginPath();x.arc(0,-32,11,0,7);x.fill();x.fillStyle='#111';x.beginPath();x.arc(-3,-34,2,0,7);x.fill();x.beginPath();x.arc(4,-34,2,0,7);x.fill();x.fillStyle='#111';x.fillRect(-3,-27,7,2);
+ if(shield>0){x.strokeStyle='#ffd54f';x.lineWidth=3;x.beginPath();x.arc(0,-6,48,0,7);x.stroke()}
+ x.restore();if(spin){x.fillStyle='#ffeb3b';x.font='bold 13px system-ui';x.textAlign='center';x.fillText('SLIPPED!',px,420)}}
+function loop(){requestAnimationFrame(loop);x.clearRect(0,0,W,H);
+ x.strokeStyle='rgba(255,255,255,.18)';x.lineWidth=2;for(const lx of[140,280]){x.beginPath();x.moveTo(lx,0);x.lineTo(lx,H);x.stroke()}
+ x.fillStyle='#ff4081';for(const g of tags){g.y+=g.s;if(g.y>H)g.y=-10;x.save();x.translate(g.x,g.y);x.rotate(g.r+g.y*.01);x.globalAlpha=.5;x.fillRect(-9,-6,18,12);x.restore()}x.globalAlpha=1;
+ if(run&&!over){t++;
+  if(keys.ArrowLeft&&!keys._l){keys._l=1;lane=Math.max(0,lane-1)}if(!keys.ArrowLeft)keys._l=0;
+  if(keys.ArrowRight&&!keys._r){keys._r=1;lane=Math.min(2,lane+1)}if(!keys.ArrowRight)keys._r=0;
+  if(wobble&&t%180===0){lane=Math.max(0,Math.min(2,lane+(Math.random()<.5?-1:1)));msg='WHEEL WOBBLE!';msgT=45}
+  px+=(LANES[lane]-px)*.3;
+  if(t%30===0)spawn();
+  if(t===720){wobble=true;msg='WHEEL LOST!';msgT=90;burst(px,460,'#ff5252',16);beep(180,.2,'sawtooth')}
+  if(t===1500){msg='DOORBUSTER RUSH!';msgT=80;beep(700,.15)}
+  if(t===2400){msg='GOLD RUSH!';msgT=80}
+  const spd=t>=1500?1.3:1;
+  for(const it of items){it.y+=it.vy*spd;
+   if(it.k==='fake'&&it.y>170&&it.morph<30)it.morph++;
+   const harmful=it.k==='shopper'||it.k==='banana'||(it.k==='fake'&&it.morph>=30);
+   if(Math.abs(it.x-px)<44&&Math.abs(it.y-480)<42){collect(it,harmful);it.y=9999}
+   if(it.k==='shopper'&&!it.nm&&it.y>500&&Math.abs(it.x-px)>=44&&Math.abs(it.x-px)<90){it.nm=1;score+=5;msg='SO CLOSE!';msgT=40;beep(880,.05)}}
+  items=items.filter(i=>i.y<H+40);
+  for(const p of parts){p.x+=p.vx;p.y+=p.vy;p.l--}parts=parts.filter(p=>p.l>0);
+  if(msgT>0)msgT--;}
+ for(const it of items){x.save();x.translate(it.x,it.y);const pu=1+Math.sin(t*.15+it.ph)*.1;x.scale(pu,pu);
+  if(it.k==='deal'){x.shadowColor='#4dff88';x.shadowBlur=18;x.fillStyle='#263238';x.fillRect(-24,-16,48,32);x.fillStyle='#4dff88';x.fillRect(-20,-12,40,24);x.shadowBlur=0;x.fillStyle='#111';x.font='bold 10px system-ui';x.textAlign='center';x.fillText('-70%',0,4)}
+  else if(it.k==='gold'){x.shadowColor='#ffd700';x.shadowBlur=22;x.fillStyle='#4a3800';x.fillRect(-26,-18,52,36);x.fillStyle='#ffd700';x.fillRect(-22,-14,44,28);x.shadowBlur=0;x.fillStyle='#111';x.font='12px serif';x.textAlign='center';x.fillText('★',0,5)}
+  else if(it.k==='coupon'){x.fillStyle='#fff';x.fillRect(-20,-12,40,24);x.fillStyle='#7b1fa2';x.font='bold 11px system-ui';x.textAlign='center';x.fillText('🛡%',0,4)}
+  else if(it.k==='banana'){x.fillStyle='#ffeb3b';x.beginPath();x.arc(0,2,14,.2,2.8);x.lineTo(0,2);x.fill();x.fillStyle='#111';x.font='10px serif';x.textAlign='center';x.fillText('😏',0,-12)}
+  else if(it.k==='fake'){if(it.morph<30){const f=it.morph>0?(Math.floor(t/4)%2===0):false;x.shadowColor=f?'#ff5252':'#4dff88';x.shadowBlur=16;x.fillStyle=f?'#ff5252':'#263238';x.fillRect(-24,-16,48,32);x.fillStyle=f?'#fff':'#4dff88';x.fillRect(-20,-12,40,24);x.shadowBlur=0;x.fillStyle='#111';x.font='bold 10px system-ui';x.textAlign='center';x.fillText(it.morph>0?'?!':'-70%',0,4)}else{x.fillStyle='#b71c1c';x.beginPath();x.arc(0,0,20,0,7);x.fill();x.fillStyle='#fff';x.font='16px serif';x.textAlign='center';x.fillText('😠',0,6)}}
+  else{x.fillStyle='#b71c1c';x.beginPath();x.arc(0,-8,16,0,7);x.fill();x.fillStyle='#e53935';x.fillRect(-18,6,36,22);x.fillStyle='#fff';x.font='15px serif';x.textAlign='center';x.fillText('😠',0,-2)}
+  x.restore()}
+ for(const p of parts){x.globalAlpha=p.l/22;x.fillStyle=p.col;x.fillRect(p.x,p.y,5,5);x.globalAlpha=1}
+ if(run||over)drawCart();
+ if(msgT>0&&msg){x.fillStyle='#fff';x.font='bold 20px system-ui';x.textAlign='center';x.strokeStyle='#000';x.strokeText(msg,W/2,70);x.fillText(msg,W/2,70)}
+ if(!run&&!over){x.fillStyle='#fff';x.font='bold 24px system-ui';x.textAlign='center';x.fillText('TAP PLAY 🛒',W/2,280)}
+ if(over){x.fillStyle='rgba(0,0,0,.65)';x.fillRect(0,180,W,170);x.fillStyle='#4dff88';x.font='bold 26px system-ui';x.textAlign='center';x.fillText('CHECKED OUT! 💸',W/2,225);x.fillStyle='#fff';x.font='16px system-ui';x.fillText('Score '+score+' · '+rank(),W/2,258);x.fillText('Your wallet filed a complaint.',W/2,286);x.font='bold 15px system-ui';x.fillText('Tap PLAY to shop again',W/2,320)}
+ document.getElementById('hud').textContent=`Score ${score} · Combo x${combo} · Best ${best} · ${rank()}${shield>0?' · 🛡':''}`;}
+function collect(it,harmful){if(it.k==='deal'){combo++;score+=10+combo*2;burst(it.x,it.y,'#4dff88',8);beep(660+combo*20,.06)}
+ else if(it.k==='gold'){score+=75;combo+=3;msg='GOLDEN DEAL!';msgT=60;burst(it.x,it.y,'#ffd700',20);beep(1200,.15)}
+ else if(it.k==='coupon'){shield=1;msg='COUPON SHIELD!';msgT=60;beep(520,.1,'triangle')}
+ else if(it.k==='banana'){score=Math.max(0,score-15);combo=0;spinUntil=t+180;msg='BANANA SLIP!';msgT=60;beep(160,.2,'sawtooth')}
+ else if(harmful){hit()}}
+function hit(){if(shield>0){shield=0;msg='COUPON SAVED YOU!';msgT=70;burst(px,460,'#ffd54f',16);beep(700,.12);return}
+ over=true;run=false;best=Math.max(best,score);localStorage.setItem('bfc_best',best);burst(px,460,'#e53935',26);beep(110,.35,'sawtooth',.08)}
+function setLane(clientX){const r=cv.getBoundingClientRect();const lx=(clientX-r.left)*(W/r.width);lane=lx<140?0:lx<280?1:2}
+cv.addEventListener('pointermove',e=>{if(run)setLane(e.clientX)});cv.addEventListener('pointerdown',e=>setLane(e.clientX));
+addEventListener('keydown',e=>keys[e.key]=1);addEventListener('keyup',e=>keys[e.key]=0);
+document.getElementById('start').onclick=reset;
+document.getElementById('share').onclick=async()=>{const s=`I scored ${score} in BLACK FRIDAY CART! 🛒 Rank: ${rank()} — https://tuannx.github.io/daily-mini-games/games/black-friday-cart.html`;try{await navigator.clipboard.writeText(s)}catch(e){}document.getElementById('share').textContent='✅ COPIED!'};
+loop();
+</script></body></html>

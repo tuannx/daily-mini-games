@@ -483,5 +483,14 @@
   "mechanic": "Runaway-turkey dodge & collect (wakes up & flips controls, chef-hand sweep)",
   "tagline": "Dodge forks. Eat corn. At 12s the roast wakes up — and flips YOU.",
   "title": "SAVE THE TURKEY!"
+ },
+ {
+  "date": "2026-11-24",
+  "day": 55,
+  "emoji": "🛒",
+  "file": "games/black-friday-cart.html",
+  "mechanic": "Lane-switch cart chaos (fake deals morph, wheel-loss wobble)",
+  "tagline": "Grab the TV. Dodge the shopper. At 12s your cart loses a wheel — and fake deals bite.",
+  "title": "BLACK FRIDAY CART!"
  }
 ]
