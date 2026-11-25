@@ -492,5 +492,14 @@
   "mechanic": "Lane-switch cart chaos (fake deals morph, wheel-loss wobble)",
   "tagline": "Grab the TV. Dodge the shopper. At 12s your cart loses a wheel — and fake deals bite.",
   "title": "BLACK FRIDAY CART!"
+ },
+ {
+  "date": "2026-11-25",
+  "day": 56,
+  "emoji": "🎈",
+  "file": "games/parade-panic.html",
+  "mechanic": "Hold-to-float parade balloon (leak size-pulses, wind gusts)",
+  "tagline": "Hold to float. The balloon leaks, the pigeons are furious, and the wind has plans.",
+  "title": "PARADE PANIC!"
  }
 ]

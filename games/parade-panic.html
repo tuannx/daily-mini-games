@@ -1,0 +1,91 @@
+<!DOCTYPE html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
+<title>PARADE PANIC!</title>
+<style>
+*{margin:0;padding:0;box-sizing:border-box}body{background:#0b0618;color:#fff;font-family:system-ui,sans-serif;display:flex;flex-direction:column;align-items:center;min-height:100vh;padding:10px}
+h1{font-size:22px;color:#ff8a65;text-shadow:0 0 12px #ff5722} .hook{color:#ffe9a8;font-weight:700;margin:4px}
+canvas{background:linear-gradient(#2a1a4a,#120826);border:2px solid #ff8a65;border-radius:12px;touch-action:none;max-width:96vw}
+button{background:#ff8a65;border:0;padding:10px 18px;border-radius:999px;font-weight:800;cursor:pointer;margin:6px}
+#hud{font-weight:700}.small{opacity:.8;font-size:13px}
+</style></head><body>
+<h1>🎈 PARADE PANIC!</h1><div class="hook">Hold to float. The balloon leaks.</div>
+<div id="hud">Score 0 · Best 0</div>
+<canvas id="c" width="420" height="560"></canvas>
+<div><button id="start">▶ PLAY</button><button id="share">📋 COPY RESULT</button></div>
+<div class="small">Hold SPACE / touch to rise · Release to sink · Glowing star = points</div>
+<script>
+const cv=document.getElementById('c'),x=cv.getContext('2d');let W=420,H=560;
+let run=false,over=false,t=0,score=0,combo=0,best=+localStorage.getItem('pp_best')||0,msg='',msgT=0,shield=0,holding=false;
+let by=280,bvy=0,leak=false,windOn=false,wind=0,windT=0,sizePulse=1;
+let gates=[],stars=[],parts=[],confs=[],pigeons=[];
+for(let i=0;i<22;i++)confs.push({x:Math.random()*W,y:Math.random()*H,s:.4+Math.random()*1.2,r:Math.random()*7,c:['#ff8a65','#4dff88','#ffd54f','#4fc3f7','#f472b6'][i%5]});
+const ranks=[[0,'BALLOON ROOKIE'],[200,'PARADE FLOATER'],[450,'SKY DANCER'],[750,'PARADE STAR'],[1100,'PARADE LEGEND']];
+const failLines=['The parade moved on without you.','Somewhere, a handler is still running.','You popped. The crowd gasped, then clapped.','Deflated. But make it festive.'];
+function rank(){let r=ranks[0][1];for(const[a,b]of ranks)if(score>=a)r=b;return r}
+function beep(f=440,d=.07,type='square',v=.05){try{const a=beep.a||(beep.a=new(window.AudioContext||window.webkitAudioContext)());const o=a.createOscillator(),g=a.createGain();o.type=type;o.frequency.value=f;g.gain.value=v;o.connect(g);g.connect(a.destination);o.start();g.gain.exponentialRampToValueAtTime(.001,a.currentTime+d);o.stop(a.currentTime+d)}catch(e){}}
+function burst(bx,by,col,n=10){for(let i=0;i<n;i++)parts.push({x:bx,y:by,vx:(Math.random()-.5)*7,vy:(Math.random()-.5)*7,l:24,col})}
+function reset(){run=true;over=false;t=0;score=0;combo=0;by=280;bvy=0;gates=[];stars=[];parts=[];pigeons=[];shield=0;leak=false;windOn=false;wind=0;msg='HOLD TO FLOAT!';msgT=80;beep(523,.08)}
+function spawnGate(){const gap=170-Math.min(50,t/300);const gy=90+Math.random()*(H-180);gates.push({x:W+40,gy,gap,passed:false});
+ if(Math.random()<.8)stars.push({k:'star',x:W+40,y:gy,vx:2.2});
+ if(Math.random()<.10)stars.push({k:'gold',x:W+90,y:gy+(Math.random()<.5?-46:46),vx:2.2});
+ if(Math.random()<.13)stars.push({k:'tape',x:W+130,y:60+Math.random()*(H-120),vx:2.2});}
+function spawnPigeon(){pigeons.push({x:W+30,y:40+Math.random()*(H-80),vx:3.4+Math.random()*1.4,ph:Math.random()*7,nm:false})}
+function radius(){return 26*sizePulse}
+function pop(){if(shield>0){shield=0;msg='TAPE SAVED YOU!';msgT=70;burst(110,by,'#ffd54f',16);beep(700,.12);bvy=-4;return}
+ over=true;run=false;best=Math.max(best,score);localStorage.setItem('pp_best',best);burst(110,by,'#ff8a65',30);burst(110,by,'#ffd54f',18);beep(90,.4,'sawtooth',.09)}
+function loop(){requestAnimationFrame(loop);x.clearRect(0,0,W,H);
+ for(const c of confs){c.y+=c.s;c.x+=Math.sin(t*.02+c.r)*.3;if(c.y>H+6){c.y=-6;c.x=Math.random()*W}x.save();x.translate(c.x,c.y);x.rotate(c.r+t*.01);x.globalAlpha=.55;x.fillStyle=c.c;x.fillRect(-4,-2,8,4);x.restore()}x.globalAlpha=1;
+ x.fillStyle='#1d1038';x.fillRect(0,H-34,W,34);x.fillStyle='#ffd54f';for(let i=0;i<10;i++){const hx=20+i*42+((t*1.2)%42)-42;x.beginPath();x.arc(hx,H-14,6,0,7);x.fill();x.fillStyle='#ffd54f'}
+ if(run&&!over){t++;
+  if(t===720){leak=true;msg='IT LEAKS!';msgT=90;beep(200,.2,'sawtooth')}
+  if(t===1500){windOn=true;msg='WIND!';msgT=90;beep(600,.15)}
+  if(t===2400){msg='FINALE SPEED!';msgT=90;beep(900,.15)}
+  if(leak)sizePulse=1+Math.sin(t*.09)*.22+Math.sin(t*.031)*.1;else sizePulse=1+Math.sin(t*.08)*.04;
+  if(windOn){windT--;if(windT<=0){wind=(Math.random()<.5?-1:1)*(1.2+Math.random()*1.6);windT=70+Math.random()*70;if(Math.abs(wind)>1.6){msg=wind<0?'GUST UP!':'GUST DOWN!';msgT=40}}}
+  else wind*=.95;
+  bvy+=holding?-0.42:0.34;bvy+=wind*.03;bvy*=.96;by+=bvy;
+  if(by<H-60&&t%105===0)spawnGate();
+  if(t>500&&t%260===0)spawnPigeon();
+  const spd=(t>=2400?1.35:1)*(leak?1.08:1);
+  for(const g of gates){g.x-=2.3*spd;
+   if(!g.passed&&g.x<110){g.passed=true;score+=20;combo++;beep(740,.06);
+    if(Math.abs(by-g.gy)+radius()>g.gap/2-6){score+=5;msg='SO CLOSE!';msgT=40}}
+   if(Math.abs(g.x-110)<radius()+13&&(by-radius()<g.gy-g.gap/2||by+radius()>g.gy+g.gap/2))pop();}
+  gates=gates.filter(g=>g.x>-60);
+  for(const s of stars){s.x-=s.vx*spd;
+   if(Math.abs(s.x-110)<radius()+14&&Math.abs(s.y-by)<radius()+14){if(s.k==='star'){combo++;score+=15+combo;burst(s.x,s.y,'#4dff88',8);beep(880+combo*15,.06)}else if(s.k==='gold'){score+=75;combo+=3;msg='GOLDEN STAR!';msgT=60;burst(s.x,s.y,'#ffd700',20);beep(1250,.15)}else{shield=1;msg='TAPE PATCH!';msgT=60;beep(520,.1,'triangle')}s.x=-999}}
+  stars=stars.filter(s=>s.x>-40);
+  for(const p of pigeons){p.x-=p.vx*spd;p.y+=Math.sin(t*.15+p.ph)*1.1;
+   if(Math.abs(p.x-110)<radius()+13&&Math.abs(p.y-by)<radius()+11)pop();
+   if(!p.nm&&Math.abs(p.x-110)<radius()+30&&Math.abs(p.y-by)>=radius()+11&&Math.abs(p.y-by)<radius()+44){p.nm=true;score+=5;msg='SO CLOSE!';msgT=35;beep(990,.05)}}
+  pigeons=pigeons.filter(p=>p.x>-40);
+  if(by-radius()<4||by+radius()>H-34)pop();
+  for(const p of parts){p.x+=p.vx;p.y+=p.vy;p.l--}parts=parts.filter(p=>p.l>0);
+  if(msgT>0)msgT--;}
+ for(const g of gates){x.fillStyle='#5e35b1';x.fillRect(g.x-13,0,26,g.gy-g.gap/2);x.fillRect(g.x-13,g.gy+g.gap/2,26,H);
+  x.fillStyle='#ff4081';for(let yy=14;yy<g.gy-g.gap/2-8;yy+=30){x.beginPath();x.moveTo(g.x+13,yy);x.lineTo(g.x+30,yy+6);x.lineTo(g.x+13,yy+12);x.fill()}
+  for(let yy=g.gy+g.gap/2+10;yy<H-40;yy+=30){x.beginPath();x.moveTo(g.x+13,yy);x.lineTo(g.x+30,yy+6);x.lineTo(g.x+13,yy+12);x.fill()}
+  x.fillStyle='#ffd54f';x.beginPath();x.arc(g.x,g.gy-g.gap/2,7,0,7);x.fill();x.beginPath();x.arc(g.x,g.gy+g.gap/2,7,0,7);x.fill()}
+ for(const s of stars){x.save();x.translate(s.x,s.y);x.rotate(Math.sin(t*.1)*.3);
+  if(s.k==='tape'){x.fillStyle='#fff';x.fillRect(-13,-8,26,16);x.fillStyle='#7b1fa2';x.font='bold 11px system-ui';x.textAlign='center';x.fillText('🩹',0,4)}
+  else{const gold=s.k==='gold';x.shadowColor=gold?'#ffd700':'#4dff88';x.shadowBlur=20;x.fillStyle=gold?'#ffd700':'#4dff88';x.beginPath();for(let i=0;i<5;i++){const a=-Math.PI/2+i*2*Math.PI/5,a2=a+Math.PI/5;x.lineTo(Math.cos(a)*(gold?17:14),Math.sin(a)*(gold?17:14));x.lineTo(Math.cos(a2)*7,Math.sin(a2)*7)}x.closePath();x.fill();x.shadowBlur=0}
+  x.restore()}
+ for(const p of pigeons){x.save();x.translate(p.x,p.y);const flap=Math.sin(t*.5+p.ph)*6;x.fillStyle='#b71c1c';x.beginPath();x.ellipse(0,0,17,11,0,0,7);x.fill();x.fillStyle='#e53935';x.beginPath();x.moveTo(-4,0);x.lineTo(-18,-10-flap);x.lineTo(-8,4);x.fill();x.beginPath();x.moveTo(2,0);x.lineTo(14,-12-flap);x.lineTo(12,4);x.fill();x.fillStyle='#fff';x.font='13px serif';x.textAlign='center';x.fillText('😠',6,4);x.restore()}
+ if(windOn&&Math.abs(wind)>.4){x.strokeStyle='rgba(129,212,250,.75)';x.lineWidth=3;for(let i=0;i<3;i++){const wy=120+i*140+Math.sin(t*.1+i)*16;x.beginPath();x.arc(330,wy,16,wind<0?2.4:.6,wind<0?5.2:3.4);x.stroke()}}
+ if(run||over){if(!over){const r=radius();x.strokeStyle='rgba(255,255,255,.55)';x.lineWidth=2;x.beginPath();x.moveTo(110,by+r);x.lineTo(96,H-28);x.moveTo(110,by+r);x.lineTo(124,H-28);x.stroke();
+  x.save();x.translate(110,by);x.scale(1+Math.sin(t*.12)*.05,1/Math.max(.75,1+Math.sin(t*.12)*.05));const grd=x.createRadialGradient(-8,-10,4,0,0,r+8);grd.addColorStop(0,'#ffccbc');grd.addColorStop(1,'#ff5722');x.fillStyle=grd;x.beginPath();x.arc(0,0,r,0,7);x.fill();x.restore();
+  x.fillStyle='#fff';x.beginPath();x.arc(102,by-6,5,0,7);x.fill();x.beginPath();x.arc(120,by-6,5,0,7);x.fill();x.fillStyle='#111';const look=holding?-1:1;x.beginPath();x.arc(102,by-6+look,2.4,0,7);x.fill();x.beginPath();x.arc(120,by-6+look,2.4,0,7);x.fill();
+  x.strokeStyle='#111';x.lineWidth=2;x.beginPath();x.arc(111,by+7,6,leak?.15:3.4,leak?2.9:6);x.stroke();
+  if(leak&&t%22===0)burst(110+r*.7,by+r*.5,'#b3e5fc',1);
+  if(shield>0){x.strokeStyle='#ffd54f';x.lineWidth=3;x.beginPath();x.arc(110,by,r+9,0,7);x.stroke()}}}
+ for(const p of parts){x.globalAlpha=p.l/24;x.fillStyle=p.col;x.fillRect(p.x,p.y,5,5);x.globalAlpha=1}
+ if(msgT>0&&msg){x.fillStyle='#fff';x.font='bold 20px system-ui';x.textAlign='center';x.strokeStyle='#000';x.strokeText(msg,W/2,64);x.fillText(msg,W/2,64)}
+ if(!run&&!over){x.fillStyle='#fff';x.font='bold 24px system-ui';x.textAlign='center';x.fillText('TAP PLAY 🎈',W/2,280)}
+ if(over){const fl=failLines[Math.floor(score/100)%failLines.length];x.fillStyle='rgba(0,0,0,.68)';x.fillRect(0,175,W,180);x.fillStyle='#ff8a65';x.font='bold 27px system-ui';x.textAlign='center';x.fillText('POP! 🎈💥',W/2,222);x.fillStyle='#fff';x.font='16px system-ui';x.fillText('Score '+score+' · '+rank(),W/2,256);x.fillText(fl,W/2,284);x.font='bold 15px system-ui';x.fillText('Tap PLAY to float again',W/2,320)}
+ document.getElementById('hud').textContent=`Score ${score} · Combo x${combo} · Best ${best} · ${rank()}${shield>0?' · 🩹':''}`;}
+cv.addEventListener('pointerdown',()=>holding=true);addEventListener('pointerup',()=>holding=false);
+addEventListener('keydown',e=>{if(e.code==='Space'){holding=true;e.preventDefault()}});addEventListener('keyup',e=>{if(e.code==='Space')holding=false});
+document.getElementById('start').onclick=reset;
+document.getElementById('share').onclick=async()=>{const s=`I scored ${score} in PARADE PANIC! 🎈 Rank: ${rank()} — the balloon leaked and I popped. https://tuannx.github.io/daily-mini-games/games/parade-panic.html`;try{await navigator.clipboard.writeText(s)}catch(e){}document.getElementById('share').textContent='✅ COPIED!'};
+loop();
+</script></body></html>
