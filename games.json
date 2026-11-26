@@ -501,5 +501,14 @@
   "mechanic": "Hold-to-float parade balloon (leak size-pulses, wind gusts)",
   "tagline": "Hold to float. The balloon leaks, the pigeons are furious, and the wind has plans.",
   "title": "PARADE PANIC!"
+ },
+ {
+  "date": "2026-11-26",
+  "day": 57,
+  "emoji": "🧊",
+  "file": "games/fridge-tetris.html",
+  "mechanic": "Leftover stack catcher (fridge quake flips controls, jelly makes stack slippery)",
+  "tagline": "Stack the leftovers. Dodge the spoiled milk. At 10s the fridge quakes — and flips YOU.",
+  "title": "FRIDGE TETRIS!"
  }
 ]
