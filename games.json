@@ -510,5 +510,14 @@
   "mechanic": "Leftover stack catcher (fridge quake flips controls, jelly makes stack slippery)",
   "tagline": "Stack the leftovers. Dodge the spoiled milk. At 10s the fridge quakes — and flips YOU.",
   "title": "FRIDGE TETRIS!"
+ },
+ {
+  "date": "2026-11-27",
+  "day": 58,
+  "emoji": "🧳",
+  "file": "games/suitcase-scramble.html",
+  "mechanic": "Belt-grab timing snatcher (belt reverses, hopping bags, rush hour)",
+  "tagline": "Grab YOUR glowing bag. The belt reverses, the bags hop, and HIS bag is furious.",
+  "title": "SUITCASE SCRAMBLE!"
  }
 ]

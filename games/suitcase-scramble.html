@@ -1,0 +1,307 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<title>SUITCASE SCRAMBLE! — Daily Mini-Games</title>
+<style>
+  *{margin:0;padding:0;box-sizing:border-box}
+  body{background:#070714;color:#e2e8f0;font-family:ui-rounded,system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;display:flex;flex-direction:column;align-items:center;min-height:100vh;padding:14px 8px;-webkit-user-select:none;user-select:none;touch-action:none}
+  h1{font-size:clamp(24px,6vw,36px);background:linear-gradient(90deg,#22d3ee,#f472b6);-webkit-background-clip:text;background-clip:text;color:transparent;text-align:center}
+  .hook{color:#facc15;font-weight:700;font-size:15px;margin:4px 0 8px;text-align:center}
+  #wrap{position:relative;width:min(94vw,420px)}
+  canvas{width:100%;display:block;border-radius:16px;border:2px solid rgba(34,211,238,.45);background:#0b1226;box-shadow:0 0 34px rgba(34,211,238,.25)}
+  .hud{display:flex;justify-content:space-between;width:min(94vw,420px);font-weight:800;font-size:15px;margin:8px 0;color:#e2e8f0}
+  .hud span b{color:#22d3ee}
+  button{background:linear-gradient(90deg,#0891b2,#db2777);color:#fff;border:0;border-radius:999px;padding:11px 22px;font-size:16px;font-weight:800;cursor:pointer;margin-top:10px;min-height:44px}
+  button:active{transform:scale(.96)}
+  .small{font-size:12px;color:#94a3b8;margin-top:8px;text-align:center}
+  a{color:#22d3ee}
+</style>
+</head>
+<body>
+<h1>🧳 SUITCASE SCRAMBLE!</h1>
+<div class="hook">Grab YOUR glowing bag. Not his. HIS is angry.</div>
+<div class="hud"><span>⭐ <b id="score">0</b></span><span>🔥 <b id="combo">x1</b></span><span>❤️ <b id="lives">3</b></span><span>⏱️ <b id="time">60</b></span><span>🏆 <b id="best">0</b></span></div>
+<div id="wrap"><canvas id="cv" width="420" height="640"></canvas></div>
+<button id="btn">▶ START</button>
+<div class="small">SPACE / tap / GRAB button to snatch the bag in the zone · <a href="../index.html">← all games</a></div>
+<script>
+"use strict";
+const cv=document.getElementById('cv'),ctx=cv.getContext('2d');
+const W=420,H=640,BELT_Y=330,ZONE_L=168,ZONE_R=252;
+const $=id=>document.getElementById(id);
+let AC=null;function beep(f,d,type,g){try{if(!AC)AC=new (window.AudioContext||window.webkitAudioContext)();const o=AC.createOscillator(),v=AC.createGain();o.type=type||'square';o.frequency.value=f;v.gain.value=g||0.05;o.connect(v);v.connect(AC.destination);o.start();v.gain.exponentialRampToValueAtTime(0.0001,AC.currentTime+(d||0.09));o.stop(AC.currentTime+(d||0.09));}catch(e){}}
+// ---------- state ----------
+let state='menu';
+let score=0,combo=0,bestCombo=0,lives=3,timeLeft=60,elapsed=0,spawnT=0,shake=0;
+let beltDir=1,nextFlip=12,rushT=0,rushDone=false,hopMode=false;
+let bags=[],parts=[],pops=[],socks=[];
+let armT=0,faceT=0,faceMode='norm',catRun=null;
+let best=+(localStorage.getItem('suitcaseScrambleBest')||0);
+$('best').textContent=best;
+const RANKS=[[0,'Carry-On Rookie'],[200,'Belt Bandit'],[450,'Luggage Lifter'],[750,'Carousel King'],[1100,'SUITCASE SCRAMBLE GOD']];
+function rankFor(s){let r=RANKS[0][1];for(const[th,n]of RANKS)if(s>=th)r=n;return r;}
+const FAILS=["Your bag is in Ohio now.","You grabbed HIS bag. He noticed.","The socks saw everything.","Carousel: 1 — You: 0.","Your luggage filed a complaint.","Somewhere, your toothbrush is alone."];
+let failLine=FAILS[0];
+// ---------- objects ----------
+// families (one family = one role):
+//  your suitcase: cyan glow, happy face -> GRAB
+//  golden suitcase: gold glow, star eyes -> GRAB rare
+//  cat carrier: green arch, cat face -> GRAB = cat escapes, steals points (own family/role)
+//  angry suitcase: red, angry face, spikes -> NEVER GRAB (only angry family)
+//  sock burst: flying laundry (effect family) / belt rollers + signs + pigeon (background family)
+//  traveler (you): arm snatches, face reacts (character family)
+function spawn(){
+  const r=Math.random();let kind='yours';
+  if(r<0.05)kind='gold';
+  else if(r<0.13)kind='cat';
+  else if(r<0.42)kind='angry';
+  const speed=(95+Math.min(150,elapsed*2.6)+Math.random()*45)*beltDir;
+  const fromLeft=beltDir>0;
+  bags.push({kind,x:fromLeft?-46:W+46,y:BELT_Y-34,vx:speed,ph:Math.random()*6.28,hop:0,dashT:0,grabbed:false});
+}
+function popup(x,y,txt,color){pops.push({x,y,txt,color:color||'#facc15',t:0});}
+function burst(x,y,color,n){for(let i=0;i<(n||10);i++){const a=Math.random()*6.28,s=40+Math.random()*140;parts.push({x,y,vx:Math.cos(a)*s,vy:Math.sin(a)*s-50,t:0,life:0.45+Math.random()*0.3,color,r:2+Math.random()*3});}}
+function sockBurst(x,y){for(let i=0;i<7;i++){const a=-0.4-Math.random()*2.2,s=120+Math.random()*160;socks.push({x,y,vx:Math.cos(a)*s,vy:Math.sin(a)*s,t:0,rot:Math.random()*6.28,kind:i%3});}}
+// ---------- input ----------
+function grab(){
+  if(state!=='play'){start();return;}
+  armT=0.22;faceT=0.3;
+  // find bag whose center is in the zone, closest to center
+  let target=null,bestD=1e9;
+  for(const b of bags){if(b.x>ZONE_L-6&&b.x<ZONE_R+6){const d=Math.abs(b.x-W/2);if(d<bestD){bestD=d;target=b;}}}
+  if(!target){popup(W/2,BELT_Y-96,'TOO SOON!','#94a3b8');beep(160,0.06,'square',0.03);return;}
+  target.grabbed=true;
+  const mult=1+Math.floor(combo/5);
+  if(target.kind==='yours'){
+    combo++;bestCombo=Math.max(bestCombo,combo);faceMode='happy';
+    const pts=10*mult;score+=pts;
+    popup(target.x,BELT_Y-100,'+'+pts,'#22d3ee');burst(target.x,BELT_Y-30,'#22d3ee',9);beep(540+combo*14,0.07,'square',0.045);
+  }else if(target.kind==='gold'){
+    combo+=2;bestCombo=Math.max(bestCombo,combo);faceMode='happy';
+    const pts=50*mult;score+=pts;
+    popup(target.x,BELT_Y-100,'⭐ GOLDEN +'+pts,'#facc15');burst(target.x,BELT_Y-30,'#facc15',22);beep(880,0.15,'triangle',0.07);
+  }else if(target.kind==='cat'){
+    combo=0;faceMode='o';score=Math.max(0,score-20);
+    catRun={x:target.x,y:BELT_Y-58,vx:(Math.random()<0.5?-1:1)*190,t:0};
+    popup(target.x,BELT_Y-100,'🐱 CAT TAX -20','#4ade80');burst(target.x,BELT_Y-30,'#4ade80',12);beep(700,0.09,'sine',0.06);setTimeout(()=>beep(950,0.09,'sine',0.06),90);
+  }else{ // angry
+    lives--;combo=0;faceMode='dizzy';shake=13;
+    popup(target.x,BELT_Y-100,'😤 NOT YOURS!','#f87171');burst(target.x,BELT_Y-30,'#f87171',16);sockBurst(target.x,BELT_Y-40);beep(120,0.22,'sawtooth',0.08);
+    if(lives<=0){gameOver();return;}
+  }
+  bags.splice(bags.indexOf(target),1);
+  hud();
+}
+addEventListener('keydown',e=>{if(e.key===' '){e.preventDefault();grab();}});
+cv.addEventListener('pointerdown',()=>grab());
+// ---------- flow ----------
+function start(){
+  score=0;combo=0;bestCombo=0;lives=3;timeLeft=60;elapsed=0;spawnT=0;shake=0;
+  beltDir=1;nextFlip=12;rushT=0;rushDone=false;hopMode=false;
+  bags=[];parts=[];pops=[];socks=[];armT=0;faceT=0;faceMode='norm';catRun=null;
+  state='play';$('btn').textContent='🧳 GRAB!';hud();
+}
+function gameOver(){
+  state='over';failLine=FAILS[Math.floor(Math.random()*FAILS.length)];
+  if(score>best){best=score;localStorage.setItem('suitcaseScrambleBest',best);}
+  $('best').textContent=best;$('btn').textContent='▶ ONE MORE TRY';
+  burst(W/2,BELT_Y-30,'#f472b6',26);beep(140,0.35,'sawtooth',0.07);setTimeout(()=>beep(90,0.4,'sawtooth',0.06),120);
+}
+function hud(){$('score').textContent=score;$('combo').textContent='x'+(1+Math.floor(combo/5));$('lives').textContent=Math.max(0,lives);$('time').textContent=Math.max(0,Math.ceil(timeLeft));}
+// ---------- update ----------
+function update(dt){
+  elapsed+=dt;timeLeft-=dt;
+  if(timeLeft<=0){timeLeft=0;gameOver();return;}
+  spawnT-=dt;
+  const rate=rushT>0?0.38:Math.max(0.55,1.0-elapsed*0.009);
+  if(spawnT<=0){spawn();spawnT=rate*(0.7+Math.random()*0.6);}
+  // twist 1: belt reverses at 12s, then every ~14s
+  if(elapsed>=nextFlip){
+    beltDir*=-1;nextFlip=elapsed+14;shake=8;
+    for(const b of bags)b.vx*=-1;
+    popup(W/2,120,'🔄 BELT REVERSED!','#f472b6');beep(70,0.3,'sawtooth',0.08);
+  }
+  // twist 2: at 25s bags start hopping + dashing
+  if(elapsed>=25&&!hopMode){hopMode=true;popup(W/2,150,'🐰 BAGS ARE HOPPING!','#facc15');}
+  // twist 3: rush hour at 40s for 8s
+  if(elapsed>=40&&!rushDone){rushDone=true;rushT=8;popup(W/2,180,'🚨 RUSH HOUR!','#f87171');beep(200,0.2,'square',0.06);}
+  if(rushT>0)rushT-=dt;
+  if(armT>0)armT-=dt; if(faceT>0)faceT-=dt; else faceMode='norm';
+  // bags
+  for(let i=bags.length-1;i>=0;i--){
+    const b=bags[i];b.ph+=dt*5;
+    if(hopMode){b.hop=Math.abs(Math.sin(b.ph*1.6))*22;if(b.dashT>0)b.dashT-=dt;else if(Math.random()<dt*0.35){b.dashT=0.4;}}
+    const dash=(hopMode&&b.dashT>0)?1.7:1;
+    b.x+=b.vx*dash*dt;
+    if(b.x<-70||b.x>W+70){
+      if(b.kind==='yours'){
+        if(Math.abs(b.x-(beltDir>0?W+30:-30))>=0&&((beltDir>0&&b.x>W+40)||(beltDir<0&&b.x<-40)))popup(beltDir>0?W-70:70,BELT_Y-100,'SO CLOSE!','#facc15');
+        combo=0;burst(beltDir>0?W-6:6,BELT_Y-30,'#64748b',6);
+      }
+      if(b.kind==='angry')popup(beltDir>0?W-70:70,BELT_Y-100,'DODGED! 😤','#4ade80');
+      bags.splice(i,1);
+    }
+  }
+  if(catRun){catRun.t+=dt;catRun.x+=catRun.vx*dt;if(catRun.t>1.4||catRun.x<-30||catRun.x>W+30)catRun=null;}
+  for(let i=parts.length-1;i>=0;i--){const p=parts[i];p.t+=dt;p.x+=p.vx*dt;p.y+=p.vy*dt;p.vy+=300*dt;if(p.t>p.life)parts.splice(i,1);}
+  for(let i=socks.length-1;i>=0;i--){const s=socks[i];s.t+=dt;s.x+=s.vx*dt;s.y+=s.vy*dt;s.vy+=520*dt;s.rot+=dt*7;if(s.y>H-120&&s.vy>0){s.y=H-120;s.vy*=-0.35;s.vx*=0.7;}if(s.t>1.6)socks.splice(i,1);}
+  for(let i=pops.length-1;i>=0;i--){const p=pops[i];p.t+=dt;p.y-=34*dt;if(p.t>0.95)pops.splice(i,1);}
+  if(shake>0)shake=Math.max(0,shake-dt*26);
+  hud();
+}
+// ---------- draw ----------
+function face(x,y,r,mode){
+  ctx.fillStyle='#0b1226';
+  if(mode==='angry'){ctx.fillRect(x-r*0.5,y-r*0.3,r*0.2,r*0.34);ctx.fillRect(x+r*0.3,y-r*0.3,r*0.2,r*0.34);ctx.strokeStyle='#0b1226';ctx.lineWidth=2.2;ctx.beginPath();ctx.moveTo(x-r*0.55,y-r*0.48);ctx.lineTo(x-r*0.22,y-r*0.28);ctx.moveTo(x+r*0.55,y-r*0.48);ctx.lineTo(x+r*0.22,y-r*0.28);ctx.stroke();}
+  else if(mode==='star'){ctx.font=(r*1.15)+'px serif';ctx.fillText('⭐',x-r*0.55,y+r*0.08);}
+  else if(mode==='cat'){ctx.fillRect(x-r*0.42,y-r*0.28,r*0.16,r*0.3);ctx.fillRect(x+r*0.26,y-r*0.28,r*0.16,r*0.3);ctx.fillStyle='#0b1226';ctx.fillRect(x-r*0.62,y-r*0.1,3,2);ctx.fillRect(x+r*0.5,y-r*0.1,3,2);}
+  else{ctx.beginPath();ctx.arc(x-r*0.3,y-r*0.15,r*0.11,0,6.29);ctx.arc(x+r*0.3,y-r*0.15,r*0.11,0,6.29);ctx.fill();}
+  ctx.strokeStyle='#0b1226';ctx.lineWidth=2.2;ctx.beginPath();
+  if(mode==='angry')ctx.arc(x,y+r*0.62,r*0.38,3.55,5.87);
+  else if(mode==='o')ctx.arc(x,y+r*0.3,r*0.2,0,6.29);
+  else ctx.arc(x,y+r*0.18,r*0.42,0.25,2.89);
+  ctx.stroke();
+}
+function drawBag(b){
+  const y=b.y-(b.hop||0);
+  ctx.save();ctx.translate(b.x,y);
+  const sq=1+Math.sin(b.ph*2)*0.03;ctx.scale(sq,1/Math.sqrt(sq));
+  if(b.kind==='yours'){
+    ctx.shadowColor='#22d3ee';ctx.shadowBlur=17;
+    ctx.fillStyle='#164e63';roundRect(-30,-24,60,48,9);ctx.fill();
+    ctx.shadowBlur=0;ctx.fillStyle='#22d3ee';roundRect(-30,-24,60,13,9);ctx.fill();
+    ctx.strokeStyle='#a5f3fc';ctx.lineWidth=3;ctx.beginPath();ctx.arc(0,-30,11,3.14,6.29);ctx.stroke();
+    face(0,4,12,'happy');
+  }else if(b.kind==='gold'){
+    ctx.shadowColor='#facc15';ctx.shadowBlur=22;
+    ctx.fillStyle='#b45309';ctx.beginPath();ctx.ellipse(0,0,32,24,0,0,6.29);ctx.fill();
+    ctx.shadowBlur=0;ctx.fillStyle='#fde68a';ctx.beginPath();ctx.ellipse(0,-4,24,15,0,0,6.29);ctx.fill();
+    face(0,2,11,'star');
+  }else if(b.kind==='cat'){
+    ctx.fillStyle='#14532d';roundRect(-28,-16,56,38,10);ctx.fill();
+    ctx.fillStyle='#22c55e';ctx.beginPath();ctx.arc(0,-14,20,3.14,6.29);ctx.fill();
+    ctx.fillStyle='#bbf7d0';ctx.beginPath();ctx.arc(0,-8,13,0,6.29);ctx.fill();
+    face(0,-8,10,'cat');
+    ctx.strokeStyle='#14532d';ctx.lineWidth=3;ctx.beginPath();ctx.moveTo(-8,-24);ctx.lineTo(-12,-32);ctx.moveTo(8,-24);ctx.lineTo(12,-32);ctx.stroke();
+  }else{ // angry stranger bag
+    ctx.shadowColor='#ef4444';ctx.shadowBlur=11;
+    ctx.fillStyle='#7f1d1d';roundRect(-29,-25,58,50,6);ctx.fill();
+    ctx.shadowBlur=0;ctx.fillStyle='#ef4444';roundRect(-29,-25,58,12,6);ctx.fill();
+    ctx.fillStyle='#ef4444';
+    for(let s=-1;s<=1;s++){ctx.beginPath();ctx.moveTo(s*18-6,-25);ctx.lineTo(s*18,-36);ctx.lineTo(s*18+6,-25);ctx.fill();}
+    face(0,5,12,'angry');
+  }
+  ctx.restore();
+}
+function roundRect(x,y,w,h,r){ctx.beginPath();ctx.moveTo(x+r,y);ctx.arcTo(x+w,y,x+w,y+h,r);ctx.arcTo(x+w,y+h,x,y+h,r);ctx.arcTo(x,y+h,x,y,r);ctx.arcTo(x,y,x+w,y,r);ctx.closePath();}
+function draw(){
+  ctx.save();
+  if(shake>0)ctx.translate((Math.random()-0.5)*shake,(Math.random()-0.5)*shake);
+  const g=ctx.createLinearGradient(0,0,0,H);g.addColorStop(0,'#101c3a');g.addColorStop(1,'#0b1226');
+  ctx.fillStyle=g;ctx.fillRect(-20,-20,W+40,H+40);
+  // background family: departure board + clock + signs (animated)
+  ctx.fillStyle='rgba(15,23,42,0.9)';roundRect(18,16,180,54,8);ctx.fill();
+  ctx.fillStyle='#22d3ee';ctx.font='bold 12px monospace';
+  ctx.fillText('✈ DEPARTURES',28,36);
+  ctx.fillStyle=(Math.floor(elapsed*2)%2===0)?'#f87171':'#facc15';ctx.font='bold 11px monospace';
+  ctx.fillText(state==='play'?'FLIGHT 404: DELAYED':'FLIGHT 404: BOARDING',28,56);
+  ctx.fillStyle='#e2e8f0';ctx.beginPath();ctx.arc(368,42,24,0,6.29);ctx.fill();
+  ctx.strokeStyle='#0b1226';ctx.lineWidth=3;ctx.beginPath();
+  const ca=elapsed*0.6;ctx.moveTo(368,42);ctx.lineTo(368+Math.cos(ca)*15,42+Math.sin(ca)*15);
+  const cb=elapsed*0.05;ctx.moveTo(368,42);ctx.lineTo(368+Math.cos(cb)*10,42+Math.sin(cb)*10);ctx.stroke();
+  ctx.fillStyle='rgba(244,114,182,0.85)';ctx.font='bold 13px sans-serif';ctx.textAlign='center';
+  ctx.fillText('BAGGAGE CLAIM 7',W/2,104);ctx.textAlign='left';
+  // grab zone
+  const zonePulse=0.5+Math.sin(elapsed*6)*0.18;
+  ctx.fillStyle='rgba(250,204,21,'+(0.10+zonePulse*0.12)+')';ctx.fillRect(ZONE_L,BELT_Y-86,ZONE_R-ZONE_L,118);
+  ctx.strokeStyle='#facc15';ctx.lineWidth=2;ctx.setLineDash([7,6]);ctx.strokeRect(ZONE_L,BELT_Y-86,ZONE_R-ZONE_L,118);ctx.setLineDash([]);
+  ctx.fillStyle='#facc15';ctx.font='bold 11px sans-serif';ctx.textAlign='center';ctx.fillText('GRAB ZONE',W/2,BELT_Y-94);ctx.textAlign='left';
+  // bags behind belt front edge
+  for(const b of bags)drawBag(b);
+  // conveyor belt (animated rollers = background family in motion)
+  ctx.fillStyle='#1e293b';ctx.fillRect(-20,BELT_Y+22,W+40,26);
+  ctx.fillStyle='#334155';
+  const off=(elapsed*90*beltDir)%36;
+  for(let x=-36+off;x<W+40;x+=36){ctx.beginPath();ctx.arc(x,BELT_Y+35,8,0,6.29);ctx.fill();ctx.fillStyle='#475569';ctx.beginPath();ctx.arc(x,BELT_Y+35,3,0,6.29);ctx.fill();ctx.fillStyle='#334155';}
+  ctx.fillStyle=beltDir>0?'#4ade80':'#f472b6';ctx.font='bold 15px sans-serif';ctx.textAlign='center';
+  ctx.fillText(beltDir>0?'▶ ▶ ▶ BELT ▶ ▶ ▶':'◀ ◀ ◀ BELT ◀ ◀ ◀',W/2,BELT_Y+72);ctx.textAlign='left';
+  // escaped cat runs across the floor
+  if(catRun){
+    ctx.save();ctx.translate(catRun.x,catRun.y+120);if(catRun.vx<0)ctx.scale(-1,1);
+    ctx.fillStyle='#f59e0b';ctx.beginPath();ctx.ellipse(0,0,15,10,0,0,6.29);ctx.fill();
+    ctx.beginPath();ctx.arc(13,-6,8,0,6.29);ctx.fill();
+    ctx.beginPath();ctx.moveTo(19,-12);ctx.lineTo(22,-19);ctx.lineTo(14,-15);ctx.fill();
+    ctx.strokeStyle='#f59e0b';ctx.lineWidth=3;ctx.beginPath();ctx.moveTo(-14,-2);ctx.quadraticCurveTo(-24,-10,-20,-18);ctx.stroke();
+    ctx.fillStyle='#0b1226';ctx.beginPath();ctx.arc(15,-7,1.8,0,6.29);ctx.fill();
+    ctx.restore();
+    ctx.fillStyle='#4ade80';ctx.font='bold 12px sans-serif';ctx.textAlign='center';ctx.fillText('MY FISH! 🐟',catRun.x,catRun.y+92);ctx.textAlign='left';
+  }
+  // flying socks (effect family)
+  for(const s of socks){
+    ctx.save();ctx.translate(s.x,s.y);ctx.rotate(s.rot);
+    ctx.fillStyle=['#f472b6','#22d3ee','#facc15'][s.kind];
+    ctx.beginPath();ctx.ellipse(0,0,9,5,0,0,6.29);ctx.fill();
+    ctx.beginPath();ctx.ellipse(6,4,5,4,0,0,6.29);ctx.fill();
+    ctx.restore();
+  }
+  // traveler (you): body + snatching arm + reactive face
+  const armUp=armT>0?Math.sin((0.22-armT)/0.22*Math.PI):0;
+  ctx.save();ctx.translate(W/2,H-118);
+  ctx.strokeStyle='#fbbf24';ctx.lineWidth=9;ctx.beginPath();ctx.moveTo(14,-16);ctx.lineTo(14+armUp*10,-16-armUp*88);ctx.stroke();
+  ctx.fillStyle='#fbbf24';ctx.beginPath();ctx.arc(14+armUp*10,-16-armUp*92,7,0,6.29);ctx.fill();
+  ctx.fillStyle='#7c3aed';roundRect(-26,-26,52,58,14);ctx.fill();
+  ctx.fillStyle='#fde68a';ctx.beginPath();ctx.arc(0,-44,20,0,6.29);ctx.fill();
+  ctx.fillStyle='#0b1226';
+  const fm=faceT>0?faceMode:'norm';
+  if(fm==='dizzy'){ctx.font='bold 13px sans-serif';ctx.fillText('✕',-13,-40);ctx.fillText('✕',5,-40);ctx.beginPath();ctx.arc(0,-30,6,0.2,2.9);ctx.stroke();}
+  else if(fm==='happy'){ctx.fillRect(-11,-50,5,7);ctx.fillRect(6,-50,5,7);ctx.strokeStyle='#0b1226';ctx.lineWidth=2.2;ctx.beginPath();ctx.arc(0,-40,9,0.25,2.89);ctx.stroke();}
+  else if(fm==='o'){ctx.fillRect(-11,-50,5,7);ctx.fillRect(6,-50,5,7);ctx.beginPath();ctx.arc(0,-31,5,0,6.29);ctx.fill();}
+  else{ctx.beginPath();ctx.arc(-6,-45,2.4,0,6.29);ctx.arc(6,-45,2.4,0,6.29);ctx.fill();ctx.strokeStyle='#0b1226';ctx.lineWidth=2.2;ctx.beginPath();ctx.arc(0,-39,8,0.25,2.89);ctx.stroke();}
+  ctx.fillStyle='#ef4444';ctx.beginPath();ctx.moveTo(-20,-64);ctx.lineTo(20,-64);ctx.lineTo(0,-78);ctx.fill();
+  ctx.restore();
+  // pigeon riding the belt sign (background comedy)
+  const pgx=(elapsed*22)%(W+80)-40;
+  ctx.save();ctx.translate(pgx,120);ctx.fillStyle='#94a3b8';ctx.beginPath();ctx.ellipse(0,0,10,7,0,0,6.29);ctx.fill();ctx.beginPath();ctx.arc(9,-4,5,0,6.29);ctx.fill();ctx.fillStyle='#f59e0b';ctx.beginPath();ctx.moveTo(13,-4);ctx.lineTo(18,-2);ctx.lineTo(13,-1);ctx.fill();ctx.restore();
+  // particles & popups
+  for(const p of parts){ctx.globalAlpha=1-p.t/p.life;ctx.fillStyle=p.color;ctx.beginPath();ctx.arc(p.x,p.y,p.r,0,6.29);ctx.fill();}
+  ctx.globalAlpha=1;
+  for(const p of pops){ctx.globalAlpha=1-p.t;ctx.fillStyle=p.color;ctx.font='bold 16px sans-serif';ctx.textAlign='center';ctx.fillText(p.txt,p.x,p.y);ctx.textAlign='left';ctx.globalAlpha=1;}
+  ctx.restore();
+  // overlays
+  if(state==='menu'){
+    ctx.fillStyle='rgba(4,6,18,0.72)';ctx.fillRect(0,0,W,H);
+    ctx.textAlign='center';ctx.fillStyle='#fff';ctx.font='bold 29px sans-serif';ctx.fillText('🧳 SUITCASE SCRAMBLE!',W/2,230);
+    ctx.font='17px sans-serif';ctx.fillStyle='#a5f3fc';ctx.fillText('Grab YOUR glowing bag in the zone.',W/2,272);
+    ctx.fillStyle='#fca5a5';ctx.fillText('Never grab the angry red one. 😤',W/2,298);
+    ctx.fillStyle='#f472b6';ctx.fillText('At 12s the belt REVERSES…',W/2,324);
+    ctx.fillStyle='#facc15';ctx.font='bold 19px sans-serif';ctx.fillText('TAP TO START',W/2,382);ctx.textAlign='left';
+  }
+  if(state==='over'){
+    ctx.fillStyle='rgba(4,6,18,0.78)';ctx.fillRect(0,0,W,H);
+    ctx.textAlign='center';ctx.fillStyle='#f472b6';ctx.font='bold 32px sans-serif';ctx.fillText('🧳 BAG LOST!',W/2,222);
+    ctx.fillStyle='#fff';ctx.font='bold 21px sans-serif';ctx.fillText(failLine,W/2,262);
+    ctx.fillStyle='#a5f3fc';ctx.font='18px sans-serif';
+    ctx.fillText('Score: '+score+'  ·  Best combo: x'+(1+Math.floor(bestCombo/5)),W/2,300);
+    ctx.fillStyle='#facc15';ctx.font='bold 19px sans-serif';ctx.fillText('Rank: '+rankFor(score),W/2,330);
+    ctx.fillStyle='#e2e8f0';ctx.font='15px sans-serif';ctx.fillText('Tap COPY RESULT, then ONE MORE TRY',W/2,366);ctx.textAlign='left';
+    if(!document.getElementById('copyBtn')){
+      const b=document.createElement('button');b.id='copyBtn';b.textContent='📋 COPY RESULT';
+      b.onclick=()=>{const txt='🧳 I scored '+score+' in SUITCASE SCRAMBLE! Rank: '+rankFor(score)+'. "'+failLine+'" Play: https://tuannx.github.io/daily-mini-games/games/suitcase-scramble.html';if(navigator.clipboard)navigator.clipboard.writeText(txt);b.textContent='✅ COPIED!';setTimeout(()=>b.textContent='📋 COPY RESULT',1400);};
+      document.body.insertBefore(b,$('btn'));
+    }
+  } else {const cb=document.getElementById('copyBtn');if(cb)cb.remove();}
+}
+// ---------- loop ----------
+let last=performance.now();
+function loop(now){
+  const dt=Math.min(0.033,(now-last)/1000);last=now;
+  if(state==='play')update(dt);else elapsed+=dt*0.4;
+  draw();requestAnimationFrame(loop);
+}
+$('btn').onclick=()=>{if(state==='play')grab();else start();};
+requestAnimationFrame(loop);
+</script>
+</body>
+</html>
