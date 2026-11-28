@@ -1,0 +1,114 @@
+<!DOCTYPE html>
+<html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
+<title>SHADOW THIEF!</title>
+<style>
+*{margin:0;padding:0;box-sizing:border-box}body{background:#070714;color:#fff;font-family:system-ui,sans-serif;display:flex;flex-direction:column;align-items:center;min-height:100vh;overflow:hidden}
+h1{font-size:clamp(20px,5vw,32px);color:#c084fc;text-shadow:0 0 18px #a855f7;margin:8px}
+#hook{color:#fde68a;font-weight:700;font-size:clamp(13px,3.5vw,17px)}
+#hud{display:flex;gap:16px;font-size:clamp(14px,4vw,19px);font-weight:700;margin:6px}
+#hud .lives{color:#f87171}#hud .combo{color:#4ade80}
+canvas{background:linear-gradient(#0b1030,#1e1b4b);border:2px solid #a855f7;border-radius:12px;touch-action:none;max-width:96vw}
+button{background:#a855f7;color:#fff;border:0;border-radius:10px;padding:12px 22px;font-size:17px;font-weight:800;cursor:pointer;min-height:48px}
+#over{display:none;text-align:center;padding:10px}#over p{margin:8px;font-size:18px}
+#rank{color:#fde68a;font-weight:800}
+</style></head><body>
+<h1>👥 SHADOW THIEF!</h1><div id="hook">Your shadow steals. Then it hunts.</div>
+<div id="hud"><span>⭐ <span id="score">0</span></span><span class="combo" id="combo"></span><span>⏱ <span id="time">0</span>s</span><span class="lives" id="lives">❤️❤️❤️</span><span>🏆 <span id="best">0</span></span></div>
+<canvas id="c" width="420" height="560"></canvas>
+<div id="over"><p id="overmsg"></p><p id="rank"></p><button id="again">▶ ONE MORE TRY</button> <button id="share">📋 COPY RESULT</button></div>
+<script>
+const cv=document.getElementById('c'),x=cv.getContext('2d'),W=420,H=560;
+let S,raf,last;
+const best=+localStorage.getItem('st_best')||0;document.getElementById('best').textContent=best;
+const hatUnlock=+localStorage.getItem('st_hat')||0;
+function beep(f,d){try{const a=new(window.AudioContext||window.webkitAudioContext)(),o=a.createOscillator(),g=a.createGain();o.frequency.value=f;o.connect(g);g.connect(a.destination);g.gain.setValueAtTime(.12,a.currentTime);g.gain.exponentialRampToValueAtTime(.001,a.currentTime+(d||.08));o.start();o.stop(a.currentTime+(d||.08))}catch(e){}}
+function reset(){
+ S={t:0,score:0,lives:3,combo:0,over:false,px:W/2,py:H-90,tx:W/2,ty:H-90,trail:[],stars:[],balls:[],parts:[],snow:[],trees:[],pop:'',popT:0,phase:0,stun:0,shake:0,shield:0,giftT:0};
+ for(let i=0;i<40;i++)S.snow.push({x:Math.random()*W,y:Math.random()*H,s:1+Math.random()*2,v:.4+Math.random()});
+ for(let i=0;i<6;i++)S.trees.push({x:20+i*72+Math.random()*20,h:50+Math.random()*40,ph:Math.random()*6});
+ spawnStar();spawnStar();spawnBall();
+ document.getElementById('over').style.display='none';last=performance.now();cancelAnimationFrame(raf);raf=requestAnimationFrame(loop);
+}
+function spawnStar(gold){S.stars.push({x:30+Math.random()*(W-60),y:40+Math.random()*(H-160),r:gold?17:13,gold:!!gold,ph:Math.random()*6,vy:0})}
+function spawnBall(){const a=Math.random()*6.28,sp=1.4+S.t*.012;S.balls.push({x:Math.random()*W,y:60,vx:Math.cos(a)*sp,vy:Math.sin(a)*sp,r:15})}
+function popup(t){S.pop=t;S.popT=1.1}
+function burst(px,py,col,n){for(let i=0;i<(n||12);i++)S.parts.push({x:px,y:py,vx:(Math.random()-.5)*5,vy:(Math.random()-.5)*5,l:1,col})}
+function shadowPos(){const d=S.phase>=1?26:20;const i=Math.max(0,S.trail.length-1-d);return S.trail[i]||{x:S.px,y:S.py}}
+function hit(px,py,r,qx,qy,qr){const dx=px-qx,dy=py-qy;return dx*dx+dy*dy<(r+qr)*(r+qr)}
+function damage(why){if(S.stun>0||S.over)return;if(S.shield>0){S.shield=0;popup('SHIELD SAVED YOU!');beep(700);return}S.lives--;S.combo=0;S.stun=1.2;S.shake=8;burst(S.px,S.py,'#f87171',18);beep(140,.25);popup(why);if(S.lives<=0)gameOver()}
+function gameOver(){S.over=true;const b=Math.max(best,S.score);localStorage.setItem('st_best',b);if(S.score>=30)localStorage.setItem('st_hat',1);document.getElementById('best').textContent=b;
+ const msgs=['Your own shadow fired you. 👥','Outplayed. By YOURSELF. 💀','The shadow pays no rent. 😤','You lost to your copy. 📸'];document.getElementById('overmsg').textContent=msgs[Math.floor(Math.random()*msgs.length)]+' Score: '+S.score;
+ document.getElementById('rank').textContent='Rank: '+(S.score>=40?'SHADOW LEGEND 👑':S.score>=25?'STAR BANDIT ⭐':S.score>=12?'SHADOW BAIT 🪤':'PROFESSIONAL VICTIM 🫠');
+ document.getElementById('over').style.display='block'}
+function loop(now){const dt=Math.min(.033,(now-last)/1000);last=now;if(!S.over)S.t+=dt;upd(dt);draw();if(!S.over)raf=requestAnimationFrame(loop)}
+function upd(dt){const t=S.t;
+ // phases / escalation
+ const ph=t>=50?4:t>=40?3:t>=30?2:t>=12?1:0;
+ if(ph!==S.phase){S.phase=ph;if(ph===1){popup('SHADOW AWOKE! 👥');beep(220,.2)}if(ph===2){popup('SHADOW TURNED EVIL! 😈');beep(160,.3);spawnBall()}if(ph===3){popup('GOLDEN STAR! ⭐');spawnStar(true)}if(ph===4){popup('SHADOW SPEEDS UP! 💨');spawnBall()}}
+ // player follow target
+ const sp=S.stun>0?2:7;S.px+=(S.tx-S.px)*Math.min(1,sp*dt*3);S.py+=(S.ty-S.py)*Math.min(1,sp*dt*3);
+ S.px=Math.max(18,Math.min(W-18,S.px));S.py=Math.max(30,Math.min(H-18,S.py));
+ S.trail.push({x:S.px,y:S.py});if(S.trail.length>200)S.trail.shift();
+ if(S.stun>0)S.stun-=dt;if(S.shake>0)S.shake*=.88;
+ // stars
+ const sh=shadowPos();
+ for(let i=S.stars.length-1;i>=0;i--){const st=S.stars[i];st.ph+=dt*4;
+   if(S.phase>=1){ // shadow steals: drifts star away / shadow moves via trail anyway; check shadow contact
+     if(hit(sh.x,sh.y,16,st.x,st.y,st.r)){S.stars.splice(i,1);burst(st.x,st.y,'#a855f7',10);popup('STOLEN! 👥');beep(300);spawnStar();continue}}
+   if(hit(S.px,S.py,18,st.x,st.y,st.r)){S.stars.splice(i,1);S.combo++;const pts=st.gold?10:1+S.combo>=5?2:1;S.score+=st.gold?10:(S.combo>=5?2:1);burst(st.x,st.y,st.gold?'#fde047':'#facc15',14);beep(st.gold?980:520+S.combo*40);if(S.combo===5)popup('COMBO x5! 🔥');spawnStar();continue}}
+ if(S.stars.length<2)spawnStar();
+ // gift: rare shield
+ S.giftT+=dt;if(S.giftT>18){S.giftT=0;S.stars.push({x:30+Math.random()*(W-60),y:80,r:14,gift:true,ph:0,gold:false})}
+ for(let i=S.stars.length-1;i>=0;i--){const st=S.stars[i];if(st.gift&&hit(S.px,S.py,18,st.x,st.y,st.r)){S.stars.splice(i,1);S.shield=1;popup('SHIELD! 🛡️');beep(880)}}
+ // balls
+ for(const b of S.balls){b.x+=b.vx;b.y+=b.vy;if(b.x<b.r||b.x>W-b.r)b.vx*=-1;if(b.y<b.r||b.y>H-b.r)b.vy*=-1;
+   const d=Math.hypot(b.x-S.px,b.y-S.py);if(d<b.r+24&&d>b.r+18&&Math.random()<.06)popup('SO CLOSE!');
+   if(hit(S.px,S.py,16,b.x,b.y,b.r))damage('BONKED! 💥')}
+ // evil shadow hunts (phase>=2): shadow contact damages, with transition already flashed at phase change
+ if(S.phase>=2&&hit(S.px,S.py,16,sh.x,sh.y,16))damage('YOUR SHADOW GOT YOU! 👥');
+ // particles & snow
+ for(let i=S.parts.length-1;i>=0;i--){const p=S.parts[i];p.x+=p.vx;p.y+=p.vy;p.l-=dt*1.6;if(p.l<=0)S.parts.splice(i,1)}
+ for(const s of S.snow){s.y+=s.v;s.x+=Math.sin(t+s.y*.02)*.3;if(s.y>H){s.y=-4;s.x=Math.random()*W}}
+ if(S.popT>0)S.popT-=dt;
+ document.getElementById('score').textContent=S.score;document.getElementById('time').textContent=Math.floor(t);
+ document.getElementById('combo').textContent=S.combo>=2?'🔥x'+S.combo:'';document.getElementById('lives').textContent='❤️'.repeat(Math.max(0,S.lives))+(S.shield?' 🛡️':'');
+}
+function face(cx,cy,r,kind){x.fillStyle='#111';x.beginPath();x.arc(cx-r*.35,cy-r*.15,2.2,0,7);x.arc(cx+r*.35,cy-r*.15,2.2,0,7);x.fill();x.strokeStyle='#111';x.lineWidth=2;x.beginPath();
+ if(kind==='angry'){x.moveTo(cx-r*.35,cy+r*.4);x.lineTo(cx+r*.35,cy+r*.4)}else if(kind==='evil'){x.arc(cx,cy+r*.15,r*.4,3.4,6)}else{x.arc(cx,cy+r*.1,r*.35,.3,2.8)}x.stroke();
+ if(kind==='angry'){x.beginPath();x.moveTo(cx-r*.6,cy-r*.5);x.lineTo(cx-r*.15,cy-r*.3);x.moveTo(cx+r*.6,cy-r*.5);x.lineTo(cx+r*.15,cy-r*.3);x.stroke()}}
+function draw(){x.save();if(S.shake>.5)x.translate((Math.random()-.5)*S.shake,(Math.random()-.5)*S.shake);
+ const grd=x.createLinearGradient(0,0,0,H);grd.addColorStop(0,'#0b1030');grd.addColorStop(1,'#1e1b4b');x.fillStyle=grd;x.fillRect(0,0,W,H);
+ // trees (background family, swaying)
+ for(const tr of S.trees){const sw=Math.sin(S.t*1.2+tr.ph)*3;x.fillStyle='#14532d';x.beginPath();x.moveTo(tr.x+sw,H);x.lineTo(tr.x+16+sw,H-tr.h);x.lineTo(tr.x+32+sw,H);x.fill();x.fillStyle='#7c2d12';x.fillRect(tr.x+13+sw,H-8,6,8)}
+ // snow
+ x.fillStyle='rgba(255,255,255,.75)';for(const s of S.snow){x.beginPath();x.arc(s.x,s.y,s.s,0,7);x.fill()}
+ const sh=shadowPos();
+ // shadow clone
+ const evil=S.phase>=2,awake=S.phase>=1;const flash=evil&&S.t<31;const sc=flash?(Math.floor(S.t*8)%2?'#ef4444':'#312e81'):(evil?'#7f1d1d':'#312e81');
+ x.fillStyle=sc;x.globalAlpha=.92;x.beginPath();x.arc(sh.x,sh.y-14,13,0,7);x.arc(sh.x,sh.y+8,17,0,7);x.fill();x.globalAlpha=1;
+ if(evil){x.fillStyle='#facc15';x.beginPath();x.moveTo(sh.x-12,sh.y-24);x.lineTo(sh.x-4,sh.y-32);x.lineTo(sh.x,sh.y-24);x.lineTo(sh.x+5,sh.y-33);x.lineTo(sh.x+12,sh.y-24);x.fill()}
+ face(sh.x,sh.y-12,13,evil?'evil':(awake?'evil':'angry'));
+ // stars / gift
+ for(const st of S.stars){if(st.gift){x.fillStyle='#dc2626';x.fillRect(st.x-13,st.y-10,26,20);x.fillStyle='#facc15';x.fillRect(st.x-2,st.y-10,4,20);x.fillRect(st.x-13,st.y-2,26,4);continue}
+  const pu=1+Math.sin(st.ph)*.15;x.save();x.shadowColor=st.gold?'#fde047':'#facc15';x.shadowBlur=18;x.fillStyle=st.gold?'#fde047':'#facc15';x.translate(st.x,st.y);x.scale(pu,pu);x.beginPath();for(let i=0;i<10;i++){const a=-Math.PI/2+i*Math.PI/5,r=i%2?6:st.r;x.lineTo(Math.cos(a)*r,Math.sin(a)*r)}x.closePath();x.fill();x.restore()}
+ // balls (angry snowballs, hazard family - red)
+ for(const b of S.balls){x.fillStyle='#fecaca';x.beginPath();x.arc(b.x,b.y,b.r,0,7);x.fill();x.strokeStyle='#ef4444';x.lineWidth=3;x.stroke();face(b.x,b.y,b.r,'angry')}
+ // player snowman
+ const sq=1+Math.sin(S.t*6)*.04;x.save();x.translate(S.px,S.py);x.scale(sq,2-sq>1.06?1.06:sq);
+ x.fillStyle=S.stun>0&&Math.floor(S.t*10)%2?'#fca5a5':'#fff';x.beginPath();x.arc(0,-16,13,0,7);x.arc(0,6,18,0,7);x.fill();
+ x.fillStyle=hatUnlock?'#facc15':'#111';x.fillRect(-11,-32,22,5);x.fillRect(-6,-40,12,9);
+ x.fillStyle='#f97316';x.beginPath();x.moveTo(0,-16);x.lineTo(9,-14);x.lineTo(0,-12);x.fill();x.restore();face(S.px,S.py-16,13,'happy');
+ if(S.shield){x.strokeStyle='#4ade80';x.lineWidth=3;x.beginPath();x.arc(S.px,S.py-4,30,0,7);x.stroke()}
+ // particles
+ for(const p of S.parts){x.globalAlpha=Math.max(0,p.l);x.fillStyle=p.col;x.fillRect(p.x-3,p.y-3,6,6)}x.globalAlpha=1;
+ if(S.popT>0){x.fillStyle='#fde68a';x.font='900 24px system-ui';x.textAlign='center';x.strokeStyle='#000';x.lineWidth=5;x.strokeText(S.pop,W/2,70);x.fillText(S.pop,W/2,70)}
+ if(S.t<3){x.fillStyle='#fff';x.font='800 17px system-ui';x.textAlign='center';x.fillText('Move: mouse / touch / arrows',W/2,H-14)}
+ x.restore()}
+function setT(e){const r=cv.getBoundingClientRect();const cx=(e.touches?e.touches[0].clientX:e.clientX),cy=(e.touches?e.touches[0].clientY:e.clientY);S.tx=(cx-r.left)*W/r.width;S.ty=(cy-r.top)*H/r.height}
+cv.addEventListener('mousemove',setT);cv.addEventListener('touchstart',setT,{passive:true});cv.addEventListener('touchmove',setT,{passive:true});
+const keys={};addEventListener('keydown',e=>{keys[e.key]=1});addEventListener('keyup',e=>{keys[e.key]=0});
+setInterval(()=>{if(!S||S.over)return;const s=14;if(keys.ArrowLeft||keys.a)S.tx-=s;if(keys.ArrowRight||keys.d)S.tx+=s;if(keys.ArrowUp||keys.w)S.ty-=s;if(keys.ArrowDown||keys.s)S.ty+=s},30);
+document.getElementById('again').onclick=reset;
+document.getElementById('share').onclick=()=>{const txt='👥 SHADOW THIEF! I scored '+S.score+' — my own shadow stole my stars. https://tuannx.github.io/daily-mini-games/games/shadow-thief.html';(navigator.clipboard?navigator.clipboard.writeText(txt):Promise.reject()).then(()=>alert('Copied!')).catch(()=>prompt('Copy:',txt))};
+reset();
+</script></body></html>

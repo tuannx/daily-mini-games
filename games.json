@@ -519,5 +519,14 @@
   "mechanic": "Belt-grab timing snatcher (belt reverses, hopping bags, rush hour)",
   "tagline": "Grab YOUR glowing bag. The belt reverses, the bags hop, and HIS bag is furious.",
   "title": "SUITCASE SCRAMBLE!"
+ },
+ {
+  "date": "2026-11-28",
+  "day": 59,
+  "emoji": "👥",
+  "file": "games/shadow-thief.html",
+  "mechanic": "Shadow-clone steal & hunt arena (shadow wakes at 12s and steals stars, turns evil at 30s)",
+  "tagline": "Grab the glow. Your shadow steals it at 12s — and hunts YOU at 30s.",
+  "title": "SHADOW THIEF!"
  }
 ]
